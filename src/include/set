@@ -1,0 +1,111 @@
+#pragma once
+#ifndef STD_SET
+#define STD_SET
+#include	"vector"
+#include	"algorithm"
+namespace	std
+{
+	template<typename T, class LessThan=less<T>, int Align=8>struct set
+	{
+		typedef set<T> CType;
+		typedef vector<T> VType;
+
+		VType v;//flat array
+
+		set(){}
+		set(CType const &other):v(other.v){}
+		set(CType &&other):v((VType&&)other.v){}
+		CType& operator=(CType const &other)
+		{
+			if(this!=&other)
+				v=other.v;
+			return *this;
+		}
+		CType& operator=(CType &&other)
+		{
+			if(this!=&other)
+				v=(VType&&)other.v;
+			return *this;
+		}
+
+		//pointers, not iterators, no reverse iterators yet
+		T* begin(){return v.begin();}
+		T const* begin()const{return v.begin();}
+		T* end(){return v.end();}
+		T const* end()const{return v.end();}
+		bool empty()const{return !v.size();}
+		unsigned size()const{return v.size();}
+
+		T* data(){return v.data();}//non-standard
+
+		T* find(T const &e)
+		{
+			int idx=0;
+			if(binary_search(v.begin(), v.end(), e, idx, LessThan()))
+				return v.data()+idx;
+			return nullptr;
+		}
+		T const* find(T const &e)const
+		{
+			int idx=0;
+			if(binary_search(v.begin(), v.end(), e, idx, LessThan()))
+				return v.data()+idx;
+			return nullptr;
+		}
+
+		T& insert_no_overwrite(T const &e, bool *old)//non-standard
+		{
+			int idx=0;
+			auto found=binary_search(v.begin(), v.end(), e, idx, LessThan());
+			if(!found)
+				v.insert(idx, e);
+			if(old)
+				*old=found;
+			return v[idx];
+		}
+
+		T* insert(T const &e, bool *overwrite=nullptr)
+		{
+			int idx=0;
+			auto found=binary_search(v.begin(), v.end(), e, idx, LessThan());
+			if(found)
+				v[idx]=e;
+			else
+				v.insert(idx, e);
+			if(overwrite)
+				*overwrite=found;
+			return v.data()+idx;
+		}
+		T* insert(T &&e, bool *overwrite=nullptr)
+		{
+			int idx=0;
+			auto found=binary_search(v.begin(), v.end(), e, idx, LessThan());
+			if(found)
+				v[idx]=(T&&)e;
+			else
+				v.insert(idx, (T&&)e);
+			if(overwrite)
+				*overwrite=found;
+			return v.data()+idx;
+		}
+
+		int erase(T const &e)
+		{
+			int idx=0;
+			if(!binary_search(v.begin(), v.end(), e, idx, LessThan()))
+				return -1;
+			v.erase(idx);
+			return idx;
+		}
+		void erase_idx(unsigned position, unsigned count)
+		{
+			v.erase(position, count);
+		}
+
+		void clear()
+		{
+			v.clear();
+		}
+	};
+}
+#endif

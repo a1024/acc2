@@ -1,0 +1,355 @@
+#pragma once
+#ifndef STD_VECTOR
+#define STD_VECTOR
+#include	"stdlib.h"
+#include	"string.h"
+#include	"new"
+#include	"assert.h"
+namespace	std
+{
+	template<typename T, int Align=8>struct vector
+	{
+		typedef T *iterator;
+		typedef T const *const_iterator;
+
+		//private
+		T *p;//aligned pointer
+		int n;				//TODO: put n first for better debug view, why does this crash when swapped?
+
+		void realloc(unsigned n)
+		{
+#ifdef _DEBUG
+			unsigned u=(unsigned)p;
+			assert(u!=0xCCCCCCCC&&u!=0xCDCDCDCD&&u!=0xBAADF00D&&u!=0xFEEEFEEE&&n>=0);
+#endif
+			if(p)
+				p=(T*)_aligned_realloc(p, n*sizeof(T), Align);
+			else
+				p=(T*)_aligned_malloc(n*sizeof(T), Align);
+		}
+		void initialize(unsigned start, unsigned end, T const &e)//calls constructor
+		{
+#ifdef _DEBUG
+			//if(n==0xFEEEFEEE||!(start>=0&&(int)end<=n))//
+			//	return;//
+			assert(start>=0&&(int)end<=n);
+#endif
+			for(unsigned k=start;k<end;++k)
+				new(p+k)T(e);
+		}
+		void fill(unsigned start, unsigned end, T const &e)//calls assignment operator
+		{
+#ifdef _DEBUG
+			assert(start>=0&&(int)end<=n);
+#endif
+			for(unsigned k=start;k<end;++k)
+				p[k]=e;
+		}
+
+		//public
+		vector():p(nullptr), n(0){}
+		vector(vector<T, Align> const &other)
+		{
+			if(&other!=this)
+			{
+				n=other.n;
+				if(n)
+				{
+					p=(T*)_aligned_malloc(other.n*sizeof(T), Align);
+					memcpy(p, other.p, n*sizeof(T));
+				}
+				else
+					p=0;
+			}
+		}
+		vector(vector<T, Align> &&other)
+		{
+			if(&other!=this)
+			{
+				n=other.n, p=other.p;
+				other.n=0, other.p=0;
+			}
+		}
+		vector(unsigned n, T const &e=T()):n(n), p((T*)_aligned_malloc(n*sizeof(T), Align))
+		{
+			initialize(0, n, e);
+		}
+		vector(T const *p, unsigned n, bool pod=true):n(n), p((T*)_aligned_malloc(n*sizeof(T), Align))//non-standard
+		{
+			if(pod)
+				memcpy(this->p, p, n*sizeof(T));
+			else
+			{
+				for(unsigned k=0;k<n;++k)
+					new(this->p+k)T(p[k]);
+			}
+		}
+		~vector()
+		{
+			if(p)
+			{
+				_aligned_free(p);
+				p=0;
+			}
+		}
+		vector& operator=(vector const &other)
+		{
+			if(&other!=this)
+			{
+				if(n!=other.n)
+					realloc(n);
+				n=other.n;
+				for(int k=0;k<n;++k)
+					p[k]=other[k];
+			}
+			return *this;
+		}
+		vector& operator=(vector &&other)
+		{
+			if(&other!=this)
+			{
+				if(p)
+					_aligned_free(p);
+				n=other.n, p=other.p;
+				other.n=0, other.p=0;
+			}
+			return *this;
+		}
+
+		iterator begin(){return p;}
+		iterator end(){return p+n;}
+		const_iterator begin()const{return p;}
+		const_iterator end()const{return p+n;}
+		//reverse_iterator rbegin(){return p+n-1;}
+		//reverse_iterator rend(){return p-1;}
+		//const_reverse_iterator rbegin()const{return p+n-1;}
+		//const_reverse_iterator rend()const{return p-1;}
+
+		unsigned size()const{return n;}
+		bool empty()const{return n==0;}
+		void resize(unsigned n, T const &e=T())
+		{
+			if(n!=this->n)//
+			{
+				realloc(n);
+				int n0=this->n;
+				this->n=n;
+				initialize(n0, n, e);
+			}
+		}
+
+		T& operator[](unsigned k)
+		{
+			assert2(k>=0&&k<(unsigned)n, "Vector subscript out of range: index=%d, size=%d", k, n);
+			return p[k];
+		}
+		T const& operator[](unsigned k)const
+		{
+			assert2(k>=0&&k<(unsigned)n, "Vector subscript out of range: index=%d, size=%d", k, n);
+			return p[k];
+		}
+		//T& at(unsigned k)
+		//{
+		//	if(k<0&&k>=n)
+		//		throw "Out of range";
+		//	return p[k];
+		//}
+		//T const& at(unsigned k)const
+		//{
+		//	if(k<0&&k>=n)
+		//		throw "Out of range";
+		//	return p[k];
+		//}
+		T& front(){return p[0];}
+		T const& front()const{return p[0];}
+		T& back(){return p[n-1];}
+		T const& back()const{return p[n-1];}
+		T* data(){return p;}
+		T const* data()const{return p;}
+
+		void assign(unsigned n, T const &e=T())
+		{
+			if(n!=this->n)
+			{
+				realloc(n);
+				if(this->n<n)
+				{
+					fill(0, this->n, e);
+					initialize(this->n, n, e);
+				}
+				else
+					fill(0, n, e);
+				this->n=n;
+			}
+			else
+				fill(0, n, e);
+		}
+		void assign(T const *p, unsigned count)
+		{
+			if(count!=n)
+			{
+				realloc(count);
+				n=count;
+			}
+			for(int k=0;k<count;++k)
+				this->p[k]=p[k];
+		}
+		void assign_pod(T const *p, unsigned count)
+		{
+			if(count!=n)
+			{
+				realloc(count);
+				n=count;
+			}
+			memcpy(this->p, p, count*sizeof(T));
+		}
+		void assign_pod(unsigned n, T const &e=T())
+		{
+			if(n!=this->n)
+			{
+				realloc(n);
+				this->n=n;
+			}
+			memfill(p, &e, n*sizeof(T), sizeof(T));
+		}
+		void push_back(T const &e)
+		{
+			++n;
+			realloc(n);
+			new(p+n-1)T(e);
+			//p[n-1]=e;//operator= expects an initialized the object
+		}
+		void push_back(T &&e)
+		{
+			++n;
+			realloc(n);
+			new(p+n-1)T((T&&)e);
+			//p[n-1]=T();
+			//p[n-1]=(T&&)e;//operator=(&&) expects an initialized the object
+		}
+		void pop_back()
+		{
+			--n;
+#ifdef _DEBUG
+			realloc(n);//
+#endif
+		}
+		void insert(unsigned position, T const &e, unsigned count=1)
+		{
+			unsigned n2=n+count;
+			realloc(n2);
+			n=n2;
+			unsigned pos2=position+count;
+			memmove(p+position+count, p+position, (n2-(position+count))*sizeof(T));
+			//for(unsigned k=n2-1;k>=pos2;--k)//deep copy is not required on array shift, and it's slow: use memmove
+			//	p[k]=p[k-count];
+			initialize(position, pos2, e);
+		}
+		void insert(unsigned position, T &&e)
+		{
+			unsigned n2=n+1;
+			realloc(n2);
+			n=n2;
+			unsigned pos2=position+1;
+			memmove(p+position+1, p+position, (n2-(position+1))*sizeof(T));
+			//for(unsigned k=n2-1;k>=pos2;--k)
+			//	p[k]=p[k-1];
+			new(p+position)T((T&&)e);
+		}
+		void insert(unsigned position, T const *p, unsigned count)
+		{
+			unsigned n2=n+count;
+			realloc(n2);
+			n=n2;
+			unsigned pos2=position+count;
+			memmove(this->p+position+count, this->p+position, (n2-(position+count))*sizeof(T));
+			//for(unsigned k=n2-1;k>=pos2;--k)
+			//	this->p[k]=this->p[k-count];
+			for(unsigned k=0;k<count;++k)
+				this->p[position+k]=p[k];
+		}
+		void insert_pod(unsigned position, T const &e, unsigned count=1)
+		{
+			unsigned n2=n+count;
+			realloc(n2);
+			n=n2;
+			memmove(p+position+count, p+position, (n2-(position+count))*sizeof(T));
+			memfill(p+position, &e, count*sizeof(T), sizeof(T));
+		}
+		void insert_pod(unsigned position, T const *p, unsigned count)
+		{
+			unsigned n2=n+count;
+			realloc(n2);
+			n=n2;
+			memmove(this->p+position+count, this->p+position, (n2-(position+count))*sizeof(T));
+			memcpy(this->p+position, p, count*sizeof(T));
+		}
+
+		void append(T const *p, unsigned count)//non-standard
+		{
+			insert(n, p, count);
+		}
+
+		void erase(unsigned position, unsigned count=1)
+		{
+			for(unsigned k=0;k<count;++k)
+				p[position+k].~T();
+			memmove(p+position, p+position+count, (n-(position+count))*sizeof(T));
+			//for(unsigned k=position, kEnd=n-count;k<kEnd;++k)
+			//	p[k]=p[k+count];
+			n-=count;
+			realloc(n);
+		}
+
+		void replace(unsigned position, unsigned rem_count, T &&e)//non-standard		move range?
+		{
+			int ins_count=1;
+			int deltasize=ins_count-rem_count;
+			if(deltasize)
+			{
+				for(int k=0;k<-deltasize;++k)//destroy extra objects if rem_count>ins_count
+					p[position+ins_count+k].~T();
+				memmove(this->p+position+ins_count, this->p+position+rem_count, (n-(position+rem_count))*sizeof(T));
+				n+=deltasize;
+				realloc(n);
+			}
+			this->p[position]=(T&&)e;//move object
+		}
+		void replace(unsigned position, unsigned rem_count, T const *p, unsigned ins_count)//non-standard
+		{
+			int deltasize=ins_count-rem_count;
+			if(deltasize)
+			{
+				for(int k=0;k<-deltasize;++k)//destroy extra objects if rem_count>ins_count
+					p[position+ins_count+k].~T();
+				memmove(this->p+position+ins_count, this->p+position+rem_count, (n-(position+rem_count))*sizeof(T));
+				n+=deltasize;
+				realloc(n);
+			}
+			for(int k=0;k<ins_count;++k)//copy objects
+				this->p[position+k]=p[k];
+		}
+		void replace_pod(unsigned position, unsigned rem_count, T const *p, unsigned ins_count)//non-standard
+		{
+			int deltasize=ins_count-rem_count;
+			if(deltasize)
+			{
+				for(int k=0;k<-deltasize;++k)//destroy extra objects if rem_count>ins_count
+					p[position+ins_count+k].~T();
+				memmove(this->p+position+ins_count, this->p+position+rem_count, (n-(position+rem_count))*sizeof(T));
+				n+=deltasize;
+				realloc(n);
+			}
+			memcpy(this->p+position, p, ins_count*sizeof(T));//copy data
+		}
+
+		//void swap(vector &other);//use std::swap
+		void clear()
+		{
+			n=0;
+			if(p)
+				_aligned_free(p), p=nullptr;
+		}
+	};
+}
+#endif//STD_VECTOR

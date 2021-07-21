@@ -1,0 +1,229 @@
+#pragma once
+#ifndef STD_STRING
+#define STD_STRING
+
+#include	"vector"
+namespace	std
+{
+	struct wstring;
+	struct string:public vector<char>
+	{
+		string():vector(1, '\0'){}
+		string(string const &other):vector(other)
+		{
+			if(n==0||p[n-1]!='\0')
+				push_back('\0');
+		}
+		string(string &&other):vector((string&&)other){}
+		string(unsigned n, char c='\0'):vector(n, c)
+		{
+			push_back('\0');
+		}
+		string(const char *s):vector()
+		{
+			if(s)
+				assign_pod(s, strlen(s)+1);
+			else
+				push_back('\0');
+		}
+		string(const char *s, unsigned count):vector()
+		{
+			assign_pod(s, count);
+			vector::push_back('\0');
+		}
+		string& operator=(std::string const &str)
+		{
+			assign(str.data(), str.size());
+			return *this;
+		}
+		string& operator=(std::string &&str)
+		{
+			if(this!=&str)
+			{
+				if(p)
+					_aligned_free(p);
+				p=str.p, n=str.n;
+				str.p=nullptr, str.n=0;
+			}
+			return *this;
+		}
+		string& operator=(const char *s)
+		{
+			assign_pod(s, strlen(s)+1);
+			return *this;
+		}
+		string& operator+=(char c)
+		{
+			insert_pod(n-1, c);
+			return *this;
+		}
+		string& operator+=(const char *s)
+		{
+			insert_pod(n-1, s, strlen(s));
+			return *this;
+		}
+		string& operator+=(string const &str)
+		{
+			insert_pod(n-1, str.p, str.n-1);
+			return *this;
+		}
+
+		iterator end(){return p+n-1;}
+		const_iterator end()const{return p+n-1;}
+		unsigned size()const{return n-1;}
+		bool empty()const{return n<=1;}
+		void resize(unsigned n, char c='\0')
+		{
+			vector::resize(n+1, c);
+			p[n]='\0';
+		}
+		void assign(const char *p, unsigned count)
+		{
+			n=count+1;
+			realloc(n);
+			memcpy(this->p, p, count*sizeof(char));
+			this->p[count]='\0';
+		}
+		void assign(unsigned n, const char c='\0')
+		{
+			this->n=n+1;
+			realloc(this->n);
+			memfill(p, &c, n*sizeof(char), sizeof(char));
+			p[n]='\0';
+		}
+
+		void append(const char *s, unsigned count)
+		{
+			vector::insert(n-1, s, count);
+		}
+		void append(const char *s)
+		{
+			vector::insert(n-1, s, strlen(s));
+		}
+
+		void push_back(char c){insert_pod(n-1, c);}
+		void pop_back(){erase(n-1);}
+		void clear()
+		{
+			vector::assign_pod(1, '\0');
+		}
+
+		const char* c_str()const{return p;}
+
+		//non-standard
+		char* move_and_destroy()//returns aligned internal buffer and clears itself, don't call size/push_back afterwards, later must free the buffer with _aligned_free
+		{
+			auto ret=p;
+			p=nullptr, n=0;
+			//vector::assign_pod(1, '\0');
+			return ret;
+		}
+		void to_wide(wstring &str)const;
+	};
+	struct wstring:public vector<wchar_t>
+	{
+		wstring():vector(1, L'\0'){}
+		wstring(wstring const &other):vector(other)
+		{
+			if(n==0||p[n-1]!=L'\0')
+				push_back(L'\0');
+		}
+		wstring(wstring &&other):vector((wstring&&)other){}
+		wstring(unsigned n, wchar_t c=L'\0'):vector(n, c)
+		{
+			push_back('\0');
+		}
+		wstring(const wchar_t *s):vector()
+		{
+			assign_pod(s, wcslen(s)+1);
+		}
+		wstring(const wchar_t *s, unsigned count):vector()
+		{
+			assign_pod(s, count);
+			vector::push_back(L'\0');
+		}
+		wstring& operator=(const wchar_t *s)
+		{
+			assign_pod(s, wcslen(s)+1);
+			return *this;
+		}
+		wstring& operator+=(wchar_t c)
+		{
+			insert_pod(n-1, c);
+			return *this;
+		}
+		wstring& operator+=(const wchar_t *s)
+		{
+			insert(n-1, s, wcslen(s));
+			return *this;
+		}
+		wstring& operator+=(wstring const &str)
+		{
+			insert(n-1, str.p, str.n-1);
+			return *this;
+		}
+
+		iterator end(){return p+n-1;}
+		const_iterator end()const{return p+n-1;}
+		unsigned size()const{return n-1;}
+		void resize(unsigned n, wchar_t c=L'\0')
+		{
+			vector::resize(n+1, c);
+			p[n]=L'\0';
+		}
+		void assign(const wchar_t *p, unsigned count)
+		{
+			n=count+1;
+			realloc(n);
+			memcpy(this->p, p, count*sizeof(wchar_t));
+			this->p[count]=L'\0';
+		}
+		void assign(unsigned n, const wchar_t c=L'\0')
+		{
+			this->n=n+1;
+			realloc(this->n);
+			memfill(p, &c, n*sizeof(wchar_t), sizeof(wchar_t));
+			p[n]=L'\0';
+		}
+
+		void append(const wchar_t *s, unsigned count)
+		{
+			vector::insert(n-1, s, count);
+		}
+		void append(const wchar_t *s)
+		{
+			vector::insert(n-1, s, wcslen(s));
+		}
+
+		void push_back(wchar_t c){insert_pod(n-1, c);}
+		void clear()
+		{
+			vector::assign_pod(1, L'\0');
+		}
+
+		const wchar_t* c_str()const{return p;}
+
+		//non-standard
+		wchar_t* move_and_destroy()//returns aligned internal buffer and clears itself
+		{
+			auto ret=p;
+			p=nullptr, n=0;
+			//vector::assign_pod(1, '\0');
+			return ret;
+		}
+		void to_narrow(string &str)const
+		{
+			str.resize(n);
+			for(int k=0;k<n;++k)
+				str[k]=(char)p[k];
+		}
+	};
+	inline void string::to_wide(wstring &str)const
+	{
+		str.resize(n);
+		for(int k=0;k<n;++k)
+			str[k]=p[k];
+	}
+}
+
+#endif//STD_STRING

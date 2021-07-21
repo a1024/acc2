@@ -1,0 +1,25 @@
+#pragma once
+#ifndef STD_NEW
+#define STD_NEW
+
+//void*	__cdecl operator new(size_t _Size)throw(std::bad_alloc);
+
+namespace	std
+{
+	struct nothrow_t{};
+}
+
+inline void*	__cdecl operator new(size_t, void *_Where)throw()
+{
+	return _Where;
+}
+inline void	__cdecl operator delete(void*, void*)throw()
+{
+}
+
+void*	__cdecl operator new(size_t _Size, const std::nothrow_t&);
+void*	__cdecl operator new[](size_t _Size, const std::nothrow_t&);
+void	__cdecl operator delete(void *, const std::nothrow_t&);
+void	__cdecl operator delete[](void *, const std::nothrow_t&);
+
+#endif//STD_NEW

@@ -1,0 +1,179 @@
+#pragma once
+#ifndef STD_MAP
+#define STD_MAP
+#include	"vector"
+#include	"algorithm"
+namespace	std
+{
+	template<typename K, typename V>struct kv_compare
+	{
+		typedef pair<K, V> EType;
+		bool operator()(EType const &left, EType const &right)
+		{
+			return left<right;
+		}
+	};
+	template<typename K, typename V, class LessThan=less<K>, int Align=8>struct map
+	{
+		typedef map<K, V> CType;//container type
+		typedef pair<K, V> EType;
+		typedef vector<EType, Align> VType;
+
+		VType v;//flat array
+
+		map(){}
+		map(CType const &other):v(other.v){}
+		map(CType &&other):v((VType&&)other.v){}
+		CType& operator=(CType const &other)
+		{
+			if(this!=&other)
+				v=other.v;
+			return *this;
+		}
+		CType& operator=(CType &&other)
+		{
+			if(this!=&other)
+				v=(VType&&)other.v;
+			return *this;
+		}
+
+		//pointers, not iterators, no reverse iterators yet
+		EType* begin(){return v.begin();}
+		EType const* begin()const{return v.begin();}
+		EType* end(){return v.end();}
+		EType const* end()const{return v.end();}
+		bool empty()const{return !v.size();}
+		unsigned size()const{return v.size();}
+
+		bool bin_search(K const &key, int &idx)const//internal, different from algorithm::binary_search
+		{
+			LessThan lessthan;
+			int size=v.size(), L=0, R=size-1;
+			while(L<=R)
+			{
+				int middle=(L+R)>>1;
+				if(lessthan(v[middle].first, key))
+					L=middle+1;
+				else if(lessthan(key, v[middle].first))
+					R=middle-1;
+				else
+				{
+					idx=middle;
+					return true;
+				}
+			}
+			idx=L+(L<size&&lessthan(v[L].first, key));
+			return false;
+		}
+
+		EType* find(K const &key)//non-standard
+		{
+			int idx=0;
+			if(!bin_search(key, idx))
+				return nullptr;
+			return v.data()+idx;
+		}
+		EType const* find(K const &key)const
+		{
+			int idx=0;
+			if(!bin_search(key, idx))
+				return nullptr;
+			return v.data()+idx;
+		}
+
+		V& operator[](K const &key)//calls _aligned_realloc and invalidates references
+		{
+			int idx=0;
+			if(!bin_search(key, idx))
+				v.insert(idx, EType(key, V()));
+			return v[idx].second;
+		}
+		V& operator[](K &&key)
+		{
+			int idx=0;
+			if(!bin_search(key, idx))
+				v.insert(idx, EType((K&&)key, V()));
+			return v[idx].second;
+		}
+		//V* at(K const &key)//non-standard
+		//{
+		//	int idx=0;
+		//	if(!bin_search(key, idx))
+		//		return nullptr;
+		//	return &v[idx].second;
+		//}
+		//V const* at(K const &key)const//non-standard
+		//{
+		//	int idx=0;
+		//	if(!bin_search(key, idx))
+		//		return nullptr;
+		//	return &v[idx].second;
+		//}
+		EType* data(){return v.data();}//non-standard
+		EType const* data()const{return v.data();}
+		
+		EType& insert_no_overwrite(EType const &e, bool *old)//non-standard
+		{
+			int idx=0;
+			auto found=bin_search(e.first, idx);
+			if(!found)
+				v.insert(idx, e);
+			if(old)
+				*old=found;
+			return v[idx];
+		}
+		EType& insert_no_overwrite(EType &&e, bool *old)//non-standard
+		{
+			int idx=0;
+			auto found=bin_search(e.first, idx);
+			if(!found)
+				v.insert(idx, (EType&&)e);
+			if(old)
+				*old=found;
+			return v[idx];
+		}
+
+		EType* insert(EType const &e, bool *overwrite=nullptr)//non-standard
+		{
+			int idx=0;
+			auto found=bin_search(e.first, idx);
+			if(found)
+				v[idx]=e;
+			else
+				v.insert(idx, e);
+			if(overwrite)
+				*overwrite=found;
+			return v.data()+idx;
+		}
+		EType* insert(EType &&e, bool *overwrite=nullptr)
+		{
+			int idx=0;
+			auto found=bin_search(e.first, idx);
+			if(found)
+				v[idx]=(EType&&)e;
+			else
+				v.insert(idx, (EType&&)e);
+			if(overwrite)
+				*overwrite=found;
+			return v.data()+idx;
+		}
+		//pair<EType*, bool> insert(EType const &e)
+		//{
+		//}
+
+		int erase(K const &key)//non-standard
+		{
+			int idx=0;
+			if(!bin_search(key, idx))
+				return -1;
+			v.erase(idx);
+			return idx;
+		}
+		void erase_idx(unsigned position, unsigned count)
+		{
+			v.erase(position, count);
+		}
+		void clear(){v.clear();}
+	};
+}
+#endif

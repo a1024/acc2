@@ -1,0 +1,172 @@
+#pragma once
+#ifndef STD_ALGORITHM
+#define STD_ALGORITHM
+
+#ifndef SIZE_T
+#define SIZE_T
+typedef unsigned size_t;
+#endif
+
+namespace	std
+{
+	template<typename It, typename T>inline It find(It first, It last, T const &val)
+	{
+		while(first!=last)
+		{
+			if(*first==val)
+				return first;
+			++first;
+		}
+		return last;
+	}
+	template<typename It, class Pred>inline It find_if(It first, It last, Pred pred)
+	{
+		while(first!=last)
+		{
+			if(pred(*first))
+				return first;
+			++first;
+		}
+		return last;
+	}
+	template<typename It, typename T>inline size_t count(It first, It last, T const &val)
+	{
+		size_t ret=0;
+		while(first!=last)
+		{
+			ret+=*first==val;
+			++first;
+		}
+		return ret;
+	}
+	template<typename It, class Pred>inline size_t count_if(It first, It last, Pred pred)
+	{
+		size_t ret=0;
+		while(first!=last)
+		{
+			ret+=pred(*first);
+			++first;
+		}
+		return ret;
+	}
+	//missing: search
+	
+	template<class T>struct remove_reference
+	{
+		typedef T type;
+	};
+	template<class T>struct remove_reference<T&>
+	{
+		typedef T type;
+	};
+	template<class T>struct remove_reference<T&&>
+	{
+		typedef T type;
+	};
+	template<typename T>inline typename remove_reference<T>::type&& move(T &&v)
+	{
+		return (typename remove_reference<T>::type&&)v;
+	}
+
+	template<typename T>inline void swap(T &v1, T &v2)
+	{
+		T temp=(T&&)v1;
+		v1=(T&&)v2;
+		v2=(T&&)temp;
+	}
+
+	template<typename T1, typename T2>struct pair
+	{
+		typedef pair<T1, T2> PType;
+		T1 first;
+		T2 second;
+		pair():first(), second(){}
+		pair(PType const &other):first(other.first), second(other.second){}
+		pair(PType &&other):first((T1&&)other.first), second((T2&&)other.second){}
+		pair(T1 const &first, T2 const &second):first(first), second(second){}
+		pair(T1 &&first, T2 &&second):first((T1&&)first), second((T2&&)second){}
+		PType& operator=(PType const &other)
+		{
+			if(this!=&other)
+			{
+				first=other.first;
+				second=other.second;
+			}
+			return *this;
+		}
+		PType& operator=(PType &&other)
+		{
+			if(this!=&other)
+			{
+				first=(T1&&)other.first;
+				second=(T2&&)other.second;
+			}
+			return *this;
+		}
+	};
+
+	template<typename T>struct less//same type
+	{
+		bool operator()(T const &left, T const &right)const
+		{
+			return left<right;
+		}
+	};
+
+	//template<typename T, class LessThan=less<T>>inline unsigned binary_search(T const *first, T const *last, T const &e, LessThan lessthan=LessThan())//points at first element greater than e, random access range must be sorted
+	//{
+	//	auto size=last-first;
+	//	int L=0, R=size-1;
+	//	while(L<=R)
+	//	{
+	//		int middle=(L+R)>>1;
+	//		if(lessthan(first[middle], e))
+	//			L=middle+1;
+	//		else if(lessthan(e, first[middle]))
+	//			R=middle-1;
+	//		else
+	//			return middle;
+	//	}
+	//	L+=L<size&&lessthan(first[L], e);
+	//	return L;
+	//}
+	template<typename T, class LessThan=less<T>>inline bool binary_search(T const *first, T const *last, T const &e, int &idx, LessThan lessthan=LessThan())//points at first element greater than e, random access range must be sorted
+	{
+		auto size=last-first;
+		int L=0, R=size-1;
+		while(L<=R)
+		{
+			int middle=(L+R)>>1;
+			if(lessthan(first[middle], e))
+				L=middle+1;
+			else if(lessthan(e, first[middle]))
+				R=middle-1;
+			else
+			{
+				idx=middle;
+				return true;
+			}
+		}
+		idx=L+(L<size&&lessthan(first[L], e));
+		return false;
+	}
+
+	//RAM-only, no reverse iterators
+	template<typename T, class LessThan=less<T>>inline void sort(T *first, T *last, LessThan lessthan=LessThan())
+	{
+		auto temp=new char[sizeof(T)];
+		for(T *it=first;it!=last;++it)
+		{
+			int idx=0;
+			binary_search(first, it, *it, idx, lessthan);
+			if(idx<it-first)
+			{
+				memcpy(temp, it, sizeof(T));
+				memmove(first+idx+1, first+idx, (it-first-idx)*sizeof(T));
+				memcpy(first+idx, temp, sizeof(T));
+			}
+		}
+		delete[] temp;
+	}
+}
+#endif//STD_ALGORITHM

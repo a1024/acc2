@@ -1,0 +1,34 @@
+#pragma once
+#ifndef STD_STACK
+#define STD_STACK
+#include	"vector"
+namespace	std
+{
+	template<typename T, int Align=8>struct stack
+	{
+		typedef stack<T> CType;
+		typedef vector<T, Align> VType;
+
+		VType v;
+
+		stack(){}
+		stack(CType const &other):v(other.v){}
+		stack(CType &&other):v((VType&&)other.v){}
+
+		T* data(){return v.data();}//non-standard
+
+		void push(T const &e){v.push_back(e);}
+		void push(T &&e){v.push_back((T&&)e);}
+
+		T& top(){return v.back();}
+		T const& top()const{return v.back();}
+
+		void pop(){v.pop_back();}
+
+		size_t size()const{return v.size();}
+		bool empty()const{return v.empty();}
+
+		void clear(){v.clear();}
+	};
+}
+#endif//STD_STACK
