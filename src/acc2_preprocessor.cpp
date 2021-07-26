@@ -3,12 +3,14 @@
 #include		"include/algorithm"
 #include		"include/stack"
 
+	#define		PROFILE_EVAL_EXPR
+
 const char		*p_va_args=nullptr;//mainteined by preprocessor
 
 char			*currentfilename=nullptr;//maintained by the include system
 std::string		*currentfile=nullptr;
 
-void			compile_error(Token const &token, const char *format, ...)
+void			error_pp(Token const &token, const char *format, ...)
 {
 	printf("%s(%d:%d) Error: ", currentfilename, token.line+1, token.col+1);
 	if(format)
@@ -21,7 +23,7 @@ void			compile_error(Token const &token, const char *format, ...)
 	if(compile_status<CS_ERRORS)
 		compile_status=CS_ERRORS;
 }
-void			compile_warning(Token const &token, const char *format, ...)
+void			warning_pp(Token const &token, const char *format, ...)
 {
 	printf("%s(%d:%d) Warning: ", currentfilename, token.line+1, token.col+1);
 	if(format)
@@ -218,13 +220,13 @@ static int		macro_define(MacroLibrary &macros, Token const *tokens, int remainin
 	for(;len<remaining&&tokens[len].type!=CT_NEWLINE;++len);//find length of macro definition
 	auto ptok=tokens;
 	if(ptok->type!=CT_ID)
-		compile_error(*ptok, "Expected an identifier.");
+		error_pp(*ptok, "Expected an identifier.");
 	else
 	{
 		bool overwrite=false;
 		auto p=macros.insert(MacroLibrary::EType(ptok->sdata, MacroDefinition()), &overwrite);
 		if(overwrite)
-			compile_warning(*ptok, "Macro redefinition.");
+			warning_pp(*ptok, "Macro redefinition.");
 		p->second.define(currentfilename, tokens, len);
 	}
 	return len;
@@ -240,7 +242,7 @@ static bool		macro_find_call_extent(MacroLibrary::EType const &macro, Token cons
 	auto ptok=tokens+start+1;
 	if(ptok->type!=CT_LPR)
 	{
-		compile_error(*ptok, "Macro should have an argument list with %d arguments.", macro.second.nargs);
+		error_pp(*ptok, "Macro should have an argument list with %d arguments.", macro.second.nargs);
 		len=1;
 		return false;
 	}
@@ -264,15 +266,15 @@ static bool		macro_find_call_extent(MacroLibrary::EType const &macro, Token cons
 	len=end-start;
 	if(ptok->type!=CT_RPR)
 	{
-		compile_error(*ptok, "Unmatched parenthesis.");
+		error_pp(*ptok, "Unmatched parenthesis.");
 		return false;
 	}
 	if(nargs!=macro.second.nargs)
 	{
 		if(macro.second.is_va)
-			compile_error(*ptok, "Variadic macro has %d arguments instead of at least %d.", macro.second.nargs);
+			error_pp(*ptok, "Variadic macro has %d arguments instead of at least %d.", macro.second.nargs);
 		else
-			compile_error(*ptok, "Macro has %d arguments instead of %d.", macro.second.nargs);
+			error_pp(*ptok, "Macro has %d arguments instead of %d.", macro.second.nargs);
 		return false;
 	}
 	return true;
@@ -310,13 +312,13 @@ static bool		macro_stringize(std::vector<Token> const &macrodefinition, int kt, 
 	auto &token=macrodefinition[kt];
 	if(kt+1>=(int)macrodefinition.size())
 	{
-		compile_error(token, "Stringize operator can only be applied to a macro argument.");//error in definition
+		error_pp(token, "Stringize operator can only be applied to a macro argument.");//error in definition
 		return false;
 	}
 	auto &next=macrodefinition[kt+1];
 	if(next.type!=CT_MACRO_ARG)
 	{
-		compile_error(token, "Stringize operator can only be applied to a macro argument.");//error in definition
+		error_pp(token, "Stringize operator can only be applied to a macro argument.");//error in definition
 		return false;
 	}
 	auto &arg=args2[(int)next.idata];
@@ -366,7 +368,7 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 	if(!macro_find_call_extent(macro, src, srcsize, ks, len, args))
 	{
 		ks+=len;
-		compile_error(src[ks], "Invalid macro call.");//redundant error message
+		error_pp(src[ks], "Invalid macro call.");//redundant error message
 		return;
 	}
 	int start=kd, end=kd+len;
@@ -398,7 +400,7 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 				if(kt+1>=nmacrotokens)
 				{
 					auto &next=macrodefinition[kt];
-					compile_error(next, "Token paste operator cannot be at the end of macro.");//error in definition
+					error_pp(next, "Token paste operator cannot be at the end of macro.");//error in definition
 					break;
 				}
 				Token const *t_left=nullptr;
@@ -423,7 +425,7 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 			{
 				if(kt+1>=nmacrotokens)
 				{
-					compile_error(token, "Token paste operator cannot be at the end of macro.");//error in definition
+					error_pp(token, "Token paste operator cannot be at the end of macro.");//error in definition
 					break;
 				}
 				int kd2=kd-1;
@@ -458,7 +460,7 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 								goto macro_expand_again;//should resume here after macro is expanded
 							}
 							//else
-							//	compile_error(dst[kd2-1], "Invalid macro call.");//redundant error message
+							//	error_pp(dst[kd2-1], "Invalid macro call.");//redundant error message
 						}
 					}
 					dst[kd]=arg[kt2];
@@ -529,6 +531,7 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 			case CT_FILE:
 				token2.type=CT_VAL_STRING_LITERAL;
 				token2.sdata=currentfilename;
+				token2.len=strlen(currentfilename);
 				break;
 			case CT_LINE:
 				{
@@ -560,7 +563,7 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 			if(!ntokens)
 				token.type=CTokenType(-token.type);
 			else if(ntokens>1)
-				compile_error(token, "Error line %d: Invalid token paste result:\n%s\n", token.sdata);
+				error_pp(token, "Error line %d: Invalid token paste result:\n%s\n", token.sdata);
 			else
 			{
 				auto &t2=temp_lf.expr[0];
@@ -583,272 +586,320 @@ inline void		skip_till_after_newline(std::vector<Token> const &tokens, int &kt)
 }
 
 //preprocessor blocks
-enum PPOpPrec
+static Token const *eval_tokens=nullptr, *eval_token=nullptr;
+static int		eval_ntokens=0, eval_idx=0;
+static i64		eval_temp_result=0;
+static int		eval_temp_tokentype=0;
+inline bool		eval_nexttoken()
 {
-	OPP_ANCHOR,		//operand
-	OPP_NOOP,
-	OPP_UNARY_PRE,	// ! ~ + -
-	OPP_MUL,		// * / %
-	OPP_ADD,		// + -
-	OPP_SHIFT,		// << >>
-	OPP_LESS,		// < <= > >=
-	OPP_EQUAL,		// == !=
-	OPP_BITAND,		// &
-	OPP_BITXOR,		// ^
-	OPP_BITOR,		// |
-	OPP_LOGICAND,	// &&
-	OPP_LOGICOR,	// ||
-};
-static int		ppop_precedence(CTokenType tokentype, bool bin)
+	if(eval_idx<eval_ntokens)
+	{
+		eval_token=eval_tokens+eval_idx;
+		++eval_idx;
+		return true;
+	}
+	eval_token=nullptr;
+	return false;
+}
+
+static i64		eval_ternary();
+static i64		eval_unary()
 {
-	switch(tokentype)
+	i64 result=0;
+	switch(eval_token->type)
 	{
 	case CT_VAL_INTEGER:
-		return OPP_ANCHOR;
-
-	case CT_EXCLAMATION:
-	case CT_TILDE:
-		return OPP_UNARY_PRE;
-
+		result=eval_token->idata;
+		eval_nexttoken();
+		break;
+	case CT_LPR:
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at opening parenthesis.");
+			break;
+		}
+		result=eval_ternary();//recursion
+		if(eval_token->type==CT_RPR)
+			eval_nexttoken();//skip closing parenthesis
+		else
+			error_pp(*eval_token, "Parenthesis mismatch.");
+		break;
 	case CT_PLUS:
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at +.");
+			break;
+		}
+		result=eval_unary();
+		break;
 	case CT_MINUS:
-		if(bin)
-			return OPP_ADD;
-		return OPP_UNARY_PRE;
-
-	case CT_ASTERIX:
-	case CT_SLASH:
-	case CT_MODULO:
-		return OPP_MUL;
-
-	case CT_SHIFT_LEFT:
-	case CT_SHIFT_RIGHT:
-		return OPP_SHIFT;
-
-	case CT_LESS:
-	case CT_LESS_EQUAL:
-	case CT_GREATER:
-	case CT_GREATER_EQUAL:
-	case CT_EQUAL:
-	case CT_NOT_EQUAL:
-		return OPP_LESS;
-
-	case CT_AMPERSAND:
-		return OPP_BITAND;
-	case CT_CARET:
-		return OPP_BITXOR;
-	case CT_VBAR:
-		return OPP_BITOR;
-	case CT_LOGIC_AND:
-		return OPP_LOGICAND;
-	case CT_LOGIC_OR:
-		return OPP_LOGICOR;
-	}
-	return OPP_NOOP;
-}
-inline long long find_next_anchor(std::vector<Token> const &tokens, int start, int end, int &kn)//kn must be inisialized
-{
-	Token const *token=nullptr;
-	for(;kn<end;++kn)//find next anchor
-	{
-		token=&tokens[kn];
-		if(token->type==CT_VAL_INTEGER)
-			return token->idata;
-	}
-	if(kn==end)//reached the end
-	{
-		--kn;
-		for(;kn>=start;--kn)//find last anchor
+		if(!eval_nexttoken())
 		{
-			token=&tokens[kn];
-			if(token->type==CT_VAL_INTEGER)
-				return token->idata;
-		}
-	}
-	if(kn>=start&&kn<end)
-		compile_error(tokens[kn], "Expected an integer.");
-	else if(start<end)
-		compile_error(tokens[start], "Expected an integer.");
-	return 0;
-}
-inline bool		is_binary(std::vector<Token> const &tokens, int start, int lk)//NOTE[1]: this works because there are no unary-post operators in the c preprocessor
-{
-	int lk2=lk-1;
-	for(;lk2>=start;--lk2)
-		if(tokens[lk2].type>CT_IGNORED)
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at -.");
 			break;
-	return lk2>=start&&ppop_precedence(tokens[lk2].type, true)<=OPP_NOOP;//left is binary only if there is something right before it that is not an operator. See note [1].
-}
-static long long eval_expr_flat(std::vector<Token> &tokens, int start, int end)//only for expressions withoud unary-post operators
-{
-	Token *token=nullptr;
-	int kn=start, kn0=-1;
-	long long result=find_next_anchor(tokens, start, end, kn);
-
-	for(;;)//main eval loop
-	{
-		int lk=kn-1, rk=kn+1;
-		for(;lk>=start;--lk)//find left operator
-			if(tokens[lk].type>CT_IGNORED)
-				break;
-		for(;rk<end;++rk)//find right operator
-			if(tokens[rk].type>CT_IGNORED)
-				break;
-		bool dir_left=false, left_bin=false;
-		if(lk>=start)//found left operator
-		{
-			auto lop=&tokens[lk];
-			left_bin=is_binary(tokens, start, lk);
-			int lp=ppop_precedence(lop->type, left_bin);
-			if(lp<=OPP_NOOP)
-			{
-				compile_error(tokens[lk], "Expected an operator.");//need better error diagnostic
-				goto eval_flat_no_left;
-			}
-			if(rk<end)//both left & right found: select which one to take
-			{
-				auto rop=&tokens[rk];
-				int rp=ppop_precedence(rop->type, true);//Always bin. See note [1] above.
-				if(rp<=OPP_NOOP)
-				{
-					compile_error(tokens[rk], "Expected an operator.");//need better error diagnostic
-					goto eval_flat_no_right;
-				}
-				dir_left=lp<=rp;//on precedence match, prefer left
-			}
-			else
-			eval_flat_no_right:
-				dir_left=true;
 		}
-		else
+		result=-eval_unary();
+		break;
+	case CT_EXCLAMATION:
+		if(!eval_nexttoken())
 		{
-		eval_flat_no_left:
-			if(rk<end)//found right operator
-				dir_left=false;
-			else//no operators found
-				break;
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at !.");
+			break;
 		}
-		if(dir_left)
+		result=!eval_unary();
+		break;
+	case CT_TILDE:
+		if(!eval_nexttoken())
 		{
-			auto lop=&tokens[lk];
-			if(left_bin)
-			{
-				kn0=lk-1;
-				for(;kn0>=start;--kn0)//find previous anchor
-					if(tokens[kn0].type>CT_IGNORED)
-						break;
-				if(tokens[kn0].type!=CT_VAL_INTEGER)
-				{
-					compile_error(tokens[kn0], "Expected an integer.");
-					if(kn0>=start)
-						tokens[kn0].type=CTokenType(-tokens[kn0].type);
-					lop->type=CTokenType(-lop->type);
-				}
-				auto op1=&tokens[kn0], op2=&tokens[kn];
-				switch(lop->type)
-				{
-				case CT_PLUS:			op1->idata=op1->idata+op2->idata;break;
-				case CT_MINUS:			op1->idata=op1->idata-op2->idata;break;
-				case CT_ASTERIX:		op1->idata=op1->idata*op2->idata;break;
-				case CT_SLASH:
-					if(op2->idata)
-						op1->idata=op1->idata/op2->idata;
-					else
-					{
-						compile_error(*op2, "Division by zero.");
-						op1->type=CT_VAL_FLOAT;
-						op1->fdata=_HUGE;
-					}
-					break;
-				case CT_MODULO:
-					if(op2->idata)
-						op1->idata=op1->idata%op2->idata;
-					else
-					{
-						compile_warning(*op2, "Division by zero.");
-						op1->idata=0;
-					}
-					break;
-				case CT_SHIFT_LEFT:		op1->idata=op1->idata<<op2->idata;break;
-				case CT_SHIFT_RIGHT:	op1->idata=op1->idata>>op2->idata;break;
-				case CT_LESS:			op1->idata=op1->idata<op2->idata;break;
-				case CT_LESS_EQUAL:		op1->idata=op1->idata<=op2->idata;break;
-				case CT_GREATER:		op1->idata=op1->idata>op2->idata;break;
-				case CT_GREATER_EQUAL:	op1->idata=op1->idata>=op2->idata;break;
-				case CT_EQUAL:			op1->idata=op1->idata==op2->idata;break;
-				case CT_NOT_EQUAL:		op1->idata=op1->idata!=op2->idata;break;
-				case CT_AMPERSAND:		op1->idata=op1->idata&op2->idata;break;
-				case CT_CARET:			op1->idata=op1->idata^op2->idata;break;
-				case CT_VBAR:			op1->idata=op1->idata|op2->idata;break;
-				case CT_LOGIC_AND:		op1->idata=op1->idata&&op2->idata;break;
-				case CT_LOGIC_OR:		op1->idata=op1->idata||op2->idata;break;
-				}
-				op2->type=CTokenType(-op2->type);
-				kn=kn0;
-			}
-			else
-			{
-				auto op1=&tokens[kn];
-				switch(lop->type)
-				{
-				case CT_EXCLAMATION:op1->idata=!op1->idata;	break;
-				case CT_TILDE:		op1->idata=~op1->idata;	break;
-				case CT_PLUS:								break;
-				case CT_MINUS:		op1->idata=-op1->idata;	break;
-				}
-			}
-			lop->type=CTokenType(-lop->type);
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at ~.");
+			break;
 		}
-		else
-		{
-			++kn;
-			find_next_anchor(tokens, start, end, kn);
-		}
-	}//end eval loop
+		result=~eval_unary();
+		break;
+	default:
+		error_pp(*eval_token, "Unexpected token: %d: %s", eval_token->type, token2str(eval_token->type));
+		break;
+	}
 	return result;
 }
-inline int		find_question_or_colon(std::vector<Token> &tokens, int start)
+static i64		eval_product()
 {
-	int ntokens=tokens.size();
-	for(;start<ntokens;++start)//find question/colon/end
+	i64 result=eval_unary();
+	while(eval_token&&(eval_token->type==CT_ASTERIX||eval_token->type==CT_SLASH||eval_token->type==CT_MODULO))
 	{
-		auto token=&tokens[start];
-		if(token->type==CT_QUESTION||token->type==CT_COLON)
+		int token=eval_token->type;
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at *, / or %.");
 			break;
-	}
-	return start;
-}
-static long long eval_expr_ternary(std::vector<Token> &tokens, int start, int end)//recursive
-{
-	int ntokens=tokens.size();
-	int qend=find_question_or_colon(tokens, start);//find question/colon/end
-	long long result=eval_expr_flat(tokens, start, end);
-	if(qend<end&&tokens[qend].type==CT_QUESTION)
-	{
-		int separator=qend+1;
-		int level=1;
-		for(;separator<ntokens;++separator)//find matching colon after qend
-		{
-			auto token=&tokens[separator];
-			level+=(token->type==CT_QUESTION)-(token->type==CT_COLON);
-			if(!level)
-				break;
 		}
-		if(result)
-			result=eval_expr_ternary(tokens, qend+1, separator);
-		else
+		switch(token)
 		{
-			qend=find_question_or_colon(tokens, separator+1);
-			result=eval_expr_ternary(tokens, separator+1, qend);
+		case CT_ASTERIX:
+			result*=eval_unary();
+			break;
+		case CT_SLASH:
+			eval_temp_result=eval_unary();
+			if(!eval_temp_result)
+				error_pp(*eval_token, "Integer division by zero.");
+			else
+				result/=eval_temp_result;
+			break;
+		case CT_MODULO:
+			eval_temp_result=eval_unary();
+			if(!eval_temp_result)
+				error_pp(*eval_token, "Integer division by zero.");
+			else
+				result%=eval_temp_result;
+			break;
 		}
 	}
 	return result;
 }
-static long long eval_expr(MacroLibrary const &macros, std::vector<Token> const &tokens, int start, int end)
+static i64		eval_summation()
 {
-	int ntokens=end-start;
-	std::vector<Token> t2(ntokens);
+	i64 result=eval_product();
+	while(eval_token&&(eval_token->type==CT_PLUS||eval_token->type==CT_MINUS))
 	{
+		eval_temp_tokentype=eval_token->type;
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at + or -.");
+			break;
+		}
+		switch(eval_temp_tokentype)
+		{
+		case CT_PLUS:
+			result+=eval_product();
+			break;
+		case CT_MINUS:
+			result-=eval_product();
+			break;
+		}
+	}
+	return result;
+}
+static i64		eval_shift()
+{
+	i64 result=eval_summation();
+	while(eval_token&&(eval_token->type==CT_SHIFT_LEFT||eval_token->type==CT_SHIFT_RIGHT))
+	{
+		eval_temp_tokentype=eval_token->type;
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at << or >>.");
+			break;
+		}
+		switch(eval_temp_tokentype)
+		{
+		case CT_SHIFT_LEFT:
+			result<<=eval_summation();
+			break;
+		case CT_SHIFT_RIGHT:
+			result>>=eval_summation();
+			break;
+		}
+	}
+	return result;
+}
+static i64		eval_comp()
+{
+	i64 result=eval_shift();
+	while(eval_token&&(eval_token->type==CT_LESS||eval_token->type==CT_LESS_EQUAL||eval_token->type==CT_GREATER||eval_token->type==CT_GREATER_EQUAL))
+	{
+		eval_temp_tokentype=eval_token->type;
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at <, <=, > or >=.");
+			break;
+		}
+		switch(eval_temp_tokentype)
+		{
+		case CT_LESS:
+			result=result<eval_shift();
+			break;
+		case CT_LESS_EQUAL:
+			result=result<=eval_shift();
+			break;
+		case CT_GREATER:
+			result=result>eval_shift();
+			break;
+		case CT_GREATER_EQUAL:
+			result=result>=eval_shift();
+			break;
+		}
+	}
+	return result;
+}
+static i64		eval_eq()
+{
+	i64 result=eval_comp();
+	while(eval_token&&(eval_token->type==CT_EQUAL||eval_token->type==CT_NOT_EQUAL))
+	{
+		eval_temp_tokentype=eval_token->type;
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at == or !=.");
+			break;
+		}
+		switch(eval_temp_tokentype)
+		{
+		case CT_EQUAL:
+			result=result==eval_comp();
+			break;
+		case CT_NOT_EQUAL:
+			result=result!=eval_comp();
+			break;
+		}
+	}
+	return result;
+}
+static i64		eval_and()
+{
+	i64 result=eval_eq();
+	while(eval_token&&eval_token->type==CT_AMPERSAND)
+	{
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at &.");
+			break;
+		}
+		result&=eval_eq();
+	}
+	return result;
+}
+static i64		eval_xor()
+{
+	i64 result=eval_and();
+	while(eval_token&&eval_token->type==CT_CARET)
+	{
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at ^.");
+			break;
+		}
+		result^=eval_and();
+	}
+	return result;
+}
+static i64		eval_or()
+{
+	i64 result=eval_xor();
+	while(eval_token&&eval_token->type==CT_VBAR)
+	{
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at |.");
+			break;
+		}
+		result|=eval_xor();
+	}
+	return result;
+}
+static i64		eval_logic_and()
+{
+	i64 result=eval_or();
+	while(eval_token&&eval_token->type==CT_LOGIC_AND)
+	{
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at &&.");
+			break;
+		}
+		result=result&&eval_or();
+	}
+	return result;
+}
+static i64		eval_logic_or()
+{
+	i64 result=eval_logic_and();
+	while(eval_token&&eval_token->type==CT_LOGIC_OR)
+	{
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at ||.");
+			break;
+		}
+		result=result||eval_logic_and();
+	}
+	return result;
+}
+static i64		eval_ternary()
+{
+	i64 result=eval_logic_or();
+	if(eval_token&&eval_tokens[eval_idx].type==CT_QUESTION)
+	{
+		if(!eval_nexttoken())
+		{
+			error_pp(eval_tokens[eval_ntokens-1], "Unexpected end of expression at ?.");
+			return result;
+		}
+		if(!result)//skip till after matching colon
+		{
+			++eval_idx;
+			int level=1;
+			for(;eval_idx<eval_ntokens;++eval_idx)//find matching colon
+			{
+				auto token=&eval_tokens[eval_idx];
+				level+=(token->type==CT_QUESTION)-(token->type==CT_COLON);
+				if(!level)
+				{
+					++eval_idx;
+					break;
+				}
+			}
+		}
+		result=eval_ternary();
+	}
+	return result;
+}
+i64				eval_expr(std::vector<Token> const &tokens, int start, int end, MacroLibrary const *macros)
+{
+	eval_ntokens=end-start;
+	std::vector<Token> t2;
+	if(macros)
+	{
+		t2.resize(eval_ntokens);
 		MacroLibrary::EType const *macro=nullptr;
 		int kd=0;
 		for(int ks=start;ks<end;)//expand macros & resolve 'defined' operator
@@ -857,20 +908,20 @@ static long long eval_expr(MacroLibrary const &macros, std::vector<Token> const 
 			if(token->type==CT_DEFINED)
 			{
 				if(ks+1>=end)
-					compile_error(*token, "\'defined\': Expected an identifier.");
+					error_pp(*token, "\'defined\': Expected an identifier.");
 				else
 				{
 					++ks;
 					token=&tokens[ks];
 					auto token2=&t2[kd];
 					token2->type=CT_VAL_INTEGER;
-					token2->idata=macros.find(token->sdata)!=0;
+					token2->idata=macros->find(token->sdata)!=0;
 					++kd;
 				}
 				++ks;
 			}
-			else if(token->type==CT_ID&&(macro=macros.find(token->sdata)))
-				macro_expand(macros, *macro, tokens.data(), tokens.size(), ks, t2, kd);
+			else if(token->type==CT_ID&&(macro=macros->find(token->sdata)))
+				macro_expand(*macros, *macro, tokens.data(), tokens.size(), ks, t2, kd);
 			else
 			{
 				if(token->type>CT_IGNORED)
@@ -882,58 +933,29 @@ static long long eval_expr(MacroLibrary const &macros, std::vector<Token> const 
 			}
 		}
 		t2.resize(kd);
+		eval_tokens=t2.data();
+		eval_ntokens=t2.size();
 	}
-	ntokens=t2.size();
-	if(!ntokens)
+	else
+		eval_tokens=tokens.data()+start;
+	//	memcpy(eval_tokens.data(), tokens.data()+start, eval_ntokens*sizeof(Token));
+#ifdef PROFILE_EVAL_EXPR
+	prof.add("eval copy");
+#endif
+	if(eval_ntokens<=0)
 	{
-		auto token=&tokens[start-(start>=(int)tokens.size())];
-		compile_error(*token, "Expected an integer expression.");
+		printf("INTERNAL ERROR: exal_expr was called with %d tokens.\n", eval_ntokens);
+		printf("\tsize  = %d\n", tokens.size());
+		printf("\tstart = %d\n", start);
+		printf("\tend   = %d\n", end);
+		compile_status=CS_FATAL_ERRORS;
+		//auto token=&tokens[start-(start>=(int)tokens.size())];
+		//error_pp(*token, "Expected an integer expression.");
 		return 0;
 	}
-	long long result=0;
-	Token *token=nullptr;
-	for(;;)//evaluation loop
-	{
-		int toplevel=0, fstart=0, fend=ntokens;
-		int level=0;
-		bool peak=false;
-		for(int k=0;k<ntokens;++k)
-		{
-			token=&t2[k];
-			if(token->type==CT_LPR)
-			{
-				++level;
-				if(toplevel<level)
-					toplevel=level, fstart=k, peak=true;
-			}
-			else if(token->type==CT_RPR)
-			{
-				--level;
-				if(peak)
-					fend=k, peak=false;
-				if(level<0)
-					compile_error(*token, "Unmatched closing parenthesis \')\'.");
-			}
-		}
-		if(level)//TODO: check what happens next here
-		{
-			auto token=&t2[0];
-			if(level<0)
-				compile_error(*token, "Extra unmatched closing parentheses \')\' in expression.");
-			else
-				compile_error(*token, "Extra unmatched opening parentheses \'(\' in expression.");
-		}
-		if(toplevel)//clear parentheses
-		{
-			t2[fstart].type=CTokenType(-t2[fstart].type);
-			t2[fend].type=CTokenType(-t2[fend].type);
-		}
-
-		result=eval_expr_ternary(t2, fstart, fend);
-
-		if(!toplevel)
-			break;
-	}
+	eval_idx=0;
+	eval_nexttoken();
+	i64 result=eval_ternary();
 	return result;
 }
 
@@ -956,12 +978,12 @@ static int		skip_block(MacroLibrary const &macros, std::vector<Token> const &tok
 				break;
 			case CT_ELIF:
 				if(lastblock)
-					compile_error(*token, "#else already appeared. Expected #endif.");
+					error_pp(*token, "#else already appeared. Expected #endif.");
 				else if(level==1)
 				{
 					int start=k;
 					skip_till_newline(tokens, k);
-					auto result=eval_expr(macros, tokens, start, k);
+					auto result=eval_expr(tokens, start, k, &macros);
 					k+=k<ntokens;//skip newline
 					if(result)
 						return 1;
@@ -969,13 +991,13 @@ static int		skip_block(MacroLibrary const &macros, std::vector<Token> const &tok
 				break;
 			case CT_ELSE:
 				if(lastblock)
-					compile_error(*token, "#else already appeared. Expected #endif.");
+					error_pp(*token, "#else already appeared. Expected #endif.");
 				else if(level==1)
 				{
 					int start=k;
 					skip_till_newline(tokens, k);
 					if(start<k)
-						compile_error(tokens[start], "Unexpected tokens after #else.");
+						error_pp(tokens[start], "Unexpected tokens after #else.");
 					k+=k<ntokens;//skip newline
 					return 1;
 				}
@@ -987,7 +1009,7 @@ static int		skip_block(MacroLibrary const &macros, std::vector<Token> const &tok
 					int start=k;
 					skip_till_newline(tokens, k);
 					if(start<k)
-						compile_error(tokens[start], "Unexpected tokens after #endif.");
+						error_pp(tokens[start], "Unexpected tokens after #endif.");
 					k+=k<ntokens;//skip newline
 					return 0;
 				}
@@ -999,7 +1021,7 @@ static int		skip_block(MacroLibrary const &macros, std::vector<Token> const &tok
 	if(k>=ntokens)
 	{
 		auto token=&tokens[k0];
-		compile_error(*token, "Unexpected #endif.");
+		error_pp(*token, "Unexpected #endif.");
 	}
 	return 0;
 }
@@ -1062,7 +1084,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 {
 	if(!lf.filename)
 	{
-		printf("INTERNAL ERROR: Preprocessor: Expression filename is NULL.\n");
+		printf("INTERNAL ERROR: Preprocessor: LexFile filename is NULL.\n");
 		compile_status=CS_FATAL_ERRORS;
 		return;
 	}
@@ -1074,10 +1096,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 	}
 	
 #if 0//lexer test
-	long long t1=__rdtsc();
 	lex(lf);
-	long long t2=__rdtsc();
-	printf("Lexed in %lld cycles\n", t2-t1);
 	prof.add("lex source");
 #else
 	bool lexed_before=false;
@@ -1128,7 +1147,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 				++ks;
 				if(ks>=ntokens)
 				{
-					compile_error(*token, "Unexpected end of file. Expected a preprocessor directive.");
+					error_pp(*token, "Unexpected end of file. Expected a preprocessor directive.");
 					continue;
 				}
 				token=&clf->expr[ks];
@@ -1142,17 +1161,17 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 				case CT_UNDEF:
 					token=&clf->expr[ks];
 					if(token->type!=CT_ID)
-						compile_error(*token, "Expected an identifier after #undef.");
+						error_pp(*token, "Expected an identifier after #undef.");
 					else
 					{
 						int result=macros.erase(token->sdata);
 						if(result==-1)
-							compile_error(*token, "\'%s\' is already a defined macro.", token->sdata);
+							error_pp(*token, "\'%s\' is already a defined macro.", token->sdata);
 						++ks;
 						int start=ks;
 						skip_till_newline(clf->expr, ks);
 						if(start<ks)
-							compile_error(clf->expr[start], "Expected a single token after #undef.");
+							error_pp(clf->expr[start], "Expected a single token after #undef.");
 						ks+=ks<ntokens;
 					}
 					break;
@@ -1161,7 +1180,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 				case CT_IFNDEF:
 					token=&clf->expr[ks];
 					if(token->type!=CT_ID)
-						compile_error(*token, "Expected an identifier.");
+						error_pp(*token, "Expected an identifier.");
 					else
 					{
 						if(!macros.find(token->sdata)!=(clf->expr[ks-1].type==CT_IFNDEF))
@@ -1173,7 +1192,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 							int start=ks;
 							skip_till_newline(clf->expr, ks);
 							if(start<ks)
-								compile_error(clf->expr[start], "Expected a single token after #ifdef/ifndef.");
+								error_pp(clf->expr[start], "Expected a single token after #ifdef/ifndef.");
 							ks+=ks<ntokens;
 						}
 					}
@@ -1182,7 +1201,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 					{
 						int start=ks;
 						skip_till_newline(clf->expr, ks);
-						auto result=eval_expr(macros, clf->expr, start, ks);
+						auto result=eval_expr(clf->expr, start, ks, &macros);
 						if(result)
 						{
 							++iflevel;
@@ -1204,9 +1223,9 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 							--iflevel;
 						}
 						else//no else/elif expected
-							compile_error(*token, "Unexpected #else/elif.");
+							error_pp(*token, "Unexpected #else/elif.");
 						if(lastblock&&extratokens)
-							compile_error(clf->expr[start], "Unexpected tokens after #else.");
+							error_pp(clf->expr[start], "Unexpected tokens after #else.");
 						if(!expected)
 							ks+=ks<ntokens;//skip newline
 					}
@@ -1214,13 +1233,13 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 				case CT_ENDIF:
 					{
 						if(!iflevel)
-							compile_error(*token, "Unmatched #endif.");
+							error_pp(*token, "Unmatched #endif.");
 						else
 							--iflevel;
 						int start=ks;
 						skip_till_newline(clf->expr, ks);
 						if(start<ks)
-							compile_error(clf->expr[start], "Unexpected tokens after #endif.");
+							error_pp(clf->expr[start], "Unexpected tokens after #endif.");
 						ks+=ks<ntokens;
 					}
 					break;
@@ -1232,7 +1251,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 						char *filename=find_include(token->sdata, token->type==CT_VAL_STRING_LITERAL);
 						if(!filename)
 						{
-							compile_error(*token, "Cannot open include file \'%s\'.", token->sdata);
+							error_pp(*token, "Cannot open include file \'%s\'.", token->sdata);
 							skip_till_after_newline(clf->expr, ks);
 						}
 						else
@@ -1255,7 +1274,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 					}
 					else
 					{
-						compile_error(*token, "Expected include file name.");
+						error_pp(*token, "Expected include file name.");
 						skip_till_after_newline(clf->expr, ks);
 					}
 					break;
@@ -1272,14 +1291,14 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 					if(ks<ntokens&&clf->expr[ks].type==CT_VAL_STRING_LITERAL)
 					{
 						auto token2=&clf->expr[ks];
-						compile_error(*token, "%s", token2->sdata);//error message may contain '%'
+						error_pp(*token, "%s", token2->sdata);//error message may contain '%'
 					}
 					else
-						compile_error(*token, "#error directive found.");
+						error_pp(*token, "#error directive found.");
 					skip_till_after_newline(clf->expr, ks);
 					break;
 				default:
-					compile_error(*token, "Expected a preprocessor directive (define/undef/if/ifdef/ifndef/pragma/error).");
+					error_pp(*token, "Expected a preprocessor directive (define/undef/if/ifdef/ifndef/pragma/error).");
 					skip_till_after_newline(clf->expr, ks);
 					break;
 				}
@@ -1327,7 +1346,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 			}
 		}//end preprocess loop
 		if(iflevel>0)
-			compile_error(clf->expr.back(), "End of file reached. Expected %s #endif\'s.", iflevel);
+			error_pp(clf->expr.back(), "End of file reached. Expected %s #endif\'s.", iflevel);
 		bookmarks.pop();
 	}//end file loop
 	prof.add("preprocess");
@@ -1338,6 +1357,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 	for(int k=0;k<(int)lexlibrary.size();++k)//reset '#pragma once' so that lexed headers are included in an another source
 		lexlibrary.data()[k].second->flags=EXPR_NORMAL;
 	prof.add("reset lexedfiles flags");
+	currentfilename=lf.filename;
 #endif
 }
 void			expr2text(Expression const &ex, std::string &text)

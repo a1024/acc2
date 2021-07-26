@@ -13,7 +13,7 @@ int				prof_print=true;//
 
 const char		*keywords[]=//order corresponds to enum CTokenType
 {
-#define			TOKEN(STRING, LABEL)	STRING
+#define			TOKEN(STRING, LABEL, FLAGS)	STRING,
 #include		"acc2_keywords_c.h"
 #undef			TOKEN
 };
@@ -302,9 +302,26 @@ void			parse_args(std::vector<std::string> const &args)
 		}
 	}//end for
 }
+
+//extern "C" void assembly_test();
+//static int	current_depth=0;
+//void			depth_rec()
+//{
+//	++current_depth;
+//	printf("current depth = %d\r", current_depth);
+//	depth_rec();
+//}
+
 int				main(int argc, const char **argv)
 {
+	//depth_rec();//will crash, eventually
+
 	prof.start();
+
+	//const int LOL_1=1?5:1 ? 0?1:0 : 1?3:1;
+	//codegen_test();
+	//__debugbreak();
+	//assembly_test();//
 
 	printf("ACC2 built on %s, %s\n\n", __DATE__, __TIME__);//started on 2021-07-09
 	if(argc==1)
@@ -341,7 +358,7 @@ int				main(int argc, const char **argv)
 	localtime_s(&tm, &t);
 
 	int nsources=infilenames.size();
-	for(int ks=0;ks<nsources;++ks)
+	for(int ks=0;ks<nsources;++ks)//source loop
 	{
 		LexFile lf;
 		printf("\n%d/%d: \"%s\"...\n", ks+1, nsources, infilenames[ks]);
@@ -372,6 +389,9 @@ int				main(int argc, const char **argv)
 
 		preprocess(macros, lf);
 
+		compile(lf);//
+
+#if 0
 		switch(action)
 		{
 		case CA_PREPROCESS:	//c/c++ -> preprocessed c/c++
@@ -397,7 +417,8 @@ int				main(int argc, const char **argv)
 			}
 			break;
 		}
-	}
+#endif
+	}//end source loop
 	lexedfiles_destroy();
 	stringlib_destroy();
 	prof.add("free strings");

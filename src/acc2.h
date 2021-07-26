@@ -7,6 +7,7 @@
 #include		"include/tmmintrin.h"
 
 #define			SIZEOF(STATIC_ARRAY)	(sizeof(STATIC_ARRAY)/sizeof(*STATIC_ARRAY))
+typedef long long i64;
 
 #define				G_BUF_SIZE	2048
 extern const int	g_buf_size;
@@ -265,7 +266,7 @@ public:
 			}
 			printf("\n");
 			double now=time_ms();
-			printf("Elapsed:\t%lfms\n", now-timestamp_start);
+			printf("total run time:\t%lfms\n", now-timestamp_start);
 #else
 			HFONT hFont=(HFONT)GetStockObject(DEFAULT_GUI_FONT);
 			hFont=(HFONT)SelectObject(hDC, hFont);
@@ -342,17 +343,19 @@ double			_10pow(int n);
 inline unsigned	load32(const char *p){return p[0]|p[1]<<8|p[2]<<16|p[3]<<24;}
 inline unsigned	load24(const char *p){return p[0]|p[1]<<8|p[2]<<16;}
 inline unsigned short load16(const char *p){return p[0]|p[1]<<8;}
-inline char		is_whitespace(char c)
+#define			CASE_MASK		0xDF
+#define			UNSIGNED_IN_RANGE(CONST_START, VAR, CONST_END_INCLUSIVE)	((unsigned)((VAR)-(CONST_START))<(CONST_END_INCLUSIVE)+1-(CONST_START))
+inline char		is_whitespace(byte c)
 {
 	return c>=' '||c<='\t'||c>='\r'||c<='\n';
 }
-inline char		is_idstart(char c)
+inline char		is_idstart(byte c)
 {
-	return c>='A'&&c<='Z'||c>='a'&&c<='z'||c=='_';
+	return UNSIGNED_IN_RANGE('A', c, 'Z')||UNSIGNED_IN_RANGE('a', c, 'z')||c=='_';
 }
-inline char		is_alphanumeric(char c)
+inline char		is_alphanumeric(byte c)
 {
-	return c>='0'&&c<='9'||c>='A'&&c<='Z'||c>='a'&&c<='z'||c=='_';
+	return UNSIGNED_IN_RANGE('0', c, '9')||UNSIGNED_IN_RANGE('A', c, 'Z')||UNSIGNED_IN_RANGE('a', c, 'z')||c=='_';
 }
 const char*		describe_char(char c);
 long long		acme_read_integer(const char *text, int size, int base, int start, int *ret_end);
@@ -377,7 +380,7 @@ void			assign_path_or_name(std::string &out, const char *name, int len, bool is_
 //keywords
 typedef enum//should include cpp,		separate enum for asm
 {
-#define		TOKEN(STRING, LABEL)	LABEL
+#define		TOKEN(STRING, LABEL, FLAGS)	LABEL,
 #include	"acc2_keywords_c.h"
 #undef		TOKEN
 } CTokenType;
@@ -426,9 +429,9 @@ inline byte		token_flags(char c0, char c1)
 		|(c1=='\r'||c1=='\n')<<3;
 }
 
-void			compile_error(int line0, int col0, const char *format, ...);//for lexer
-void			compile_error(Token const &token, const char *format, ...);
-void			compile_warning(Token const &token, const char *format, ...);//same implementation
+void			error_lex(int line0, int col0, const char *format, ...);//for lexer
+void			error_pp(Token const &token, const char *format, ...);
+void			warning_pp(Token const &token, const char *format, ...);//same implementation
 
 //pre-processor structures
 extern const char *p_va_args;
@@ -462,7 +465,7 @@ struct			MacroDefinition
 			++kt;//skip LPR
 			if(kt>=len)
 			{
-				compile_error(*ctok, "Improperly terminated macro argument list.");
+				error_pp(*ctok, "Improperly terminated macro argument list.");
 				return false;
 			}
 			ctok=tokens+kt;
@@ -478,7 +481,7 @@ struct			MacroDefinition
 						argnames.insert_no_overwrite(MacroArgSet::EType(p_va_args, nargs), &old);
 						if(old)
 						{
-							compile_error(*ctok, "__VA_ARGS__ already declared.");//unreachable
+							error_pp(*ctok, "__VA_ARGS__ already declared.");//unreachable
 							return false;
 						}
 
@@ -490,14 +493,14 @@ struct			MacroDefinition
 							++kt;//skip RPR
 						else
 						{
-							compile_error(*ctok, "Expected a closing parenthesis \')\'.");
+							error_pp(*ctok, "Expected a closing parenthesis \')\'.");
 							return false;
 						}
 						break;
 					}
 					if(ctok->type!=CT_ID)
 					{
-						compile_error(*ctok, "Expected a macro argument name.");
+						error_pp(*ctok, "Expected a macro argument name.");
 						//how to read the rest?
 						return false;
 					}
@@ -505,12 +508,12 @@ struct			MacroDefinition
 					auto result=&argnames.insert_no_overwrite(MacroArgSet::EType(ctok->sdata, nargs), &old);
 					if(result->first==p_va_args)
 					{
-						compile_error(*ctok, "\'__VA_ARGS__\' is reserved for variadic macro expansion.");
+						error_pp(*ctok, "\'__VA_ARGS__\' is reserved for variadic macro expansion.");
 						return false;
 					}
 					if(old)
 					{
-						compile_error(*ctok, "Macro argument name appeared before.");
+						error_pp(*ctok, "Macro argument name appeared before.");
 						return false;
 					}
 					++nargs;
@@ -524,7 +527,7 @@ struct			MacroDefinition
 					}
 					if(ctok->type!=CT_COMMA)
 					{
-						compile_error(*ctok, "Expected a closing parenthesis \')\' or a comma \',\'.");
+						error_pp(*ctok, "Expected a closing parenthesis \')\' or a comma \',\'.");
 						return false;
 					}
 				}
@@ -556,7 +559,7 @@ struct			MacroDefinition
 				}
 				else
 				{
-					compile_error(*ctok, "__VA_ARGS__ is reserved for variadic macros.");//filtered before, unreachable
+					error_pp(*ctok, "__VA_ARGS__ is reserved for variadic macros.");//filtered before, unreachable
 					return false;
 				}
 			}
@@ -565,7 +568,7 @@ struct			MacroDefinition
 		//check macro definition for errors
 		if(definition[0].type==CT_CONCATENATE||definition.back().type==CT_CONCATENATE)
 		{
-			compile_error(definition[0], "Token paste operator \'##\' cannot appear at either end of macro definition.");
+			error_pp(definition[0], "Token paste operator \'##\' cannot appear at either end of macro definition.");
 			return false;
 		}
 		for(int kt2=0;kt2<(int)definition.size();++kt2)
@@ -574,12 +577,12 @@ struct			MacroDefinition
 			{
 				if(kt2+1>=(int)definition.size())
 				{
-					compile_warning(definition[kt2], "Stringize operator \'#\' cannot appear at the end of macro definition.");
+					warning_pp(definition[kt2], "Stringize operator \'#\' cannot appear at the end of macro definition.");
 					//return false;
 				}
 				else if(definition[kt2+1].type!=CT_MACRO_ARG)
 				{
-					compile_warning(definition[kt2+1], "Stringize operator \'#\' can only be applied to macro arguments.");
+					warning_pp(definition[kt2+1], "Stringize operator \'#\' can only be applied to macro arguments.");
 					//return false;
 				}
 			}
@@ -618,6 +621,8 @@ inline char*	add_string(const char *static_array)
 	std::string str=static_array;
 	return add_string(str);
 }
+const char*		token2str(CTokenType tokentype);
+long long		eval_expr(std::vector<Token> const &tokens, int start, int end, MacroLibrary const *macros=nullptr);
 
 
 //API
@@ -631,8 +636,16 @@ enum			CompileStatus
 extern int		compile_status;
 void			init_lexer();
 void			macro_define(MacroLibrary &macros, const char *extern_name, long long data, CTokenType tokentype);
-void			preprocess(MacroLibrary &macros, LexFile &ex);//LexFile::text is optional, but LexFile::filename must be provided (from the strings library)
+void			preprocess(MacroLibrary &macros, LexFile &lf);//LexFile::text is optional, but LexFile::filename must be provided (from the strings library)
 void			expr2text(Expression const &ex, std::string &text);
+
+void			compile(LexFile &lf);
+
 void			lexedfiles_destroy();
 void			stringlib_destroy();
+
+
+//experimental
+void			pause();
+void			codegen_test();
 #endif

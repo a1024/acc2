@@ -132,6 +132,16 @@ namespace	std
 				*old=found;
 			return v[idx];
 		}
+		EType& insert_no_overwrite(K const &key, bool *old)//non-standard
+		{
+			int idx=0;
+			auto found=bin_search(key, idx);
+			if(!found)
+				v.insert(idx, EType(key, V()));
+			if(old)
+				*old=found;
+			return v[idx];
+		}
 
 		EType* insert(EType const &e, bool *overwrite=nullptr)//non-standard
 		{

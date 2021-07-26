@@ -2,12 +2,21 @@
 #ifndef STDIO_H
 #define STDIO_H
 
+#ifndef SIZE_T
+#define SIZE_T
+typedef unsigned size_t;
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
 typedef char* va_list;
+#define va_start(ap, paramN)	(ap=(char*)(&(paramN)+1))
+#define va_arg(ap, type)		(ap+=(sizeof(type)+sizeof(int)-1)&~(sizeof(int)-1))
+#define	va_end(ap)
+
 int		__cdecl printf(const char *format, ...);
 int		__cdecl vprintf(const char *format, va_list args);
 int		__cdecl scanf(const char *format, ...);

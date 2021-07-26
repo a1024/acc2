@@ -2,7 +2,7 @@
 #include		"include/algorithm"
 #include		"include/conio.h"
 
-void			compile_error(int line0, int col0, const char *format, ...)
+void			error_lex(int line0, int col0, const char *format, ...)
 {
 	printf("%s(%d:%d) Error: ", currentfilename, line0+1, col0+1);
 	if(format)
@@ -15,7 +15,12 @@ void			compile_error(int line0, int col0, const char *format, ...)
 	if(compile_status<CS_ERRORS)
 		compile_status=CS_ERRORS;
 }
-
+const char		lexflags[]=//redundant
+{
+#define		TOKEN(STRING, LABEL, FLAGS)	FLAGS,
+#include"acc2_keywords_c.h"
+#undef		TOKEN
+};
 struct			LexOption
 {
 	__m128i option, mask;
@@ -95,12 +100,23 @@ inline int		lex_match(const char *p, int k, LexOption *&popt, int &advance)
 			__m128i v2=_mm_and_si128(val, opt.mask);
 			v2=_mm_cmpeq_epi8(v2, opt.option);
 			int result=_mm_movemask_epi8(v2);
-			if(result==0xFFFF&&(!opt.endswithnan||!is_alphanumeric(p[k+opt.len])))
+			if(result==0xFFFF)
 			{
-				popt=&opt;
-				advance=opt.len;
-				return true;
+				char next=p[k+opt.len];
+				if(!opt.endswithnan||!(UNSIGNED_IN_RANGE('0', next, '9')|UNSIGNED_IN_RANGE('A', next, 'Z')|UNSIGNED_IN_RANGE('a', next, 'z')|(next=='_')))
+				{
+					popt=&opt;
+					advance=opt.len;
+					return true;
+				}
 			}
+			//if(result==0xFFFF&&!(opt.endswithnan&&is_alphanumeric(p[k+opt.len])&-lexflags[opt.token]))
+			//if(result==0xFFFF&&(!opt.endswithnan||!is_alphanumeric(p[k+opt.len])))
+			//{
+			//	popt=&opt;
+			//	advance=opt.len;
+			//	return true;
+			//}
 		}
 	}
 	return false;
@@ -244,7 +260,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 						}
 						if(p[k2]=='\n')//esc nl are already removed
 						{
-							compile_error(lineno, k-linestart, "Unmatched quotes: [%d]: %s, [%d] %s", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
+							error_lex(lineno, k-linestart, "Unmatched quotes: [%d]: %s, [%d] %s", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
 							//printf("Lexer: line %d: unmatched quotes: [%d]: %s, [%d] %s\n", lineno+1, k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
 							matched=false;
 							break;
@@ -275,7 +291,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 						char c=p[dend];
 						if(c=='\n'||c==' '||c=='\t'||c=='\\')
 						{
-							compile_error(lineno, dend-linestart, "Ill-formed raw string literal. The delimiter should not contain whitespace or backslash.");
+							error_lex(lineno, dend-linestart, "Ill-formed raw string literal. The delimiter should not contain whitespace or backslash.");
 							//printf("Error line %d: Ill-formed raw string literal.\n", lineno+1);
 							illformed=true;
 							break;
@@ -283,7 +299,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					}
 					if(dend-dstart>16)
 					{
-						compile_error(lineno, dstart-linestart, "Raw string literal delimiter is longer than 16 characters.");
+						error_lex(lineno, dstart-linestart, "Raw string literal delimiter is longer than 16 characters.");
 						//printf("Error line %d: Raw string literal delimiter is longer than 16 characters.\n", lineno+1);
 						illformed=true;
 					}
@@ -369,7 +385,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					else
 					{
 						//error: unmatched chevron
-						compile_error(lineno, k-linestart, "Unmatched include chevron: [%d]: %s, [%d] %s\n", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
+						error_lex(lineno, k-linestart, "Unmatched include chevron: [%d]: %s, [%d] %s\n", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
 						//printf("Lexer: line %d: unmatched include chevron: [%d]: %s, [%d] %s\n", lineno+1, k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
 					}
 				}
@@ -396,7 +412,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					char ret=acme_read_number(p, size, k, &advance, &ival, &fval);
 					if(!advance)//
 					{
-						compile_error(lineno, k-linestart, "INTERNAL ERROR while parsing a number at k=%d (advance = 0):\n\t%.*s\n\n", k, 16, p+k);
+						error_lex(lineno, k-linestart, "INTERNAL ERROR while parsing a number at k=%d (advance = 0):\n\t%.*s\n\n", k, 16, p+k);
 						//printf("Internal error while parsing a number at k=%d (advance = 0):\n\t%.*s\n", k, 16, p+k);
 						_getch();
 					}
@@ -438,7 +454,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 				}
 				else//error: unrecognized text
 				{
-					compile_error(lineno, k-linestart, "Unrecognized text at %d: \'%s\'", describe_char(p[k]));
+					error_lex(lineno, k-linestart, "Unrecognized text at %d: \'%s\'", describe_char(p[k]));
 					//printf("Lexer: error line %d: [%d] %s is unrecognized\n", lineno+1, k+1-linestart, describe_char(p[k]));
 					advance=1;
 				}
@@ -459,9 +475,9 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 	{
 		if(lf.filename)
 			printf("\nLexed \'%s\' in %lld cycles\n", lf.filename, cycles2-cycles1);
-		else// if(lf.text.size()<=16)
+		else if(size<=16)
 			printf("\nLexed \'%s\' in %lld cycles\n", lf.text.c_str(), cycles2-cycles1);
-		//else
-		//	printf("\nLexed \'%.*s...\' in %lld cycles\n", 16, lf.text.c_str(), cycles2-cycles1);
+		else
+			printf("\nLexed \'%.*s...\' in %lld cycles\n", 16, lf.text.c_str(), cycles2-cycles1);
 	}
 }

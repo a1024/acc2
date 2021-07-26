@@ -137,14 +137,29 @@ namespace	std
 				initialize(n0, n, e);
 			}
 		}
+		void resize_pod(unsigned n, T const &e=T())
+		{
+			if(n!=this->n)//
+			{
+				realloc(n);
+				int n0=this->n;
+				this->n=n;
+				if(n0<n)
+					memfill(p+n0, &e, (n-n0)*sizeof(T), sizeof(T));
+			}
+		}
 
 		T& operator[](unsigned k)
 		{
+			if(!(k>=0&&k<(unsigned)n))//
+				return p[0];//
 			assert2(k>=0&&k<(unsigned)n, "Vector subscript out of range: index=%d, size=%d", k, n);
 			return p[k];
 		}
 		T const& operator[](unsigned k)const
 		{
+			if(!(k>=0&&k<(unsigned)n))//
+				return p[0];//
 			assert2(k>=0&&k<(unsigned)n, "Vector subscript out of range: index=%d, size=%d", k, n);
 			return p[k];
 		}

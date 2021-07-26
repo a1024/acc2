@@ -4,6 +4,8 @@
 
 //TODO: declare all intrinsics in the standard headers
 
+void __cdecl __debugbreak();
+
 #define _CRT_ALIGN(x) __declspec(align(x))
 typedef union __declspec(intrin_type) _CRT_ALIGN(8) __m64
 {

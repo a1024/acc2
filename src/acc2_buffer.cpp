@@ -50,31 +50,34 @@ void			print_buffer(const void *buffer, int bytesize)
 long long		acme_read_integer(const char *text, int size, int base, int start, int *ret_end)
 {
 	int k;
-	char temp;
+	byte temp;
 	long long ival=0;
+	int hex=-(base==16);
 
 	for(k=start;k<size;++k)
 	{
 		temp=text[k];
-		if(temp>='0'&&temp<='9')
+		byte c=temp-'0';
+		if(c<10)
 		{
 			ival*=base;
-			ival+=temp-'0';
+			ival+=c;
 			continue;
 		}
-		else if(base==16&&temp>='A'&&temp<='F')
+		else if(hex&&(c=(temp&0xDF)-'A', c<6))
 		{
 			ival*=base;
-			ival+=10+temp-'A';
+			ival+=10+c;
+			//ival+=10+temp-'A';
 			continue;
 		}
-		else if(base==16&&temp>='a'&&temp<='f')
-		{
-			ival*=base;
-			ival+=10+temp-'a';
-			continue;
-		}
-		else if(temp=='\'')
+		//else if(hex&(temp-'a'<6))
+		//{
+		//	ival*=base;
+		//	ival+=10+temp-'a';
+		//	continue;
+		//}
+		else if(temp=='\'')//allow quote as separator
 			continue;
 		break;
 	}
@@ -84,20 +87,23 @@ long long		acme_read_integer(const char *text, int size, int base, int start, in
 static double	acme_read_tail(const char *text, int size, double inv_base, int start, int *ret_end)
 {
 	int k;
-	char temp;
+	byte temp;
 	double fval=0;
 
 	for(*ret_end=start;*ret_end<size&&(text[*ret_end]>='0'&&text[*ret_end]<='9'||text[*ret_end]>='A'&&text[*ret_end]<='F'||text[*ret_end]>='a'&&text[*ret_end]<='f'||text[*ret_end]=='\'');++*ret_end);
 	for(k=*ret_end-1;k>=start;--k)
 	{
 		temp=text[k];
-		if(temp>='0'&&temp<='9')
-			fval+=temp-'0';
-		else if(temp>='A'&&temp<='F')
-			fval+=temp-'A'+10;
-		else if(temp>='a'&&temp<='f')
-			fval+=temp-'a'+10;
-		else if(temp=='\'')
+		byte c=temp-'0';
+		if(c<10)
+			fval+=c;
+		else if(c=(temp&0xDF)-'A', c<6)
+			fval+=c+10;
+		//else if(temp>='A'&&temp<='F')
+		//	fval+=temp-'A'+10;
+		//else if(temp>='a'&&temp<='f')
+		//	fval+=temp-'a'+10;
+		else if(temp=='\'')//allow quote as separator
 			continue;
 		fval*=inv_base;
 	}
@@ -154,7 +160,7 @@ char			acme_read_number(const char *text, int size, int k, int *advance, long lo
 			isfloat=acme_read_number_pt2(text, size, 16, 1./16, k+2, advance, ival, fval);
 		else if(temp=='B')//bin
 			isfloat=acme_read_number_pt2(text, size, 2, 1./2, k+2, advance, ival, fval);
-		else if(text[k+1]>='0'&&text[k+1]<='7')//oct	//"09" should generate an error
+		else if(text[k+1]>='0'&&text[k+1]<='7')//oct	//TODO: "09" should generate an error
 			isfloat=acme_read_number_pt2(text, size, 8, 1./8, k+1, advance, ival, fval);
 		else if(text[k+1]=='.')//dec	//eg: "0.1"
 			isfloat=acme_read_number_pt2(text, size, 10, 1./10, k, advance, ival, fval);
