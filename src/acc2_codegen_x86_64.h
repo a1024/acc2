@@ -300,9 +300,9 @@ OP1R(AND, 0x23)
 OP1M(AND, 0x21)
 OP1I(AND, 0x81, 0x04)
 
-OP1X(MUL, 0xF7, 0x04)
+OP1X(MUL, 0xF7, 0x04)//unsigned mul:	{hi=RDX|lo=RAX} = RAX * operand
 
-OP1X(DIV, 0xF7, 0x06)
+OP1X(DIV, 0xF7, 0x06)//unsigned div:	{rem=RDX|q=RAX} = RAX /% operand
 
 OP1I(JMP, 0xE9, 0x00)
 //OP2CI1(J, 0x70)
