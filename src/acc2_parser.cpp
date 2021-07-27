@@ -255,9 +255,13 @@ static void		parse_unary(Operand *dst)
 				error_pp(*parse_temp_token, "Undeclared identifier: \'%s\'.", parse_temp_token->sdata);
 			else
 			{
-				dst->type=OPERAND_REG_TEMP;
-				dst->reg=get_new_reg();
-				EMIT_R_R(MOV, dst->reg, id_var->second.reg);
+				dst->type=OPERAND_REG_REFERENCE;
+				dst->reg=id_var->second.reg;
+				dst->id=id_var->first;
+
+				//dst->type=OPERAND_REG_TEMP;
+				//dst->reg=get_new_reg();
+				//EMIT_R_R(MOV, dst->reg, id_var->second.reg);
 			}
 		}
 		break;
@@ -292,26 +296,55 @@ static void		parse_product(Operand *dst)
 					dst->imm8*=next.imm8;
 				else						//dst=imm, next=reg
 				{
-					EMIT_MOV_R_I(RAX, dst->imm8);
-					EMIT_X_R(MUL, next.reg);//{hi=RDX|lo=RAX} = RAX * operand
 					dst->type=OPERAND_REG_TEMP;
-					if(next.type==OPERAND_REG_REFERENCE)
-						dst->imm8=get_new_reg();
-					else//next is temp
-						dst->imm8=next.reg;//take the temp reg
-					EMIT_R_R(MOV, dst->reg, RAX);
+					if(is_pot(dst->imm8))//dst.reg=next.reg<<log2(dst->imm)
+					{
+						if(next.type==OPERAND_REG_REFERENCE)
+						{
+							int k=get_new_reg();
+							EMIT_R_R(MOV, k, next.reg);
+							next.imm8=k;
+						}
+						EMIT_R_I1(SHL, next.reg, floor_log2(dst->imm8));
+						dst->imm8=next.reg;
+					}
+					else//dst.reg=next.reg*dst->imm
+					{
+						EMIT_MOV_R_I(RAX, dst->imm8);
+						EMIT_X_R(MUL, next.reg);//{hi=RDX|lo=RAX} = RAX * operand
+						if(next.type==OPERAND_REG_REFERENCE)
+							dst->imm8=get_new_reg();
+						else//next is temp
+							dst->imm8=next.reg;//take the temp reg
+						EMIT_R_R(MOV, dst->reg, RAX);				//EXTRA MOV
+					}
 				}
 			}
 			else//dst->type == temp or reg
 			{
 				if(next.type==OPERAND_IMM8)	//dst=reg, next=imm
 				{
-					EMIT_MOV_R_I(RAX, next.imm8);
-					EMIT_X_R(MUL, dst->reg);//SAWPPED
-					if(dst->type==OPERAND_REG_REFERENCE)
+					if(is_pot(next.imm8))//dst<<=log2(next.imm)
 					{
-						dst->type=OPERAND_REG_TEMP;
-						dst->imm8=get_new_reg();
+						if(dst->type==OPERAND_REG_REFERENCE)
+						{
+							dst->type=OPERAND_REG_TEMP;
+							int k=get_new_reg();
+							EMIT_R_R(MOV, k, dst->reg);
+							dst->imm8=k;
+						}
+						EMIT_R_I1(SHL, dst->reg, floor_log2(next.imm8));
+					}
+					else//dst*=next.imm
+					{
+						EMIT_MOV_R_I(RAX, next.imm8);
+						EMIT_X_R(MUL, dst->reg);//SAWPPED
+						if(dst->type==OPERAND_REG_REFERENCE)
+						{
+							dst->type=OPERAND_REG_TEMP;
+							dst->imm8=get_new_reg();
+						}
+						EMIT_R_R(MOV, dst->reg, RAX);
 					}
 				}
 				else						//dst=reg, next=reg
@@ -328,8 +361,8 @@ static void		parse_product(Operand *dst)
 					}
 					else if(next.type==OPERAND_REG_TEMP)
 						free_register(next.reg);
+					EMIT_R_R(MOV, dst->reg, RAX);
 				}
-				EMIT_R_R(MOV, dst->reg, RAX);
 			}
 			break;
 		case CT_SLASH:
@@ -345,7 +378,7 @@ static void		parse_product(Operand *dst)
 					else
 						error_pp(*parse_temp_token, "Integer division by zero.");
 				}
-				else						//dst=imm, next=reg
+				else						//dst=imm, next=reg		dst.reg=dst->imm/next.reg
 				{
 					EMIT_MOV_R_I(RAX, dst->imm8);
 					EMIT_X_R(DIV, next.reg);//{hi=RDX|lo=RAX} = RAX * operand
@@ -361,13 +394,29 @@ static void		parse_product(Operand *dst)
 			{
 				if(next.type==OPERAND_IMM8)	//dst=reg, next=imm
 				{
-					EMIT_MOV_R_I(RAX, dst->reg);
-					EMIT_MOV_R_I(RDX, next.imm8);
-					EMIT_X_R(DIV, RDX);
-					if(dst->type==OPERAND_REG_REFERENCE)
+					if(is_pot(dst->imm8))//dst.reg>>=log2(next.imm)
 					{
-						dst->type=OPERAND_REG_TEMP;
-						dst->imm8=get_new_reg();
+						if(dst->type==OPERAND_REG_REFERENCE)
+						{
+							dst->type=OPERAND_REG_TEMP;
+							int k=get_new_reg();
+							EMIT_R_R(MOV, k, dst->reg);
+							dst->imm8=k;
+						}
+						EMIT_R_I1(SLR, dst->reg, floor_log2(next.imm8));
+						//EMIT_R_I1(SAR, dst->reg, floor_log2(next.imm8));
+					}
+					else//dst.reg=dst->reg/next.imm
+					{
+						EMIT_R_R(MOV, RAX, dst->reg);
+						EMIT_MOV_R_I(RDX, next.imm8);
+						EMIT_X_R(DIV, RDX);
+						if(dst->type==OPERAND_REG_REFERENCE)
+						{
+							dst->type=OPERAND_REG_TEMP;
+							dst->imm8=get_new_reg();
+						}
+						EMIT_R_R(MOV, dst->reg, RAX);
 					}
 				}
 				else						//dst=reg, next=reg
@@ -384,8 +433,8 @@ static void		parse_product(Operand *dst)
 					}
 					else if(next.type==OPERAND_REG_TEMP)
 						free_register(next.reg);
+					EMIT_R_R(MOV, dst->reg, RAX);
 				}
-				EMIT_R_R(MOV, dst->reg, RAX);
 			}
 			break;
 		case CT_MODULO:
@@ -417,13 +466,28 @@ static void		parse_product(Operand *dst)
 			{
 				if(next.type==OPERAND_IMM8)	//dst=reg, next=imm
 				{
-					EMIT_MOV_R_I(RAX, dst->reg);
-					EMIT_MOV_R_I(RDX, next.imm8);
-					EMIT_X_R(DIV, RDX);
-					if(dst->type==OPERAND_REG_REFERENCE)
+					if(is_pot(next.imm8))//dst.reg>>=log2(next.imm)
 					{
-						dst->type=OPERAND_REG_TEMP;
-						dst->imm8=get_new_reg();
+						if(dst->type==OPERAND_REG_REFERENCE)
+						{
+							dst->type=OPERAND_REG_TEMP;
+							int k=get_new_reg();
+							EMIT_R_R(MOV, k, dst->reg);
+							dst->imm8=k;
+						}
+						EMIT_R_I(AND, dst->reg, next.imm8-1);
+					}
+					else
+					{
+						EMIT_R_R(MOV, RAX, dst->reg);
+						EMIT_MOV_R_I(RDX, next.imm8);
+						EMIT_X_R(DIV, RDX);
+						if(dst->type==OPERAND_REG_REFERENCE)
+						{
+							dst->type=OPERAND_REG_TEMP;
+							dst->imm8=get_new_reg();
+						}
+						EMIT_R_R(MOV, dst->reg, RDX);
 					}
 				}
 				else						//dst=reg, next=reg
@@ -440,8 +504,8 @@ static void		parse_product(Operand *dst)
 					}
 					else if(next.type==OPERAND_REG_TEMP)
 						free_register(next.reg);
+					EMIT_R_R(MOV, dst->reg, RDX);
 				}
-				EMIT_R_R(MOV, dst->reg, RDX);
 			}
 			break;
 		}

@@ -333,6 +333,10 @@ int				maximum(int a, int b);
 int				minimum(int a, int b);
 int				clamp(int lo, int x, int hi);
 int				mod(int x, int n);
+inline int		is_pot(unsigned long long n)//https://www.youtube.com/watch?v=Mx29YQ4zAuM	6:15:43
+{
+	return n&&(n&(n-1))==0;
+}
 int				first_set_bit(unsigned long long n);//idx of LSB
 int				floor_log2(unsigned long long n);//idx of MSB
 int				floor_log10(double x);//idx of MSD
