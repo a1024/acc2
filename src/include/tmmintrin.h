@@ -4,8 +4,6 @@
 
 //TODO: declare all intrinsics in the standard headers
 
-void __cdecl __debugbreak();
-
 #define _CRT_ALIGN(x) __declspec(align(x))
 typedef union __declspec(intrin_type) _CRT_ALIGN(8) __m64
 {
@@ -52,6 +50,13 @@ typedef struct __declspec(intrin_type) _CRT_ALIGN(16) __m128d
 extern "C"
 {
 #endif
+
+void __cdecl __debugbreak();
+
+unsigned char _BitScanForward(unsigned long *index, unsigned long mask);
+unsigned char _BitScanForward64(unsigned long *index,  unsigned __int64 mask);
+unsigned char _BitScanReverse(unsigned long *index, unsigned long mask);
+unsigned char _BitScanReverse64(unsigned long *index, unsigned __int64 mask);
 
 unsigned __int64 __rdtsc();
 #pragma intrinsic(__rdtsc)

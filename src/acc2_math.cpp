@@ -26,6 +26,14 @@ int					first_set_bit(unsigned long long n)//idx of LSB
 		sh= (n&((1   << 1)-1))==0,		idx+=sh;
 	return idx;
 }
+int					first_set_bit16(unsigned short n)//idx of LSB
+{
+	int sh=((n&((1<<8)-1))==0)<<3,	idx =sh;	n>>=sh;
+		sh=((n&((1<<4)-1))==0)<<2,	idx+=sh;	n>>=sh;
+		sh=((n&((1<<2)-1))==0)<<1,	idx+=sh;	n>>=sh;
+		sh= (n&((1<<1)-1))==0,		idx+=sh;
+	return idx;
+}
 int					floor_log2(unsigned long long n)//idx of MSB
 {
 	int sh=(n>=1ULL	<<32)<<5,	logn =sh; n>>=sh;

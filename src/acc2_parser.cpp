@@ -64,6 +64,36 @@ static OpLibrary operators;
 static std::vector<const char*> currentnamespace;//works like a stack
 #endif
 
+struct			MSDOSHeader
+{
+	unsigned short
+		e_magic,
+		e_cblp,
+		e_cp,
+		e_crlc,
+		e_cparhdr,
+		e_minalloc,
+		e_maxalloc,
+		e_ss,
+		e_sp,
+		e_csum,
+		e_ip,
+		e_cs,
+		e_lfarlc,
+		e_ovno;
+	byte e_res[8];
+	unsigned short e_oemid, e_oeminfo;
+	byte e_res2[20];
+	unsigned short e_lfanew;
+};
+struct			PEHeader
+{
+	unsigned magic;//"PE\0\0"
+	unsigned short machine, numberofsections;
+	unsigned timedatestamp, pointertosymboltable, numberofsymbols;
+	unsigned short sizeofoptionalheader, characteristics;
+};
+
 //Programming an x64 compiler from scratch - part 2		https://www.youtube.com/watch?v=Mx29YQ4zAuM		3:32:00 - code generation
 #if 1
 //char			register_allocation_order[]=
@@ -156,9 +186,58 @@ enum			OperandType
 {
 	OPERAND_UNINITIALIZED=0,
 	OPERAND_IMM8='8',
-	OPERAND_REG_TEMP='E',//temp reg
-	OPERAND_REG_REFERENCE='R',//reference to a variable
+	OPERAND_REG_TEMP='E',		//temp reg
+	OPERAND_REG_REFERENCE='R',	//reference to a variable
+//	OPERAND_FRAME_OFFSET,		//rbp+offset			person.age: rbp+offset+age_offset
+//	OPERAND_ADDRESS,			//address
 };
+#if 1
+unsigned		reg_state=0;//0xFF00;//true means free, false means taken
+int				get_new_reg()
+{
+	unsigned long k=0;
+	char free_registers_flag=_BitScanForward(&k, reg_state);
+	assert(free_registers_flag);
+
+	//assert2(reg_state, "Out of registers.");
+	//int k=first_set_bit16(reg_state);
+
+	reg_state&=~(1<<k);//clear bit
+	return k;
+}
+void			reset_regstate()
+{
+	char available_regs[]=
+	{
+		RCX,
+		RBX,
+		RSI,
+		RDI,
+		R8,
+		R9,
+		R10,
+		R11,
+		R12,
+		R13,
+		R14,
+		R15,
+	};
+	reg_state=0;
+	int nregs=SIZEOF(available_regs);
+	for(int k=0;k<nregs;++k)
+		reg_state|=1<<available_regs[k];
+	//reg_state=0xFF00;
+}
+inline void		free_register(char &reg)
+{
+	if(reg>=0)
+	{
+		assert(!(reg_state&1<<reg));//should be cleared
+		reg_state|=1<<reg;//set bit
+		reg=-1;
+	}
+}
+#else
 char			used_registers[16]={};
 int				get_new_reg()
 {
@@ -175,41 +254,6 @@ int				get_new_reg()
 	assert2(k<16, "Out of registers.");
 	return k;
 }
-struct			Operand
-{
-	byte type;
-	//byte islvalue;
-	//7 bytes padding
-	union
-	{
-		char reg;
-		struct
-		{
-			unsigned addr;
-			const char *id;
-		};
-		//struct
-		//{
-		//	char reg;
-		//	//3 bytes padding
-		//	const char *id;
-		//};
-		i64 imm8;
-	};
-	Operand():type(OPERAND_UNINITIALIZED), imm8(0){}
-	//Operand():type(OPERAND_UNINITIALIZED), islvalue(false), imm8(0){}
-	void mov2reg()
-	{
-		assert2(type!=OPERAND_UNINITIALIZED, "Uninitialized operand.");
-		if(type==OPERAND_IMM8)
-		{
-			int k=get_new_reg();
-			EMIT_MOV_R_I(k, imm8);
-			type=OPERAND_REG_TEMP;
-			imm8=k;
-		}
-	}
-};
 void			reset_regstate()
 {
 	memset(used_registers, 0, 16);
@@ -222,6 +266,46 @@ inline void		free_register(char &reg)
 		reg=-1;
 	}
 }
+#endif
+struct			Operand
+{
+	byte type;
+	//byte islvalue;
+	//7 bytes padding
+	union
+	{
+		struct
+		{
+			union
+			{
+				char reg;
+				unsigned frame_offset;
+			};
+			const char *id;
+		};
+		i64 addr;
+		//struct
+		//{
+		//	char reg;
+		//	//3 bytes padding
+		//	const char *id;
+		//};
+		i64 imm8;
+	};
+	Operand():type(OPERAND_UNINITIALIZED), imm8(0){}
+	//Operand():type(OPERAND_UNINITIALIZED), islvalue(false), imm8(0){}
+	//void mov2reg()
+	//{
+	//	assert2(type!=OPERAND_UNINITIALIZED, "Uninitialized operand.");
+	//	if(type==OPERAND_IMM8)
+	//	{
+	//		int k=get_new_reg();
+	//		EMIT_MOV_R_I(k, imm8);
+	//		type=OPERAND_REG_TEMP;
+	//		imm8=k;
+	//	}
+	//}
+};
 
 struct			Variable
 {
@@ -568,7 +652,7 @@ static void		parse_summation(Operand *dst)
 				case OPERAND_IMM8:			//dst=ref, next=imm
 					{
 						int k=get_new_reg();
-						EMIT_MOV_R_I(k, dst->reg);
+						EMIT_R_R(MOV, k, dst->reg);
 						dst->imm8=k;
 						EMIT_R_I(ADD, dst->reg, next.imm8);
 					}
@@ -580,7 +664,7 @@ static void		parse_summation(Operand *dst)
 				case OPERAND_REG_REFERENCE:	//dst=ref, next=ref
 					{
 						int k=get_new_reg();
-						EMIT_MOV_R_I(k, dst->reg);
+						EMIT_R_R(MOV, k, dst->reg);
 						dst->imm8=k;
 						EMIT_R_R(ADD, dst->reg, next.reg);
 					}
@@ -607,7 +691,7 @@ static void		parse_summation(Operand *dst)
 						int k=get_new_reg();
 						EMIT_MOV_R_I(k, dst->imm8);
 						dst->imm8=k;
-						EMIT_R_R(SUB, dst->imm8, next.reg);
+						EMIT_R_R(SUB, dst->reg, next.reg);
 					}
 					break;
 				}
@@ -632,7 +716,7 @@ static void		parse_summation(Operand *dst)
 				{
 					dst->type=OPERAND_REG_TEMP;
 					int k=get_new_reg();
-					EMIT_MOV_R_I(k, dst->reg);
+					EMIT_R_R(MOV, k, dst->reg);
 					dst->imm8=k;
 					switch(next.type)
 					{
@@ -650,7 +734,6 @@ static void		parse_summation(Operand *dst)
 			}
 			break;
 		}
-		free_register(next.reg);
 	}
 }
 VarRegLib::EType *parse_temp_pvar=nullptr;
@@ -675,8 +758,13 @@ static void		parse_assignment(Operand *dst)
 					EMIT_MOV_R_I(id_var->second.reg, op.imm8);
 				else if(id_var->second.reg!=op.reg)
 				{
-					free_register(id_var->second.reg);
-					id_var->second.reg=op.reg;
+					//if(op.type==OPERAND_REG_REFERENCE)
+						EMIT_R_R(MOV, id_var->second.reg, op.reg);
+					//else
+					//{
+					//	free_register(id_var->second.reg);//invalidates references
+					//	id_var->second.reg=op.reg;
+					//}
 				}
 				dst->type=OPERAND_REG_REFERENCE;
 				dst->reg=id_var->second.reg;
@@ -712,18 +800,25 @@ static void		parse_statements()
 					auto &id_reg=variables.insert_no_overwrite(VarRegLib::EType(id_token->sdata, Variable()), &old);
 					if(old)
 						error_pp(*id_token, "Redifinition of \'%s\'.", id_token->sdata);
+					else if(op.type==OPERAND_REG_REFERENCE)
+					{
+						id_reg.second.reg=get_new_reg();
+						EMIT_R_R(MOV, id_reg.second.reg, op.reg);
+						parse_temp_pvar=variables.find(op.id);
+						id_reg.second.initialized=parse_temp_pvar&&parse_temp_pvar->second.initialized;
+						if(!id_reg.second.initialized)
+							error_pp(current_token[-1], "Uninitialized variable is used: \'%s\'", op.id);
+					}
 					else
 					{
-						if(op.type==OPERAND_REG_REFERENCE)
+						id_reg.second.initialized=true;
+						if(op.type==OPERAND_IMM8)
 						{
-							parse_temp_pvar=variables.find(op.id);
-							if(!parse_temp_pvar||!parse_temp_pvar->second.initialized)
-								error_pp(current_token[-1], "Uninitialized variable is used: \'%s\'", op.id);
+							id_reg.second.reg=get_new_reg();
+							EMIT_MOV_R_I(id_reg.second.reg, op.imm8);
 						}
 						else
-							op.mov2reg();
-						id_reg.second.reg=op.reg;
-						id_reg.second.initialized=true;
+							id_reg.second.reg=op.reg;
 					}
 				}
 				else//declaration

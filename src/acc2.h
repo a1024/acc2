@@ -337,7 +337,8 @@ inline int		is_pot(unsigned long long n)//https://www.youtube.com/watch?v=Mx29YQ
 {
 	return n&&(n&(n-1))==0;
 }
-int				first_set_bit(unsigned long long n);//idx of LSB
+int				first_set_bit(unsigned long long n);//use _BitScanForward()
+int				first_set_bit16(unsigned short n);//idx of LSB
 int				floor_log2(unsigned long long n);//idx of MSB
 int				floor_log10(double x);//idx of MSD
 double			power(double x, int y);
