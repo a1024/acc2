@@ -64,34 +64,97 @@ static OpLibrary operators;
 static std::vector<const char*> currentnamespace;//works like a stack
 #endif
 
-struct			MSDOSHeader
+struct			MzHeader
 {
+	char
+		e_magic[2];	//"MZ"
 	unsigned short
-		e_magic,
-		e_cblp,
-		e_cp,
-		e_crlc,
-		e_cparhdr,
-		e_minalloc,
-		e_maxalloc,
-		e_ss,
-		e_sp,
-		e_csum,
-		e_ip,
-		e_cs,
-		e_lfarlc,
-		e_ovno;
-	byte e_res[8];
-	unsigned short e_oemid, e_oeminfo;
-	byte e_res2[20];
-	unsigned short e_lfanew;
+		e_cblp,		//0x0090	Bytes on last page of file
+		e_cp,		//0x0003	Pages in file
+		e_crlc,		//0x0000	Relocations
+		e_cparhdr,	//0x0004	Size of header in paragraphs
+		e_minalloc,	//0x0000	Minimum extra paragraphs needed
+		e_maxalloc,	//0xFFFF	Maximum extra paragraphs needed
+		e_ss,		//0x0000	Initial (relative) SS value
+		e_sp,		//0x00B8	Initial SP value
+		e_csum,		//0x0000	Checksum
+		e_ip,		//0x0000	Initial IP value
+		e_cs,		//0x0000	Initial (relative) CS value
+		e_lfarlc,	//0x0040	File address of relocation table
+		e_ovno;		//0x0000	Overlay number
+	byte e_res[8];	//{0}		Reserved
+	unsigned short
+		e_oemid,	//0x0000	OEM identifier (for e_oeminfo)
+		e_oeminfo;	//0x0000	OEM information; e_oemid specific
+	byte e_res2[20];//{0}
+	unsigned short e_lfanew;//0x0080	File address of the new exe header
 };
-struct			PEHeader
+const byte		msdosprogram[]=
 {
-	unsigned magic;//"PE\0\0"
+	0x0E,				//push cs
+	0x1F,				//pop ds
+	0xBA, 0x0E, 0x00,	//mov dx,0xe
+	0xB4, 0x09,			//mov ah,0x09
+	0xCD, 0x21,			//int 0x21
+	0xB8, 0x01, 0x4C,	//mov ax,0x4c01
+
+//	0xCD, 0x21,			//int 0x21
+//	0x54,				//push sp
+//	0x68, 0x69, 0x73,	//push word 0x7369
+//	0x20, 0x70, 0x72,	//and [bx+si+0x72],dh
+//	0x6F,				//outsw
+//	0x67, 0x72, 0x61,	//jc 0x7a
+//	0x6D,				//insw
+//	0x20, 0x63, 0x61,	//and [bp+di+0x61],ah
+//
+//	0x6E,				//outsb edx,ds:esi
+//	0x6E,				//outsb edx,ds:esi
+//	0x6F,				//outsb edx,ds:esi
+};
+const char		msdos_msg[]="This program cannot be run in DOS mode .";
+struct			PEHeader//wiki.osdev.org/PE
+{
+	char magic[4];//"PE\0\0"
 	unsigned short machine, numberofsections;
 	unsigned timedatestamp, pointertosymboltable, numberofsymbols;
 	unsigned short sizeofoptionalheader, characteristics;
+};
+struct Pe32OptionalHeader// 1 byte aligned
+{
+	unsigned short mMagic; // 0x010b - PE32, 0x020b - PE32+ (64 bit)
+	byte mMajorLinkerVersion, mMinorLinkerVersion;
+	unsigned
+		mSizeOfCode,
+		mSizeOfInitializedData,
+		mSizeOfUninitializedData,
+		mAddressOfEntryPoint,
+		mBaseOfCode,
+		mBaseOfData,
+		mImageBase,
+		mSectionAlignment,
+		mFileAlignment;
+	unsigned short
+		mMajorOperatingSystemVersion,
+		mMinorOperatingSystemVersion,
+		mMajorImageVersion,
+		mMinorImageVersion,
+		mMajorSubsystemVersion,
+		mMinorSubsystemVersion;
+	unsigned
+		mWin32VersionValue,
+		mSizeOfImage,
+		mSizeOfHeaders,
+		mCheckSum;
+	unsigned short
+		mSubsystem,
+		mDllCharacteristics;
+	unsigned
+		mSizeOfStackReserve,
+		mSizeOfStackCommit,
+		mSizeOfHeapReserve,
+		mSizeOfHeapCommit,
+		mLoaderFlags,
+		mNumberOfRvaAndSizes;
 };
 
 //Programming an x64 compiler from scratch - part 2		https://www.youtube.com/watch?v=Mx29YQ4zAuM		3:32:00 - code generation
@@ -207,7 +270,7 @@ int				get_new_reg()
 }
 void			reset_regstate()
 {
-	char available_regs[]=
+	const char available_regs[]=
 	{
 		RCX,
 		RBX,
@@ -279,6 +342,7 @@ struct			Operand
 			union
 			{
 				char reg;
+				//3 bytes padding
 				unsigned frame_offset;
 			};
 			const char *id;
