@@ -4,7 +4,7 @@
 #include		"include/string"
 #include		"include/set"
 #include		"include/map"
-#include		"include/tmmintrin.h"
+#include		"include/intrin.h"
 
 #define			SIZEOF(STATIC_ARRAY)	(sizeof(STATIC_ARRAY)/sizeof(*STATIC_ARRAY))
 typedef long long i64;

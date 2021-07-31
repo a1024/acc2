@@ -2,25 +2,27 @@
 #ifndef STRING_H
 #define STRING_H
 
+#include		"crtdefs.h"
+
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-void*		__cdecl memset(void *dst, int val, unsigned size);
-void*		__cdecl memcpy(void *dst, const void *src, unsigned size);
-void		__cdecl memmove(void *dst, const void *src, unsigned size);
-int			__cdecl memcmp(const void *b1, const void *b2, unsigned size);
+void*		__cdecl memset(void *dst, int val, size_t size);
+void*		__cdecl memcpy(void *dst, const void *src, size_t size);
+void*		__cdecl memmove(void *dst, const void *src, size_t size);
+int			__cdecl memcmp(const void *b1, const void *b2, size_t size);
 
 int			__cdecl strcmp(const char *s1, const char *s2);
-unsigned	__cdecl strlen(const char *s);
+size_t		__cdecl strlen(const char *s);
 size_t		__cdecl wcslen(const wchar_t *s);
 
 #ifdef __cplusplus
 }
 #endif
 
-inline void	memfill(void *dst, const void *src, unsigned dstbytes, unsigned srcbytes)
+static void	memfill(void *dst, const void *src, size_t dstbytes, size_t srcbytes)
 {
 	unsigned copied;
 	char *d=(char*)dst;

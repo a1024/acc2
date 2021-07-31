@@ -42,7 +42,8 @@ struct			SimpleMacro
 		int end=start+1;
 		for(;end<size&&is_alphanumeric(definition[end]);++end);//TODO: parse simple pre-defined macro definition
 		valid=1;
-		name=add_string(std::string(definition.data()+start, end-start));
+		std::string temp(definition.data()+start, end-start);
+		name=add_string(temp);
 		value=1;
 	}
 	//bool add(MacroLibrary &macros, std::string const &definition)
@@ -159,7 +160,7 @@ void			parse_args(std::vector<std::string> const &args)
 	for(int k=0;k<(int)args.size();++k)
 	{
 		auto &arg=args[k];
-		printf("[%d] %s\n", k, arg);//
+		printf("[%d] %s\n", k, arg.c_str());//
 		if(arg.size()>2&&arg[0]=='-'&&arg[1]=='-')
 		{
 			switch(arg[2])
@@ -327,6 +328,14 @@ int				main(int argc, const char **argv)
 	prof.add("args2vec");
 	parse_args(args);
 	prof.add("parse args");
+	if(showhelp)
+	{
+		print_usage();
+		printf("Press any key to continue (\'X\' to quit)...\n");
+		char c=_getch();
+		if((c&0xDF)=='X')
+			exit(0);
+	}
 
 	print_summary();//
 	if(!infilenames.size())

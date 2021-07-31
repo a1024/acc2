@@ -90,6 +90,41 @@ static double		inin_qnan()
 	return (double&)val;
 }
 double				_HUGE=init_infinity(), _QNAN=inin_qnan();
+int					check_pointer(void *p)
+{
+	size_t value=(size_t)p;
+	if(value<0x10000)
+		return 0;
+	switch(value)
+	{
+	case 0:
+#ifdef __64bit__
+	case 0xCCCCCCCCCCCCCCCC://uninitialized stack
+	case 0xCDCDCDCDCDCDCDCD://uninitialized heap
+	case 0xFEEEFEEEFEEEFEEE://freed heap
+	case 0xEEFEEEFEEEFEEEFE:
+	case 0xFDFDFDFDFDFDFDFD://heap: no man's land, by malloc()/new
+	case 0xABABABABABABABAB://heap: no man's land, by HeapAlloc()
+	case 0xBAADF00DBAADF00D://uninitialized heap by LocalAlloc()
+	case 0xADF00DBAADF00DBA:
+	case 0xF00DBAADF00DBAAD:
+	case 0x0DBAADF00DBAADF0:
+#else
+	case 0xCCCCCCCC://uninitialized stack
+	case 0xCDCDCDCD://uninitialized heap
+	case 0xFEEEFEEE://freed heap
+	case 0xEEFEEEFE:
+	case 0xFDFDFDFD://heap: no man's land, by malloc()/new
+	case 0xABABABAB://heap: no man's land, by HeapAlloc()
+	case 0xBAADF00D://uninitialized heap by LocalAlloc()
+	case 0xADF00DBA:
+	case 0xF00DBAAD:
+	case 0x0DBAADF0:
+#endif
+		return 0;
+	}
+	return 1;
+}
 int					crash(const char *file, const char *function, int line, const char *expr, const char *msg, ...)
 {
 	printf("\n\nRUNTINE ERROR\n");

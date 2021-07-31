@@ -380,7 +380,10 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 	macro_expand_again:
 		auto &top=context.back();
 		if(top.done)
-			goto macro_expand_endcall;
+		{
+			context.pop_back();
+			continue;
+		}
 		auto macro2=top.macro;
 		int &kt=top.kt;
 		auto &args2=top.args;
@@ -485,13 +488,12 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 					auto macro3=macros.find(token2.sdata);
 					if(macro3)
 					{
+						int level=0, kd3=start, len2=0;
 						for(int km=0;km<(int)context.size();++km)//recursion guard
 							if(macro3->first==context[km].macro->first)
 								goto macro_expand_skip;
 
 						//complete parens in dst
-						int level=0;
-						int kd3=start;
 						for(;kd3<kd;++kd3)
 						{
 							auto &token3=dst[kd3];
@@ -514,7 +516,6 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 						if(kd<kd3)
 							len+=kd3-kd;
 
-						int len2=0;
 						if(macro_find_call_extent(*macro3, dst.data(), kd3, kd2, len2, args))//X  what if the rest is in src?
 						{
 							dst.resize(dst.size()+macro3->second.definition.size());
@@ -548,7 +549,6 @@ static void		macro_expand(MacroLibrary const &macros, MacroLibrary::EType const 
 				break;
 			}
 		}
-	macro_expand_endcall:
 		context.pop_back();
 	}//end while
 	for(int kt=start;kt<kd;++kt)//lex the lexme's

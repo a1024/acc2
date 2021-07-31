@@ -2,6 +2,8 @@
 #ifndef STD_NEW
 #define STD_NEW
 
+#include	"crtdefs.h"
+
 //void*	__cdecl operator new(size_t _Size)throw(std::bad_alloc);
 
 namespace	std

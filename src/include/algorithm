@@ -2,10 +2,7 @@
 #ifndef STD_ALGORITHM
 #define STD_ALGORITHM
 
-#ifndef SIZE_T
-#define SIZE_T
-typedef unsigned size_t;
-#endif
+#include	"crtdefs.h"
 
 namespace	std
 {

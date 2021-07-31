@@ -1,5 +1,6 @@
 #include		"acc2.h"
 #include		"include/algorithm"
+#include		"include/tmmintrin.h"
 #include		"include/conio.h"
 
 void			error_lex(int line0, int col0, const char *format, ...)

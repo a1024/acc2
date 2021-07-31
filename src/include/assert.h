@@ -7,6 +7,7 @@ extern "C"
 {
 #endif
 
+int		check_pointer(void *p);
 int		crash(const char *file, const char *function, int line, const char *expr, const char *msg, ...);
 
 #ifdef __cplusplus

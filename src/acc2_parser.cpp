@@ -1,5 +1,6 @@
 #include		"acc2.h"
 #include		"acc2_codegen_x86_64.h"
+#include		"include/intrin.h"
 const char*		token2str(CTokenType tokentype)
 {
 	switch(tokentype)
@@ -66,8 +67,7 @@ static std::vector<const char*> currentnamespace;//works like a stack
 
 struct			MzHeader
 {
-	char
-		e_magic[2];	//"MZ"
+	char e_magic[2];	//"MZ"
 	unsigned short
 		e_cblp,		//0x0090	Bytes on last page of file
 		e_cp,		//0x0003	Pages in file
@@ -87,20 +87,35 @@ struct			MzHeader
 		e_oemid,	//0x0000	OEM identifier (for e_oeminfo)
 		e_oeminfo;	//0x0000	OEM information; e_oemid specific
 	byte e_res2[20];//{0}
-	unsigned short e_lfanew;//0x0080	File address of the new exe header
+	unsigned e_lfanew;//0x00000080	File address of the new exe header
+};
+MzHeader		defaultmzheader=
+{
+	{'M', 'Z'},
+	0x0090, 0x0003,
+	0x0000, 0x0004,
+	0x0000, 0xFFFF,
+	0x0000, 0x00B8,
+	0x0000, 0x0000,
+	0x0000, 0x0040,
+	0x0000, {0},
+	0x0000, 0x0000,
+	{0},
+	0x00000080,
 };
 const byte		msdosprogram[]=
 {
 	0x0E,				//push cs
 	0x1F,				//pop ds
-	0xBA, 0x0E, 0x00,	//mov dx,0xe
+	0xBA, 0x0E, 0x00,	//mov dx,0x0E
 	0xB4, 0x09,			//mov ah,0x09
-	0xCD, 0x21,			//int 0x21
-	0xB8, 0x01, 0x4C,	//mov ax,0x4c01
+	0xCD, 0x21,			//int 0x21		//syscall ah=09h: display string
+	0xB8, 0x01, 0x4C,	//mov ax,0x4C01
+	0xCD, 0x21,			//int 0x21		//syscall ah=4Ch: quit
 
-//	0xCD, 0x21,			//int 0x21
-//	0x54,				//push sp
-//	0x68, 0x69, 0x73,	//push word 0x7369
+	//data
+//	0x54,				//push sp			//0x54=='T'
+//	0x68, 0x69, 0x73,	//push word 0x7369	//0x68=='h', 0x69=='i', 0x73=='s'...
 //	0x20, 0x70, 0x72,	//and [bx+si+0x72],dh
 //	0x6F,				//outsw
 //	0x67, 0x72, 0x61,	//jc 0x7a
@@ -111,7 +126,16 @@ const byte		msdosprogram[]=
 //	0x6E,				//outsb edx,ds:esi
 //	0x6F,				//outsb edx,ds:esi
 };
-const char		msdos_msg[]="This program cannot be run in DOS mode .";
+const char		msdos_msg[]="This program cannot be run in DOS mode.\r\r\n$\0\0\0\0\0\0";
+void			emit_msdosstub()
+{
+	memcpy(code.data()+code_idx, &defaultmzheader, sizeof(MzHeader));
+	code_idx+=sizeof(MzHeader);
+	memcpy(code.data()+code_idx, msdosprogram, sizeof(msdosprogram));
+	code_idx+=sizeof(msdosprogram);
+	memcpy(code.data()+code_idx, msdos_msg, sizeof(msdos_msg));
+	code_idx+=sizeof(msdos_msg);
+}
 struct			PEHeader//wiki.osdev.org/PE
 {
 	char magic[4];//"PE\0\0"
@@ -158,11 +182,7 @@ struct Pe32OptionalHeader// 1 byte aligned
 };
 
 //Programming an x64 compiler from scratch - part 2		https://www.youtube.com/watch?v=Mx29YQ4zAuM		3:32:00 - code generation
-#if 1
-//char			register_allocation_order[]=
-//{
-//	RAX, RCX, RBX, 
-//};
+//Programming an x64 compiler from scratch - part 3		https://www.youtube.com/watch?v=olSZ0d-nksE
 int				first_reg=R15;
 inline int		get_next_register(int reg)
 {
@@ -379,7 +399,18 @@ struct			Variable
 	Variable(char reg):reg(reg), initialized(false){}
 };
 typedef std::map<const char*, Variable> VarRegLib;
-static VarRegLib variables;
+static std::vector<VarRegLib> variables;//latest scope at the end
+//static VarRegLib variables;
+VarRegLib::EType* find_variable(const char *name)
+{
+	for(int ks=variables.size()-1;ks>=0;--ks)
+	{
+		auto pv=variables[ks].find(name);
+		if(pv)
+			return pv;
+	}
+	return nullptr;
+}
 
 static i64		parse_temp_result=0;
 static Token const *parse_temp_token=nullptr;
@@ -398,7 +429,8 @@ static void		parse_unary(Operand *dst)
 		{
 			parse_temp_token=current_token;
 			read_token();//skip the variable
-			auto id_var=variables.find(parse_temp_token->sdata);//reference to an int
+			auto id_var=find_variable(parse_temp_token->sdata);//reference to an int
+			//auto id_var=variables.find(parse_temp_token->sdata);
 			if(!id_var)
 				error_pp(*parse_temp_token, "Undeclared identifier: \'%s\'.", parse_temp_token->sdata);
 			else
@@ -807,7 +839,8 @@ static void		parse_assignment(Operand *dst)
 	if(identifier&&identifier->type==CT_ID)
 	{
 		auto assignment=peek_token(current_token);
-		auto id_var=variables.find(identifier->sdata);
+		auto id_var=find_variable(identifier->sdata);
+		//auto id_var=variables.find(identifier->sdata);
 		if(!id_var)
 			error_pp(*identifier, "Undeclared identifier.");
 		else if(assignment)
@@ -846,64 +879,72 @@ static void		parse_statements()
 	do
 	{
 		Operand op;
-		if(current_token->type==CT_INT)
+		switch(current_token->type)
 		{
-			read_token();//skip type
-			auto id_token=current_token;
-			if(id_token->type!=CT_ID)
-				error_pp(*id_token, "Expected an identifier.");
-			else//new variable declaration
+		case CT_INT://declaration
 			{
-				read_token();//skip id
-				if(current_token->type==CT_ASSIGN)//assignment declaration
+				read_token();//skip type
+				auto id_token=current_token;
+				if(id_token->type!=CT_ID)
+					error_pp(*id_token, "Expected an identifier.");
+				else//new variable declaration
 				{
-					read_token();//skip assignment operator
-					parse_assignment(&op);
+					read_token();//skip id
+					if(current_token->type==CT_ASSIGN)//assignment declaration
+					{
+						read_token();//skip assignment operator
+						parse_assignment(&op);
 		
-					bool old=false;
-					auto &id_reg=variables.insert_no_overwrite(VarRegLib::EType(id_token->sdata, Variable()), &old);
-					if(old)
-						error_pp(*id_token, "Redifinition of \'%s\'.", id_token->sdata);
-					else if(op.type==OPERAND_REG_REFERENCE)
-					{
-						id_reg.second.reg=get_new_reg();
-						EMIT_R_R(MOV, id_reg.second.reg, op.reg);
-						parse_temp_pvar=variables.find(op.id);
-						id_reg.second.initialized=parse_temp_pvar&&parse_temp_pvar->second.initialized;
-						if(!id_reg.second.initialized)
-							error_pp(current_token[-1], "Uninitialized variable is used: \'%s\'", op.id);
-					}
-					else
-					{
-						id_reg.second.initialized=true;
-						if(op.type==OPERAND_IMM8)
+						bool old=false;
+						auto &id_reg=variables.back().insert_no_overwrite(VarRegLib::EType(id_token->sdata, Variable()), &old);
+						if(old)
+							error_pp(*id_token, "Redifinition of \'%s\'.", id_token->sdata);
+						else if(op.type==OPERAND_REG_REFERENCE)
 						{
 							id_reg.second.reg=get_new_reg();
-							EMIT_MOV_R_I(id_reg.second.reg, op.imm8);
+							EMIT_R_R(MOV, id_reg.second.reg, op.reg);
+							parse_temp_pvar=find_variable(op.id);
+							//parse_temp_pvar=variables.find(op.id);
+							id_reg.second.initialized=parse_temp_pvar&&parse_temp_pvar->second.initialized;
+							if(!id_reg.second.initialized)
+								error_pp(current_token[-1], "Uninitialized variable is used: \'%s\'", op.id);
 						}
 						else
-							id_reg.second.reg=op.reg;
+						{
+							id_reg.second.initialized=true;
+							if(op.type==OPERAND_IMM8)
+							{
+								id_reg.second.reg=get_new_reg();
+								EMIT_MOV_R_I(id_reg.second.reg, op.imm8);
+							}
+							else
+								id_reg.second.reg=op.reg;
+						}
 					}
-				}
-				else//declaration
-				{
-					bool old=false;
-					auto &id_reg=variables.insert_no_overwrite(VarRegLib::EType(id_token->sdata, op.reg), &old);
-					if(old)
-						error_pp(*id_token, "Redifinition of \'%s\'.", id_token->sdata);
-					else
+					else//declaration
 					{
-						id_reg.second.reg=get_new_reg();
-						id_reg.second.initialized=false;
+						bool old=false;
+						auto &id_reg=variables.back().insert_no_overwrite(VarRegLib::EType(id_token->sdata, op.reg), &old);
+						if(old)
+							error_pp(*id_token, "Redifinition of \'%s\'.", id_token->sdata);
+						else
+						{
+							id_reg.second.reg=get_new_reg();
+							id_reg.second.initialized=false;
+						}
 					}
 				}
 			}
-		}
-		else
-		{
+			break;
+		case CT_IF:
+			break;
+		case CT_FOR:
+			break;
+		default:
 			parse_assignment(&op);
 			if(op.type!=OPERAND_REG_REFERENCE)
 				free_register(op.reg);
+			break;
 		}
 
 		if(current_token->type!=CT_SEMICOLON)
@@ -913,20 +954,64 @@ static void		parse_statements()
 		}
 	}while(read_token());//skip semicolon
 }
-void			parse_eval_rec(Expression const &expr)
+static void		parse_globalstatement()
+{
+	switch(current_token->type)
+	{
+	case CT_EXTERN:
+		break;
+	case CT_STATIC:
+	case CT_CONST:
+	case CT_AUTO:
+	case CT_SIGNED:
+	case CT_UNSIGNED:
+	case CT_VOID:
+	case CT_BOOL:
+	case CT_CHAR:
+	case CT_SHORT:
+	case CT_INT:
+	case CT_LONG:
+	case CT_FLOAT:
+	case CT_DOUBLE:
+	case CT_WCHAR_T:
+	case CT_INT8:
+	case CT_INT16:
+	case CT_INT32:
+	case CT_INT64:
+	//case CT_M128:
+	//case CT_M128I:
+	//case CT_M128D:
+		break;
+	case CT_CLASS:
+	case CT_STRUCT:
+	case CT_UNION:
+		break;
+	case CT_ENUM:
+		break;
+	case CT_TYPEDEF:
+		break;
+	}
+}
+static void		parse_program()
+{
+}
+/*void			parse_eval_rec(Expression const &expr)
 {
 	current_expr=&expr, token_idx=0;
 
 	code_idx=0;
 	code.resize(1024);
-	read_token();
+	
+//	emit_msdosstub();//
 
 	reset_regstate();
+	variables.assign(1, VarRegLib());
+	read_token();
 	parse_statements();
 
 	code.resize(code_idx);
-}
-#endif
+}//*/
+
 void			dump_code(const char *filename)
 {
 	save_file(filename, true, code.data(), code.size());
@@ -939,7 +1024,19 @@ void			compile(LexFile &lf)
 	i64 t1=0, t2=0;
 
 	t1=__rdtsc();
-	parse_eval_rec(lf.expr);
+	current_expr=&lf.expr, token_idx=0;
+
+	code_idx=0;
+	code.resize(1024);
+	
+//	emit_msdosstub();//
+
+	reset_regstate();
+	variables.assign(1, VarRegLib());
+	read_token();
+	parse_statements();
+
+	code.resize(code_idx);
 	t2=__rdtsc();
 
 	printf("\n\n");

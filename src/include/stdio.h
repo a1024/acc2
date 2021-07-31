@@ -2,10 +2,7 @@
 #ifndef STDIO_H
 #define STDIO_H
 
-#ifndef SIZE_T
-#define SIZE_T
-typedef unsigned size_t;
-#endif
+#include		"crtdefs.h"
 
 #ifdef __cplusplus
 extern "C"
