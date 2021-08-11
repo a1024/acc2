@@ -936,10 +936,10 @@ static void		parse_statements()
 				}
 			}
 			break;
-		case CT_IF:
-			break;
-		case CT_FOR:
-			break;
+		//case CT_IF:
+		//	break;
+		//case CT_FOR:
+		//	break;
 		default:
 			parse_assignment(&op);
 			if(op.type!=OPERAND_REG_REFERENCE)
@@ -1011,6 +1011,1073 @@ static void		parse_program()
 
 	code.resize(code_idx);
 }//*/
+
+/*namespace		resources
+{
+	const int
+		statement1[]={CT_INT, CT_ID, CT_ASSIGN, -1, CT_SEMICOLON},
+		statement2[]={-1, CT_SEMICOLON};
+	const int
+		assignment1[]={-2},
+		assignment2[]={CT_ID, CT_ASSIGN, -1};
+	const int
+		summation1[]={-3},
+		summation2[]={-2, CT_PLUS, -3},
+		summation3[]={-2, CT_MINUS, -3};
+	const int
+		product1[]={-4},
+		product2[]={-3, CT_ASTERIX, -4},
+		product3[]={-3, CT_SLASH, -4},
+		product4[]={-3, CT_MODULO, -4};
+	const int
+		unary1[]={CT_VAL_INTEGER},
+		unary2[]={CT_ID},
+		unary3[]={CT_LPR, 0, CT_RPR};
+}//*/
+
+enum			StorageSpecifierType
+{
+	STORAGE_EXTERN,
+	STORAGE_STATIC,
+	STORAGE_MUTABLE,
+	STORAGE_REGISTER,
+};
+enum			DataType
+{
+	DATA_AUTO,
+	DATA_INT,
+	DATA_FLOAT,
+	DATA_SIMD,
+	DATA_CLASS,
+	DATA_STRUCT,
+	DATA_UNION,
+};
+union			SpecifierInfo//cast to int		TODO: pointer info
+{
+	struct
+	{
+		int datatype:4,
+			logalign:3,//in bytes
+			is_const:1, is_volatile:1,
+			storagetype:2;
+	};
+	int flags;
+	SpecifierInfo():flags(0){}
+	SpecifierInfo(int datatype, int logalign, int is_const, int storagetype):flags(0)
+	{
+		this->datatype=datatype;
+		this->logalign=logalign;
+		this->is_const=is_const;
+		this->storagetype=storagetype;
+	}
+};
+struct			IRNode
+{
+	CTokenType type;
+	int parent;
+	std::vector<int> children;
+	//void *data;
+	IRNode():type(CT_IGNORED), parent(-1){}
+	IRNode(CTokenType type, int parent):type(type), parent(parent){}
+	void set(CTokenType type, int parent)
+	{
+		this->type=type;
+		this->parent=parent;
+	}
+	//void set(CTokenType type, int parent, void *data=nullptr)
+	//{
+	//	this->type=type;
+	//	this->parent=parent;
+	//	this->data=data;
+	//}
+
+	//CTokenType type;
+	//std::vector<IRNode*> children;
+	//IRNode():type(CT_IGNORED){}
+	//IRNode(CTokenType type):type(type){}
+
+	//CTokenType type;
+	//int nchildren;
+	//IRNode *children,
+	//	*next;
+	//IRNode():type(CT_IGNORED), nchildren(0), children(nullptr), next(nullptr){}
+};
+namespace		parse//OpenC++
+{
+	Expression	*current_ex=nullptr;
+	std::vector<IRNode> *current_ir=nullptr;
+	int			current_idx=0, ntokens=0, ir_size=0;
+#define			LOOK_AHEAD(K)		current_ex->operator[](current_idx+(K)).type
+	inline void	append_node(IRNode const &node)
+	{
+		if(ir_size<(int)current_ir->size())
+			current_ir->growby(1024);
+		current_ir->operator[](ir_size)=node;
+		++ir_size;
+	}
+	inline void	append_node(CTokenType type, int parent)
+	{
+		if(ir_size<(int)current_ir->size())
+			current_ir->growby(1000);
+		current_ir->operator[](parent).children.push_back(ir_size);
+		current_ir->operator[](ir_size).set(type, parent);
+		++ir_size;
+	}
+	inline void	skip_till_after(CTokenType tokentype)
+	{
+		for(;current_idx<ntokens&&LOOK_AHEAD(0)!=tokentype;++current_idx);
+		current_idx+=LOOK_AHEAD(0)==tokentype;
+	}
+	void		parse_error(const char *msg)
+	{
+		error_pp(current_ex->operator[](current_idx), "%s", msg);
+		skip_till_after(CT_SEMICOLON);
+	}
+
+	//recursive parser declarations
+	bool		r_comma_expr(int parent);
+	bool		r_declarator2(int parent);
+	bool		r_opt_cv_qualify(int parent);
+	bool		r_opt_int_type_or_class_spec(int parent);
+	bool		r_cast(int parent);
+	bool		r_unary(int parent);
+	bool		r_expression(int parent);
+	bool		r_comma_expr(int parent);
+	enum		TemplateDeclarationType
+	{
+		TEMPLATE_UNKNOWN,
+		TEMPLATE_DECLARATION,
+		TEMPLATE_INSTANTIATION, 
+		TEMPLATE_SPECIALIZATION,
+		TEMPLATE_TYPE_COUNT,
+	};
+	bool		r_template_decl2(int parent, TemplateDeclarationType &templatetype);
+
+	//recursive parser functions
+	bool		r_typespecifier(int parent)//type.specifier  :=  [cv.qualify]? (integral.type.or.class.spec | name) [cv.qualify]?
+	{
+		if(!r_opt_cv_qualify(parent)||!r_opt_int_type_or_class_spec(parent))
+			return false;
+		return true;
+	}
+	bool		r_typename(int parent)//type.name  :=  type.specifier cast.declarator
+	{
+		if(!r_typespecifier(parent))
+			return false;
+		if(!r_declarator2(parent))
+			return false;
+		return true;
+	}
+	bool		r_sizeof(int parent)
+	{
+		int t_idx=current_idx;
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			if(r_typename(parent)&&LOOK_AHEAD(0)==CT_RPR)
+			{
+				++current_idx;
+				return true;
+			}
+			current_idx=t_idx;//restore idx
+		}
+		return r_unary(parent);
+	}
+	bool		r_typeid(int parent)//typeid.expr  :=  TYPEID '(' expression ')'  |  TYPEID '(' type.name ')'
+	{
+		if(LOOK_AHEAD(0)!=CT_TYPEID)
+			return false;
+		++current_idx;
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			int t_idx=current_idx;
+			++current_idx;
+			if(r_typename(parent)&&LOOK_AHEAD(0)==CT_RPR)//TODO: global 'suppresses errors'
+			{
+				++current_idx;
+				return true;
+			}
+			current_idx=t_idx;
+			if(r_expression(parent)&&LOOK_AHEAD(0)==CT_RPR)
+			{
+				++current_idx;
+				return true;
+			}
+			current_idx=t_idx;
+		}
+		return false;
+	}
+	bool		r_func_args(int parent)//function.arguments  :  empty  |  expression (',' expression)*		assumes that the next token following function.arguments is ')'
+	{
+		if(LOOK_AHEAD(0)==CT_RPR)
+			return true;
+		for(;;)
+		{
+			if(!r_expression(parent))
+				return false;
+			if(LOOK_AHEAD(0)!=CT_COMMA)
+				return true;
+			++current_idx;
+		}
+	}
+	//var.name  :=  ['::']? name2 ['::' name2]*
+	//name2  :=  Identifier {template.args}  |  '~' Identifier  |  OPERATOR operator.name
+	//if var.name ends with a template type, the next token must be '('
+	bool		r_varname(int parent)
+	{
+		if(LOOK_AHEAD(0)==CT_SCOPE)
+		{
+			//TODO: search global scope
+		}
+		for(;;)
+		{
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_ID:
+				break;
+			case CT_TILDE:
+				break;
+			//case CT_OPERATOR:
+			//	break;
+			default:
+				return false;
+			}
+		}
+	}
+	//userdef.statement
+	//	:	UserKeyword '(' function.arguments ')' compound.statement
+	//	|	UserKeyword2 '(' arg.decl.list ')' compound.statement
+	//	|	UserKeyword3 '(' expr.statement [comma.expression]? ';' [comma.expression] ')' compound.statement
+	bool		r_user_definition(int parent)
+	{
+		if(LOOK_AHEAD(0)!=CT_ID||LOOK_AHEAD(1)!=CT_LPR)
+			return false;
+		//TODO
+		return true;
+	}
+	
+	//primary.exp
+	//	: Constant
+	//	| CharConst
+	//	| WideCharConst
+	//	| StringL
+	//	| WideStringL
+	//	| THIS
+	//	| var.name
+	//	| '(' comma.expression ')'
+	//	| integral.type.or.class.spec '(' function.arguments ')'
+	//	| typeid.expr
+	//	| openc++.primary.exp
+	//
+	//openc++.primary.exp := var.name '::' userdef.statement
+	bool		r_primary(int parent)
+	{
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_VAL_INTEGER:
+		case CT_VAL_FLOAT:
+		case CT_VAL_STRING_LITERAL:
+		case CT_VAL_WSTRING_LITERAL:
+		case CT_VAL_CHAR_LITERAL:
+			//TODO: leaf node
+			++current_idx;
+			break;
+		case CT_THIS:
+			//TODO: leaf node
+			++current_idx;
+			break;
+		case CT_LPR:
+			++current_idx;
+			if(!r_comma_expr(parent))
+				return false;
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return false;//TODO: proper error messages
+			++current_idx;
+			break;
+		case CT_TYPEID:
+			return r_typeid(parent);
+		default:
+			{
+				int i_idx=ir_size;
+				if(!r_opt_int_type_or_class_spec(parent))
+					return false;
+				if(i_idx>=ir_size)
+					i_idx=-1;
+				if(i_idx!=-1)//function style cast expression
+				{
+					if(LOOK_AHEAD(0)!=CT_LPR)
+						return false;
+					if(!r_func_args(parent))
+						return false;
+					if(LOOK_AHEAD(0)!=CT_RPR)
+						return false;
+				}
+				else
+				{
+					if(!r_varname(parent))
+						return false;
+					if(LOOK_AHEAD(0)==CT_SCOPE)
+					{
+						if(!r_user_definition(parent))
+							return false;
+					}
+				}
+			}
+			break;
+		}
+		return true;
+	}
+	//postfix.exp
+	//	: primary.exp
+	//	| postfix.expr '[' comma.expression ']'
+	//	| postfix.expr '(' function.arguments ')'
+	//	| postfix.expr '.' var.name
+	//	| postfix.expr ArrowOp var.name
+	//	| postfix.expr IncOp
+	//	| openc++.postfix.expr
+	//
+	//openc++.postfix.expr
+	//	: postfix.expr '.' userdef.statement
+	//	| postfix.expr ArrowOp userdef.statement
+	//
+	//Note: function-style casts are accepted as function calls.
+	bool		r_postfix(int parent)
+	{
+		if(!r_primary(parent))
+			return false;
+		for(auto t=LOOK_AHEAD(0);;)
+		{
+			switch(t)
+			{
+			case CT_LBRACKET:
+				++current_idx;
+				if(!r_comma_expr(parent))
+					return false;
+				if(LOOK_AHEAD(0)!=CT_RBRACKET)
+					return false;
+				++current_idx;
+				break;
+			case CT_LPR:
+				++current_idx;
+				if(!r_func_args(parent))
+					return false;
+				if(LOOK_AHEAD(0)!=CT_RBRACKET)
+					return false;
+				++current_idx;
+				break;
+			case CT_INCREMENT:
+			case CT_DECREMENT:
+				//TODO: apply post
+				++current_idx;
+				break;
+			case CT_PERIOD:
+			case CT_ARROW:
+				++current_idx;
+				if(!r_varname(parent))
+					return false;
+				break;
+			default:
+				return true;
+			}
+			t=LOOK_AHEAD(0);
+		}
+		return true;
+	}
+	bool		r_unary(int parent)//unary.expr  :=  postfix.expr  |  ('*'|'&'|'+'|'-'|'!'|'~'|IncOp) cast.expr  |  sizeof.expr  |  allocate.expr  |  throw.expression
+	{
+		auto t=LOOK_AHEAD(0);
+		switch(t)
+		{
+		case CT_ASTERIX:
+		case CT_AMPERSAND:
+		case CT_PLUS:
+		case CT_MINUS:
+		case CT_EXCLAMATION:
+		case CT_TILDE:
+		case CT_INCREMENT:
+		case CT_DECREMENT:
+			++current_idx;
+			if(!r_cast(parent))
+				return false;
+			//TODO: apply the unary operator
+			break;
+		case CT_SIZEOF:
+			return r_sizeof(parent);
+		case CT_THROW:
+			//TODO?
+			break;
+		default:
+			//if is_allocate_expr: r_allocate
+			return r_postfix(parent);
+		}
+		return true;
+	}
+	bool		r_cast(int parent)//cast.expr  :=  unary.expr  |  '(' type.name ')' cast.expr
+	{
+		if(LOOK_AHEAD(0)!=CT_LPR)
+			return r_unary(parent);
+		++current_idx;
+		if(!r_typename(parent))
+			return false;
+		if(LOOK_AHEAD(0)!=CT_RPR)
+			return false;
+		++current_idx;
+		return true;
+	}
+	bool		r_pm(int parent)//pm.expr (pointer to member .*, ->*)  :=  cast.expr  | pm.expr PmOp cast.expr
+	{
+		if(!r_cast(parent))
+			return false;
+		for(auto t=LOOK_AHEAD(0);t==CT_DOT_STAR||t==CT_ARROW_STAR;)
+		{
+			++current_idx;
+			if(!r_cast(parent))
+				return false;
+			//TODO: bitwise_and node
+		}
+		return true;
+	}
+	bool		r_multiplicative(int parent)//multiply.expr  :=  pm.expr  |  multiply.expr ('*' | '/' | '%') pm.expr
+	{
+		if(!r_pm(parent))
+			return false;
+		for(auto t=LOOK_AHEAD(0);t==CT_ASTERIX||t==CT_SLASH||t==CT_MODULO;)
+		{
+			++current_idx;
+			if(!r_pm(parent))
+				return false;
+			//TODO: bitwise_and node
+		}
+		return true;
+	}
+	bool		r_additive(int parent)//additive.expr  :=  multiply.expr  |  additive.expr ('+' | '-') multiply.expr
+	{
+		if(!r_multiplicative(parent))
+			return false;
+		for(auto t=LOOK_AHEAD(0);t==CT_PLUS||t==CT_MINUS;)
+		{
+			++current_idx;
+			if(!r_multiplicative(parent))
+				return false;
+			//TODO: bitwise_and node
+		}
+		return true;
+	}
+	bool		r_shift(int parent)//shift.expr  :=  additive.expr  |  shift.expr ShiftOp additive.expr
+	{
+		if(!r_additive(parent))
+			return false;
+		for(auto t=LOOK_AHEAD(0);t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL;)
+		{
+			++current_idx;
+			if(!r_additive(parent))
+				return false;
+			//TODO: bitwise_and node
+		}
+		return true;
+	}
+	bool		r_relational(int parent)//relational.expr  :=  shift.expr  |  relational.expr ('<=' | '>=' | '<' | '>') shift.expr
+	{
+		if(!r_shift(parent))
+			return false;
+		for(auto t=LOOK_AHEAD(0);t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL;)
+		{
+			++current_idx;
+			if(!r_shift(parent))
+				return false;
+			//TODO: bitwise_and node
+		}
+		return true;
+	}
+	bool		r_equality(int parent)//equality.expr  :=  relational.expr  |  equality.expr EqualOp relational.expr
+	{
+		if(!r_relational(parent))
+			return false;
+		for(auto t=LOOK_AHEAD(0);t==CT_EQUAL||t==CT_NOT_EQUAL;)
+		{
+			++current_idx;
+			if(!r_relational(parent))
+				return false;
+			//TODO: bitwise_and node
+			t=LOOK_AHEAD(0);
+		}
+		return true;
+	}
+	bool		r_bitwise_and(int parent)//and.expr  :=  equality.expr  |  and.expr '&' equality.expr
+	{
+		if(!r_equality(parent))
+			return false;
+		for(;LOOK_AHEAD(0)==CT_AMPERSAND;)
+		{
+			++current_idx;
+			if(!r_equality(parent))
+				return false;
+			//TODO: bitwise_and node
+		}
+		return true;
+	}
+	bool		r_bitwise_xor(int parent)//inclusive.or.expr  :=  exclusive.or.expr  |  inclusive.or.expr '|' exclusive.or.expr
+	{
+		if(!r_bitwise_and(parent))
+			return false;
+		for(;LOOK_AHEAD(0)==CT_CARET;)
+		{
+			++current_idx;
+			if(!r_bitwise_and(parent))
+				return false;
+			//TODO: bitwise_xor node
+		}
+		return true;
+	}
+	bool		r_bitwise_or(int parent)
+	{
+		if(!r_bitwise_xor(parent))
+			return false;
+		for(;LOOK_AHEAD(0)==CT_VBAR;)
+		{
+			++current_idx;
+			if(!r_bitwise_xor(parent))
+				return false;
+			//TODO: bitwise_or node
+		}
+		return true;
+	}
+	bool		r_logic_and(int parent)//logical.and.expr  :=  inclusive.or.expr  |  logical.and.expr LogAndOp inclusive.or.expr
+	{
+		if(!r_bitwise_or(parent))
+			return false;
+		for(;LOOK_AHEAD(0)==CT_LOGIC_AND;)
+		{
+			++current_idx;
+			if(!r_bitwise_or(parent))
+				return false;
+			//TODO: logic_and node
+		}
+		return true;
+	}
+	bool		r_logic_or(int parent)//logical.or.expr  :=  logical.and.expr  |  logical.or.expr LogOrOp logical.and.expr		left-to-right
+	{
+		if(!r_logic_and(parent))
+			return false;
+		for(;LOOK_AHEAD(0)==CT_LOGIC_OR;)
+		{
+			++current_idx;
+			if(!r_logic_and(parent))
+				return false;
+			//TODO: logic_or node
+		}
+		return true;
+	}
+	bool		r_conditional_expr(int parent)//  conditional.expr  :=  logical.or.expr {'?' comma.expression ':' conditional.expr}  right-to-left
+	{
+		if(!r_logic_or(parent))
+			return false;
+		if(LOOK_AHEAD(0)==CT_QUESTION)
+		{
+			++current_idx;
+			if(!r_comma_expr(parent))
+				return false;
+			if(LOOK_AHEAD(0)!=CT_COLON)
+				return false;
+			if(!r_conditional_expr(parent))
+				return false;
+		}
+		return true;
+	}
+	bool		r_expression(int parent)//expression  :=  conditional.expr [(AssignOp | '=') expression]?	right-to-left
+	{
+		if(!r_conditional_expr(parent))
+			return false;
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_ASSIGN:
+		case CT_ASSIGN_ADD:case CT_ASSIGN_SUB:
+		case CT_ASSIGN_MUL:case CT_ASSIGN_DIV:case CT_ASSIGN_MOD:
+		case CT_ASSIGN_XOR:case CT_ASSIGN_OR:case CT_ASSIGN_AND:case CT_ASSIGN_SL:case CT_ASSIGN_SR:
+			if(!r_expression(parent))
+				return false;
+			break;
+		}
+		return true;
+	}
+	bool		r_comma_expr(int parent)
+	{
+		if(!r_expression(parent))
+			return false;
+		while(LOOK_AHEAD(0)==CT_COMMA)
+		{
+			++current_idx;
+			if(!r_expression(parent))
+				return false;
+		}
+		return true;
+	}
+	bool		r_initialize_expr(int parent)//initialize.expr  :=  expression  |  '{' initialize.expr [',' initialize.expr]* [',']? '}'
+	{
+		if(LOOK_AHEAD(0)!=CT_LBRACE)
+			return r_expression(parent);
+		++current_idx;
+		for(auto t=LOOK_AHEAD(0);t!=CT_RBRACE;)
+		{
+			if(!r_initialize_expr(parent))
+			{
+				skip_till_after(CT_RBRACE);
+				return true;//error recovery
+			}
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_RBRACE:
+				break;
+			case CT_COMMA:
+				++current_idx;
+				continue;
+			default:
+				skip_till_after(CT_RBRACE);
+				return true;//error recovery
+			}
+			break;
+		}
+		return true;
+	}
+
+	bool		r_opt_member_spec(int parent)//member.spec := (friend|inline|virtual)+
+	{
+		int idx=-1;
+		for(;current_idx<ntokens;++current_idx)
+		{
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_FRIEND:
+			case CT_INLINE:
+			case CT_VIRTUAL:
+				if(idx==-1)
+				{
+					idx=ir_size;
+					append_node(CT_MEMBER_SPEC, parent);
+				}
+				append_node(LOOK_AHEAD(0), idx);
+				//p->children.push_back(new IRNode(LOOK_AHEAD(0)));
+				continue;
+			default:
+				break;
+			}
+			break;
+		}
+		return true;
+	}
+	bool		r_opt_storage_spec(int parent)//storage.spec := extern|static|mutable|register
+	{
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_EXTERN:
+		case CT_STATIC:
+		case CT_MUTABLE:
+		case CT_REGISTER:
+			append_node(LOOK_AHEAD(0), parent);
+			//p->children.push_back(new IRNode(LOOK_AHEAD(0)));
+			++current_idx;
+			break;
+		}
+		return true;
+	}
+	bool		r_opt_cv_qualify(int parent)
+	{
+		int idx=-1;
+		for(;current_idx<ntokens;++current_idx)
+		{
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_CONST:
+			case CT_VOLATILE:
+				if(idx==-1)
+				{
+					idx=ir_size;
+					append_node(CT_CV_QUALIFIER, parent);
+				}
+				append_node(LOOK_AHEAD(0), idx);
+				continue;
+			}
+			break;
+		}
+		return true;
+	}
+	bool		r_opt_int_type_or_class_spec(int parent)//int.type.or.class.spec := (char|wchar_t|int|short|long|signed|unsigned|float|double|void|bool)+
+	{
+		int idx=-1;
+		for(;;)
+		{
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_AUTO:
+			case CT_SIGNED:case CT_UNSIGNED:
+			case CT_VOID:
+			case CT_BOOL:
+			case CT_CHAR:case CT_SHORT:case CT_INT:case CT_LONG:
+			case CT_FLOAT:case CT_DOUBLE:
+			case CT_WCHAR_T:
+			case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
+				if(idx==-1)
+				{
+					idx=ir_size;
+					append_node(CT_TYPE, parent);
+				}
+				append_node(LOOK_AHEAD(0), idx);
+				continue;
+			//case CT_ID:
+			//	//TODO: check if class/struct/union in this scope
+			//	if(idx==-1)
+			//	{
+			//		idx=ir_size;
+			//		append_node(CT_TYPE, parent);
+			//	}
+			//	append_node(LOOK_AHEAD(0), idx);
+			//	continue;
+			}
+			break;
+		}
+		return true;
+	}
+	bool		r_compoundstatement(int parent)
+	{
+		return true;
+	}
+	bool		r_declarator2(int parent)
+	{
+		return true;
+	}
+	bool		r_declaratorwithinit(int parent)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}
+	{
+		if(LOOK_AHEAD(0)==CT_COLON)//bit field
+		{
+			if(!r_expression(parent))
+				return false;
+		}
+		else
+		{
+			if(!r_declarator2(parent))
+				return false;
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_ASSIGN:
+				++current_idx;
+				if(!r_initialize_expr(parent))
+					return false;
+				break;
+			case CT_COLON:
+				++current_idx;
+				break;
+			default:
+				break;
+			}
+		}
+		return true;
+	}
+	bool		r_declarators(int parent)//declarators := declarator.with.init (',' declarator.with.init)*
+	{
+		for(;;)
+		{
+			if(!r_declaratorwithinit(parent))
+				return false;
+			if(LOOK_AHEAD(0)!=CT_COMMA)
+				break;
+		}
+		return true;
+	}
+	bool		r_declaration(int parent)
+	{
+		int decl_idx=ir_size;
+		append_node(CT_IGNORED, parent);
+		int member=ir_size;
+		if(!r_opt_member_spec(decl_idx))
+			return false;
+		if(member>=ir_size)
+			member=-1;
+		if(!r_opt_storage_spec(decl_idx))
+			return false;
+		if(member==-1)
+		{
+			if(!r_opt_member_spec(decl_idx))
+				return false;
+		}
+		int cv_idx=ir_size;
+		r_opt_cv_qualify(decl_idx);
+		if(cv_idx>=ir_size)
+			cv_idx=-1;
+
+		int opt_spec=ir_size;
+		if(!r_opt_int_type_or_class_spec(decl_idx))
+			return false;
+		if(opt_spec>=ir_size)
+			opt_spec=-1;
+		if(opt_spec!=-1)
+		{
+			//int declaration
+			int cv_idx2=ir_size;
+			r_opt_cv_qualify(parent);
+			if(cv_idx2>=ir_size)
+				cv_idx2=-1;
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_SEMICOLON:
+				break;
+			case CT_COLON:
+				break;
+			default:
+				if(!r_declarators(parent))
+					return false;
+				if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+				{
+					if(!r_compoundstatement(parent))
+						return false;
+				}
+				break;
+			}
+		}
+			//return r_int_decl(decl_idx);
+		return true;
+	}
+	bool		r_typedef(int parent)//typedef.stmt  :=  TYPEDEF type.specifier declarators ';'
+	{
+		if(LOOK_AHEAD(0)!=CT_TYPEDEF)
+			return false;
+		++current_idx;
+		if(!r_typespecifier(parent))
+			return false;
+		if(!r_declarators(parent))
+			return false;
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return false;
+		++current_idx;
+		return true;
+	}
+
+	//temp.arg.declaration
+	//	:	CLASS Identifier ['=' type.name]
+	//	|	type.specifier arg.declarator ['=' additive.expr]
+	//	|	template.decl2 CLASS Identifier ['=' type.name]
+	bool		r_template_arg_decl(int parent)
+	{
+		auto t=LOOK_AHEAD(0);
+		if(t==CT_CLASS&&LOOK_AHEAD(1)==CT_ID)
+		{
+			current_idx+=2;
+			if(LOOK_AHEAD(0)==CT_ASSIGN)
+			{
+				if(!r_typename(parent))
+					return false;
+			}
+		}
+		else if(t==CT_TEMPLATE)
+		{
+			auto templatetype=TEMPLATE_UNKNOWN;
+			if(!r_template_decl2(parent, templatetype))
+				return false;
+			auto t0=LOOK_AHEAD(0), t1=LOOK_AHEAD(1);
+			if(t0!=CT_CLASS||t1!=CT_ID)
+				return false;
+			current_idx+=1+(t0==CT_CLASS);
+		}
+		else
+		{
+		}
+	}
+	bool		r_template_arglist(int parent)//temp.arg.list  :=  empty  |  temp.arg.declaration (',' temp.arg.declaration)*
+	{
+		auto t=LOOK_AHEAD(0);
+		if(t==CT_GREATER||t==CT_SHIFT_RIGHT)
+			return true;
+		if(!r_template_arg_decl(parent))
+			return false;
+		while(LOOK_AHEAD(0)==CT_COMMA)
+		{
+			++current_idx;
+			if(!r_template_arg_decl(parent))
+				return false;
+		}
+		return true;
+	}
+	//template.decl
+	//	:	TEMPLATE '<' temp.arg.list '>' declaration
+	//	|	TEMPLATE declaration
+	//	|	TEMPLATE '<' '>' declaration
+	//
+	//The second case is an explicit template instantiation.  declaration must be a class declaration.  For example,
+	//
+	//     template class Foo<int, char>;
+	//
+	// explicitly instantiates the template Foo with int and char.
+	//
+	// The third case is a specialization of a template function.  declaration must be a function template.  For example,
+	//
+	//     template <> int count(String x) { return x.length; }
+	//
+	bool		r_template_decl2(int parent, TemplateDeclarationType &templatetype)
+	{
+		if(LOOK_AHEAD(0)!=CT_TEMPLATE)
+			return false;
+		++current_idx;
+		if(LOOK_AHEAD(0)!=CT_LESS)//template instantiation
+		{
+			templatetype=TEMPLATE_INSTANTIATION;
+			return true;
+		}
+		++current_idx;
+		int arg_idx=ir_size;
+		if(!r_template_arglist(parent))
+			return false;
+		if(arg_idx>=ir_size)
+			arg_idx=-1;
+		auto &t=LOOK_AHEAD(0);
+		switch(t)
+		{
+		case CT_LESS:
+			break;
+		case CT_SHIFT_RIGHT:
+			t=CT_LESS;
+			break;
+		default:
+			return false;
+		}
+		while(LOOK_AHEAD(0)==CT_TEMPLATE)//ignore nested template	TODO: support nested templates
+		{
+			++current_idx;
+			if(LOOK_AHEAD(0)!=CT_LESS)
+				break;
+			++current_idx;
+			if(!r_template_arglist(parent))
+				return false;
+			if(LOOK_AHEAD(0)!=CT_GREATER)
+			{
+				++current_idx;
+				return false;
+			}
+		}
+		if(arg_idx==-1)
+			templatetype=TEMPLATE_SPECIALIZATION;//template < > declaration
+		else
+			templatetype=TEMPLATE_DECLARATION;//template < ... > declaration
+		return true;
+	}
+	bool		r_template_decl(int parent)
+	{
+		auto &templatetoken=current_ex->operator[](current_idx);
+		auto templatetype=TEMPLATE_UNKNOWN;
+		if(!r_template_decl2(parent, templatetype))
+			return false;
+		if(!r_declaration(parent))
+			return false;
+		switch(templatetype)
+		{
+		case TEMPLATE_INSTANTIATION:
+			//TODO
+			break;
+		case TEMPLATE_SPECIALIZATION:
+		case TEMPLATE_DECLARATION:
+			//TODO
+			break;
+		default:
+			error_pp(templatetoken, "Unknown template");
+			break;//recover
+		}
+		return true;
+	}
+	bool		r_definition(int parent)//OpenC++
+	{
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_SEMICOLON://null declaration
+			++current_idx;
+			break;
+		case CT_TYPEDEF:
+			return r_typedef(parent);
+		case CT_TEMPLATE:
+			return r_template_decl(parent);
+		case CT_CLASS:
+		case CT_STRUCT:
+		case CT_UNION:
+			break;
+		case CT_EXTERN:
+			switch(LOOK_AHEAD(1))
+			{
+			case CT_VAL_STRING_LITERAL:
+				break;
+			case CT_TEMPLATE:
+				break;
+				//variable/function declaration
+			case CT_CONSTEXPR:case CT_INLINE:
+			case CT_STATIC:case CT_REGISTER:
+			case CT_VOLATILE:case CT_CONST:
+			case CT_AUTO:
+			case CT_SIGNED:case CT_UNSIGNED:
+			case CT_VOID:
+			case CT_BOOL:
+			case CT_CHAR:case CT_SHORT:case CT_INT:case CT_LONG:
+			case CT_FLOAT:case CT_DOUBLE:
+			case CT_WCHAR_T:case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
+				return r_declaration(parent);
+			default:
+				parse_error("Expected an extern declaration");
+				return false;
+			}
+			break;
+		case CT_NAMESPACE:
+			break;
+		case CT_USING:
+			break;
+
+			//variable/function declaration
+		case CT_CONSTEXPR:
+		case CT_INLINE:
+		case CT_STATIC:
+		case CT_REGISTER:
+		case CT_VOLATILE:
+		case CT_CONST:
+		case CT_AUTO:
+		case CT_SIGNED:
+		case CT_UNSIGNED:
+		case CT_VOID:
+		case CT_BOOL:
+		case CT_CHAR:
+		case CT_SHORT:
+		case CT_INT:
+		case CT_LONG:
+		case CT_FLOAT:
+		case CT_DOUBLE:
+		case CT_WCHAR_T:
+		case CT_INT8:
+		case CT_INT16:
+		case CT_INT32:
+		case CT_INT64:
+			return r_declaration(parent);
+
+		default:
+			parse_error("Expected a declaration");
+			return false;
+		}
+		return true;
+	}
+#undef			LOOK_AHEAD
+}
+void			parse_cplusplus(Expression &ex, std::vector<IRNode> &ir)//OpenC++
+{
+	Token nulltoken={CT_IGNORED};
+	ex.insert_pod(ex.size(), nulltoken, 16);
+	parse::current_ex=&ex;
+	parse::ntokens=ex.size()-16;
+	parse::current_idx=0;
+	parse::current_ir=&ir;
+	parse::ir_size=0;
+	parse::current_ir->resize(1024);
+
+	parse::append_node(CT_PROGRAM, -1);//node at 0 is always CT_PROGRAM, everything stems from there
+	parse::r_definition(0);
+	for(;parse::current_idx<(int)ex.size();)
+	{
+		for(;parse::current_idx<(int)ex.size()&&!parse::r_definition(0);)
+			parse::skip_till_after(CT_SEMICOLON);
+		//node=node->next;
+	}
+	parse::current_ir->resize(parse::ir_size);
+}
 
 void			dump_code(const char *filename)
 {

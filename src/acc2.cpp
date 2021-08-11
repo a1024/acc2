@@ -381,9 +381,9 @@ int				main(int argc, const char **argv)
 
 		preprocess(macros, lf);
 
-		compile(lf);//
+		//compile(lf);//
 
-#if 0
+#if 1
 		switch(action)
 		{
 		case CA_PREPROCESS:	//c/c++ -> preprocessed c/c++

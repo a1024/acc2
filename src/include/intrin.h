@@ -32,8 +32,6 @@ void __stosd(unsigned long *, unsigned long, size_t);
 __MACHINEX64(void __stosq(unsigned __int64 *, unsigned __int64, size_t));
 void __stosw(unsigned short *, unsigned short, size_t);
 
-#undef __X64
-
 
 #ifdef __cplusplus
 }

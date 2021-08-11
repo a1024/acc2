@@ -35,7 +35,7 @@ struct			LexOption
 	const char *name;
 };
 typedef std::vector<LexOption, 16> LexSlot;
-LexSlot			slots[128];
+LexSlot			slots[256];
 inline int		strcmp_idx(const char *s1, const char *s2)//returns -1 if identical, otherwise the index where character start to differ
 {
 	int k=0;
@@ -90,7 +90,7 @@ void			init_lexer()
 }
 inline int		lex_match(const char *p, int k, LexOption *&popt, int &advance)
 {
-	auto &slot=slots[p[k]];
+	auto &slot=slots[(byte)p[k]];
 	int nopts=slot.size();
 	if(nopts)
 	{
@@ -475,10 +475,10 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 	if(prof_print)
 	{
 		if(lf.filename)
-			printf("\nLexed \'%s\' in %lld cycles\n", lf.filename, cycles2-cycles1);
+			printf("\nLexed file \'%s\' in %lld cycles\n", lf.filename, cycles2-cycles1);
 		else if(size<=16)
-			printf("\nLexed \'%s\' in %lld cycles\n", lf.text.c_str(), cycles2-cycles1);
+			printf("\nLexed text \'%s\' in %lld cycles\n", lf.text.c_str(), cycles2-cycles1);
 		else
-			printf("\nLexed \'%.*s...\' in %lld cycles\n", 16, lf.text.c_str(), cycles2-cycles1);
+			printf("\nLexed text \'%.*s...\' in %lld cycles\n", 16, lf.text.c_str(), cycles2-cycles1);
 	}
 }

@@ -1,7 +1,7 @@
 #ifdef TOKEN
-//the 3rd argument is the lex flag:
-//0: no restrictions on following character
-//1: identifier-like keyword: following character shouldn't be an alphanumeric
+//the 3rd argument of the TOKEN() macro is the lex flag:
+//	0: no restrictions on following character
+//	1: identifier-like keyword: following character shouldn't be an alphanumeric
 
 	TOKEN(0, CT_IGNORED, 0)//negative values are ignored too
 
@@ -12,6 +12,7 @@
 	TOKEN(0, CT_VAL_STRING_LITERAL, 0)
 	TOKEN(0, CT_VAL_WSTRING_LITERAL, 0)//identical utf-8 like CT_VAL_STRING_LITERAL, just a type for compiler
 	TOKEN(0, CT_VAL_CHAR_LITERAL, 0)//TODO: ival, stores up to 8 characters (MSVC: 4)
+//	TOKEN(0, CT_VAL_WCHAR_LITERAL, 0)
 	TOKEN(0, CT_INCLUDENAME_STD, 0)
 	TOKEN(0, CT_INCLUDENAME_CUSTOM, 0)//deprecated
 
@@ -20,10 +21,10 @@
 	TOKEN("struct", CT_STRUCT, 1) TOKEN("class", CT_CLASS, 1) TOKEN("union", CT_UNION, 1)
 	TOKEN("template", CT_TEMPLATE, 1) TOKEN("typename", CT_TYPENAME, 1)
 	
-	TOKEN("constexpr", CT_CONSTEXPR, 1) TOKEN("inline", CT_INLINE, 1) TOKEN("friend", CT_FRIEND, 1)
-	TOKEN("extern", CT_EXTERN, 1) TOKEN("static", CT_STATIC, 1)
-	TOKEN("register", CT_REGISTER, 1) TOKEN("volatile", CT_VOLATILE, 1)
-	TOKEN("const", CT_CONST, 1)
+	TOKEN("constexpr", CT_CONSTEXPR, 1) TOKEN("inline", CT_INLINE, 1)
+	TOKEN("extern", CT_EXTERN, 1) TOKEN("static", CT_STATIC, 1) TOKEN("mutable", CT_MUTABLE, 1)
+	TOKEN("const", CT_CONST, 1) TOKEN("volatile", CT_VOLATILE, 1)
+	TOKEN("register", CT_REGISTER, 1)
 	TOKEN("auto", CT_AUTO, 1) TOKEN("decltype", CT_DECLTYPE, 1)
 	TOKEN("signed", CT_SIGNED, 1) TOKEN("unsigned", CT_UNSIGNED, 1)
 	TOKEN("void", CT_VOID, 1)
@@ -47,9 +48,11 @@
 	//special
 	TOKEN("new", CT_NEW, 1) TOKEN("delete", CT_DELETE, 1) TOKEN("this", CT_THIS, 1)
 	TOKEN("public", CT_PUBLIC, 1) TOKEN("private", CT_PRIVATE, 1) TOKEN("protected", CT_PROTECTED, 1)
-	TOKEN("namespace", CT_NAMESPACE, 1)
+	TOKEN("friend", CT_FRIEND, 1) TOKEN("virtual", CT_VIRTUAL, 1)
+	TOKEN("namespace", CT_NAMESPACE, 1) TOKEN("using", CT_USING, 1)
 	TOKEN("static_assert", CT_STATIC_ASSERT, 1)
 	TOKEN("operator", CT_OPERATOR, 1)
+	TOKEN("typeid", CT_TYPEID, 1)
 	TOKEN("asm", CT_ASM_ATT, 1) TOKEN("__asm", CT_ASM_INTEL, 1)
 	
 	//control keywords
@@ -64,6 +67,7 @@
 
 	//symbols & operators
 	TOKEN("sizeof", CT_SIZEOF, 1)
+	TOKEN("::", CT_SCOPE, 0)
 	TOKEN("{", CT_LBRACE, 0) TOKEN("}", CT_RBRACE, 0)
 	TOKEN("(", CT_LPR, 0) TOKEN(")", CT_RPR, 0)
 	TOKEN("[", CT_LBRACKET, 0) TOKEN("]", CT_RBRACKET, 0)
@@ -108,6 +112,15 @@
 	//preprocessor flags
 	TOKEN(0, CT_MACRO_ARG, 0)
 	TOKEN(0, CT_LEXME, 0)//see sdata, result of token pasting
+
+	//parser IR stuff
+	TOKEN(0, CT_PROGRAM, 0)
+	TOKEN(0, CT_MEMBER_SPEC, 0) TOKEN(0, CT_CV_QUALIFIER, 0) TOKEN(0, CT_TYPE, 0)
+	TOKEN(0, CT_VAR_DECL, 0) TOKEN(0, CT_VAR_DEF, 0)
+	TOKEN(0, CT_FUNC_DECL, 0) TOKEN(0, CT_FUNC_DEF, 0)
+
+	//parser state 2
+	TOKEN(0, CT_VARIABLE, 0)
 
 	TOKEN(0, CT_NTOKENS, 0)
 #endif

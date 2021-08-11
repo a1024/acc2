@@ -1166,7 +1166,7 @@ void			preprocess(MacroLibrary &macros, LexFile &lf)//LexFile::text is optional,
 					{
 						int result=macros.erase(token->sdata);
 						if(result==-1)
-							error_pp(*token, "\'%s\' is already a defined macro.", token->sdata);
+							error_pp(*token, "\'%s\' was not defined.", token->sdata);
 						++ks;
 						int start=ks;
 						skip_till_newline(clf->expr, ks);

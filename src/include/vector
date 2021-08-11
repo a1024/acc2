@@ -152,6 +152,16 @@ namespace	std
 					memfill(p+n0, &e, (n-n0)*sizeof(T), sizeof(T));
 			}
 		}
+		void growby(size_t sizediff)
+		{
+			n+=sizediff;
+			resize(n);
+		}
+		void growby_pod(size_t sizediff)
+		{
+			n+=sizediff;
+			resize_pod(n);
+		}
 
 		T& operator[](size_t k)
 		{
