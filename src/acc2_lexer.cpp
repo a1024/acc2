@@ -94,7 +94,7 @@ inline int		lex_match(const char *p, int k, LexOption *&popt, int &advance)
 	int nopts=slot.size();
 	if(nopts)
 	{
-		__m128i val=_mm_loadu_si128((__m128i*)(p+k));//over-allocated text
+		__m128i val=_mm_loadu_si128((__m128i*)(p+k));//text is over-allocated
 		for(int ko=0;ko<nopts;++ko)
 		{
 			auto &opt=slot[ko];

@@ -1141,7 +1141,7 @@ namespace		parse//OpenC++
 	bool		r_opt_int_type_or_class_spec(int parent);
 	bool		r_cast(int parent);
 	bool		r_unary(int parent);
-	bool		r_expression(int parent);
+	bool		r_assign_expr(int parent);
 	bool		r_comma_expr(int parent);
 	enum		TemplateDeclarationType
 	{
@@ -1197,7 +1197,7 @@ namespace		parse//OpenC++
 				return true;
 			}
 			current_idx=t_idx;
-			if(r_expression(parent)&&LOOK_AHEAD(0)==CT_RPR)
+			if(r_assign_expr(parent)&&LOOK_AHEAD(0)==CT_RPR)
 			{
 				++current_idx;
 				return true;
@@ -1212,7 +1212,7 @@ namespace		parse//OpenC++
 			return true;
 		for(;;)
 		{
-			if(!r_expression(parent))
+			if(!r_assign_expr(parent))
 				return false;
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				return true;
@@ -1451,6 +1451,7 @@ namespace		parse//OpenC++
 	}
 	bool		r_additive(int parent)//additive.expr  :=  multiply.expr  |  additive.expr ('+' | '-') multiply.expr
 	{
+		int idx=ir_size;
 		if(!r_multiplicative(parent))
 			return false;
 		for(auto t=LOOK_AHEAD(0);t==CT_PLUS||t==CT_MINUS;)
@@ -1583,7 +1584,7 @@ namespace		parse//OpenC++
 		}
 		return true;
 	}
-	bool		r_expression(int parent)//expression  :=  conditional.expr [(AssignOp | '=') expression]?	right-to-left
+	bool		r_assign_expr(int parent)//assign_expr  :=  conditional.expr [(AssignOp | '=') assign_expr]?	right-to-left		renamed from expression
 	{
 		if(!r_conditional_expr(parent))
 			return false;
@@ -1593,7 +1594,7 @@ namespace		parse//OpenC++
 		case CT_ASSIGN_ADD:case CT_ASSIGN_SUB:
 		case CT_ASSIGN_MUL:case CT_ASSIGN_DIV:case CT_ASSIGN_MOD:
 		case CT_ASSIGN_XOR:case CT_ASSIGN_OR:case CT_ASSIGN_AND:case CT_ASSIGN_SL:case CT_ASSIGN_SR:
-			if(!r_expression(parent))
+			if(!r_assign_expr(parent))
 				return false;
 			break;
 		}
@@ -1601,12 +1602,12 @@ namespace		parse//OpenC++
 	}
 	bool		r_comma_expr(int parent)
 	{
-		if(!r_expression(parent))
+		if(!r_assign_expr(parent))
 			return false;
 		while(LOOK_AHEAD(0)==CT_COMMA)
 		{
 			++current_idx;
-			if(!r_expression(parent))
+			if(!r_assign_expr(parent))
 				return false;
 		}
 		return true;
@@ -1614,7 +1615,7 @@ namespace		parse//OpenC++
 	bool		r_initialize_expr(int parent)//initialize.expr  :=  expression  |  '{' initialize.expr [',' initialize.expr]* [',']? '}'
 	{
 		if(LOOK_AHEAD(0)!=CT_LBRACE)
-			return r_expression(parent);
+			return r_assign_expr(parent);
 		++current_idx;
 		for(auto t=LOOK_AHEAD(0);t!=CT_RBRACE;)
 		{
@@ -1748,7 +1749,7 @@ namespace		parse//OpenC++
 	{
 		if(LOOK_AHEAD(0)==CT_COLON)//bit field
 		{
-			if(!r_expression(parent))
+			if(!r_assign_expr(parent))
 				return false;
 		}
 		else
