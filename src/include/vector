@@ -154,13 +154,15 @@ namespace	std
 		}
 		void growby(size_t sizediff)
 		{
-			n+=sizediff;
-			resize(n);
+			int n2=n+sizediff;
+			resize(n2);
+			n=n2;
 		}
 		void growby_pod(size_t sizediff)
 		{
-			n+=sizediff;
+			int n2=n+sizediff;
 			resize_pod(n);
+			n=n2;
 		}
 
 		T& operator[](size_t k)

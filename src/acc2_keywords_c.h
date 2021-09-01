@@ -3,7 +3,7 @@
 //	0: no restrictions on following character
 //	1: identifier-like keyword: following character shouldn't be an alphanumeric
 
-	TOKEN(0, CT_IGNORED, 0)//negative values are ignored too
+	TOKEN(0, CT_IGNORED, 0)//preprocessed away		//negative values are ignored too	X
 
 	TOKEN(0, CT_VAL_INTEGER, 0)//idata		//TODO: differentiate between different integer types
 	TOKEN(0, CT_VAL_FLOAT, 0)
@@ -65,10 +65,12 @@
 	TOKEN("return", CT_RETURN, 1)
 	TOKEN("try", CT_TRY, 1) TOKEN("catch", CT_CATCH, 1) TOKEN("throw", CT_THROW, 1)
 
+	//non-overloadable operators:	.* . :: sizeof ?: typeid
+
 	//symbols & operators
 	TOKEN("sizeof", CT_SIZEOF, 1)
 	TOKEN("::", CT_SCOPE, 0)
-	TOKEN("{", CT_LBRACE, 0) TOKEN("}", CT_RBRACE, 0)
+	TOKEN("{", CT_LBRACE, 0) TOKEN("}", CT_RBRACE, 0)//not an operator
 	TOKEN("(", CT_LPR, 0) TOKEN(")", CT_RPR, 0)
 	TOKEN("[", CT_LBRACKET, 0) TOKEN("]", CT_RBRACKET, 0)
 	TOKEN(".", CT_PERIOD, 0) TOKEN("->", CT_ARROW, 0)
@@ -78,17 +80,20 @@
 	TOKEN("*", CT_ASTERIX, 0) TOKEN("/", CT_SLASH, 0) TOKEN("%", CT_MODULO, 0)
 	TOKEN("+", CT_PLUS, 0) TOKEN("-", CT_MINUS, 0)
 	TOKEN("<<", CT_SHIFT_LEFT, 0) TOKEN(">>", CT_SHIFT_RIGHT, 0)
+	TOKEN("<=>", CT_THREEWAY, 0)//since C++20
 	TOKEN("<", CT_LESS, 0) TOKEN("<=", CT_LESS_EQUAL, 0) TOKEN(">", CT_GREATER, 0) TOKEN(">=", CT_GREATER_EQUAL, 0)
 	TOKEN("==", CT_EQUAL, 0) TOKEN("!=", CT_NOT_EQUAL, 0)
 	TOKEN("&", CT_AMPERSAND, 0) TOKEN("^", CT_CARET, 0) TOKEN("|", CT_VBAR, 0)
 	TOKEN("&&", CT_LOGIC_AND, 0) TOKEN("||", CT_LOGIC_OR, 0)
 	TOKEN("?", CT_QUESTION, 0) TOKEN(":", CT_COLON, 0)
 
-	TOKEN("=", CT_ASSIGN, 0) TOKEN("+=", CT_ASSIGN_ADD, 0) TOKEN("-=", CT_ASSIGN_SUB, 0)
+	TOKEN("=", CT_ASSIGN, 0)
 	TOKEN("*=", CT_ASSIGN_MUL, 0) TOKEN("/=", CT_ASSIGN_DIV, 0) TOKEN("%=", CT_ASSIGN_MOD, 0)
-	TOKEN("^=", CT_ASSIGN_XOR, 0) TOKEN("|=", CT_ASSIGN_OR, 0) TOKEN("&=", CT_ASSIGN_AND, 0) TOKEN("<<=", CT_ASSIGN_SL, 0) TOKEN(">>=", CT_ASSIGN_SR, 0)
+	TOKEN("+=", CT_ASSIGN_ADD, 0) TOKEN("-=", CT_ASSIGN_SUB, 0)
+	TOKEN("<<=", CT_ASSIGN_SL, 0) TOKEN(">>=", CT_ASSIGN_SR, 0)
+	TOKEN("&=", CT_ASSIGN_AND, 0) TOKEN("^=", CT_ASSIGN_XOR, 0) TOKEN("|=", CT_ASSIGN_OR, 0)
 	
-	TOKEN(",", CT_COMMA, 0) TOKEN(";", CT_SEMICOLON, 0)
+	TOKEN(",", CT_COMMA, 0) TOKEN(";", CT_SEMICOLON, 0)//comma is overloadable, but semicolon isn't an operator
 	TOKEN("...", CT_ELLIPSIS, 0)
 
 	//preprocessor
@@ -114,10 +119,32 @@
 	TOKEN(0, CT_LEXME, 0)//see sdata, result of token pasting
 
 	//parser IR stuff
-	TOKEN(0, CT_PROGRAM, 0)
-	TOKEN(0, CT_MEMBER_SPEC, 0) TOKEN(0, CT_CV_QUALIFIER, 0) TOKEN(0, CT_TYPE, 0)
-	TOKEN(0, CT_VAR_DECL, 0) TOKEN(0, CT_VAR_DEF, 0)
-	TOKEN(0, CT_FUNC_DECL, 0) TOKEN(0, CT_FUNC_DEF, 0)
+	TOKEN(0, PT_PROGRAM, 0)
+	TOKEN(0, PT_TYPE, 0)
+	//TOKEN(0, PT_MEMBER_SPEC, 0) TOKEN(0, PT_CV_QUALIFIER, 0)
+	TOKEN(0, PT_VAR_DECL, 0) TOKEN(0, PT_VAR_DEF, 0)
+	TOKEN(0, PT_FUNC_DECL, 0) TOKEN(0, PT_FUNC_DEF, 0)
+	TOKEN(0, PT_CODE_BLOCK, 0)
+	TOKEN(0, PT_JUMPLABEL, 0)
+	TOKEN(0, PT_MEMBER_SPEC, 0)//children vector contains: friend/inline/virtual
+	TOKEN(0, PT_STORAGE_SPEC, 0)//opsign is one of: extern/static/mutable/register
+	TOKEN(0, PT_CV_QUALIFIER, 0)//opsign consists of: {bit 1: is_volatile, bit 0: is_const}
+	//...
+	TOKEN(0, PT_INITIALIZER_LIST, 0)
+	TOKEN(0, PT_COMMA, 0)
+	TOKEN(0, PT_ASSIGN, 0)
+	TOKEN(0, PT_CONDITIONAL, 0)
+	TOKEN(0, PT_LOGICOR, 0)
+	TOKEN(0, PT_LOGICAND, 0)
+	TOKEN(0, PT_BITOR, 0)
+	TOKEN(0, PT_BITXOR, 0)
+	TOKEN(0, PT_BITAND, 0)
+	TOKEN(0, PT_EQUALITY, 0)
+	TOKEN(0, PT_RELATIONAL, 0)
+	TOKEN(0, PT_SHIFT, 0)
+	TOKEN(0, PT_ADD, 0)
+	TOKEN(0, PT_MUL, 0)
+	//...
 
 	//parser state 2
 	TOKEN(0, CT_VARIABLE, 0)

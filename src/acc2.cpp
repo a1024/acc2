@@ -307,6 +307,8 @@ int				main(int argc, const char **argv)
 {
 	prof.start();
 
+	//benchmark();//
+
 	printf("ACC2 built on %s, %s\n\n", __DATE__, __TIME__);//started on 2021-07-09
 	if(argc==1)
 	{

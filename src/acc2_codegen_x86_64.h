@@ -276,12 +276,12 @@ inline void		emit_rex(byte rx, byte base)//64bit only
 #define	EMIT_MOV_RAX_OFF(SRC_IMM)			emit_rex(0, 0), emit(0xA1), emit8(SRC_IMM)
 #define	EMIT_MOV_OFF_RAX(DST_IMM)			emit_rex(0, 0), emit(0xA1), emit8(DST_IMM)
 
-#define OPERATION_1_R(OP, CODE)			inline void emit_##OP##_R(){emit(CODE);}
-#define OPERATION_1_M(OP, CODE)			inline void emit_##OP##_M(){emit(CODE);}
+#define OPERATION_1_R(OP, CODE)				inline void emit_##OP##_R(){emit(CODE);}
+#define OPERATION_1_M(OP, CODE)				inline void emit_##OP##_M(){emit(CODE);}
 #define OPERATION_1_I(OP, CODE, EXT)		inline void emit_##OP##_I(){emit(CODE);} enum{extension_##OP##_I=EXT};
-#define OPERATION_1_I1(OP, CODE, EXT)	inline void emit_##OP##_I1(){emit(CODE);} enum{extension_##OP##_I1=EXT};
+#define OPERATION_1_I1(OP, CODE, EXT)		inline void emit_##OP##_I1(){emit(CODE);} enum{extension_##OP##_I1=EXT};
 #define OPERATION_1_X(OP, CODE, EXT)		inline void emit_##OP##_X(){emit(CODE);} enum{extension_##OP##_X=EXT};
-#define OPERATION_1_CI1(OP, CODE)		inline void emit_##OP##_CI(byte cc){emit(CODE+cc);}
+#define OPERATION_1_CI1(OP, CODE)			inline void emit_##OP##_CI(byte cc){emit(CODE+cc);}
 //#define OPERATION_1_CI1(OP, CODE, EXT)	inline void emit_##OP##_CI(byte cc){emit(CODE+cc);} enum{extension_##OP##_CI=EXT};
 #define OPERATION_2_CI(OP, CODE)			inline void emit_##OP##_CI(byte cc){emit(0x0F), emit(CODE+cc);}
 

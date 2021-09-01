@@ -6,6 +6,8 @@
 #include		"include/map"
 #include		"include/intrin.h"
 
+	//TODO: compile correctly on 64 bit too
+
 #define			SIZEOF(STATIC_ARRAY)	(sizeof(STATIC_ARRAY)/sizeof(*STATIC_ARRAY))
 typedef long long i64;
 
@@ -653,4 +655,5 @@ void			stringlib_destroy();
 //experimental
 void			pause();
 void			codegen_test();
+void			benchmark();
 #endif

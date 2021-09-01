@@ -149,7 +149,7 @@ namespace	std
 	}
 
 	//RAM-only, no reverse iterators
-	template<typename T, class LessThan=less<T>>inline void sort(T *first, T *last, LessThan lessthan=LessThan())
+	template<typename T, class LessThan=less<T>>inline void sort(T *first, T *last, LessThan lessthan=LessThan())//binary insertion sort
 	{
 		auto temp=new char[sizeof(T)];
 		for(T *it=first;it!=last;++it)
