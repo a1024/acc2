@@ -383,9 +383,9 @@ int				main(int argc, const char **argv)
 
 		preprocess(macros, lf);
 
-		//compile(lf);//
+		compile(lf);//
 
-#if 1
+#if 0
 		switch(action)
 		{
 		case CA_PREPROCESS:	//c/c++ -> preprocessed c/c++
@@ -414,6 +414,7 @@ int				main(int argc, const char **argv)
 #endif
 	}//end source loop
 	lexedfiles_destroy();
+	prof.add("free lex files");
 	stringlib_destroy();
 	prof.add("free strings");
 

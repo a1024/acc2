@@ -90,6 +90,11 @@ namespace	std
 		}
 		~vector()
 		{
+#ifdef _DEBUG
+			if(p&&!check_pointer(p))//
+				return;//
+			assert(!p||check_pointer(p));
+#endif
 			if(p)
 			{
 				_aligned_free(p);

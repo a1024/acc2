@@ -668,7 +668,7 @@ void			str2esc(const char *s, int size, std::string &out)
 				int codepoint=0;
 				int seqlen=utf8codepoint(s+ks, codepoint);
 				int codelen=sprintf_s(codestr, 16, "\\u%04X", codepoint);
-				memcpy(out.data()+kd, codestr, codelen);
+				out.replace(kd, 1, codestr, codelen);
 				ks+=seqlen-1, kd+=codelen-1;
 			}
 			break;

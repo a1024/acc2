@@ -1205,11 +1205,19 @@ struct			VarInfoCmp
 };
 std::set<VarInfo*, VarInfoCmp> vardb;//scope?
 
+struct			IRNode;
+//union			IRLink
+//{
+//	IRNode *p;
+//	int i;
+//	IRLink(IRNode *p):p(p){}
+//	IRLink(int i):i(i){}
+//};
 struct			IRNode
 {
 	CTokenType type, opsign;
-	int parent;
-	std::vector<int> children;
+	//std::vector<IRLink> children;//X  makes free_tree() more complicated
+	std::vector<IRNode*> children;
 	union
 	{
 		TypeInfo *tdata;//type & function
@@ -1217,43 +1225,40 @@ struct			IRNode
 
 		//literals
 		char *sdata;
-		long long *idata;
-		double *fdata;
+		long long idata;
+		double fdata;
+		//long long *idata;
+		//double *fdata;
 	};
-	//void *data;
-	IRNode():type(CT_IGNORED), opsign(CT_IGNORED), parent(-1), tdata(nullptr){}
-	IRNode(CTokenType type, int parent, void *data=nullptr):type(type), parent(parent), tdata((TypeInfo*)data){}
-	void set(CTokenType type, int parent, void *data=nullptr)
+	IRNode():type(CT_IGNORED), opsign(CT_IGNORED), tdata(nullptr){}
+	IRNode(CTokenType type, CTokenType opsign, void *data=nullptr):type(type), opsign(opsign), tdata((TypeInfo*)data){}
+	IRNode(CTokenType type, int opsign, void *data=nullptr):type(type), opsign((CTokenType)opsign), tdata((TypeInfo*)data){}
+	//IRNode(CTokenType type, IRNode *c1, IRNode *c2):type(type), opsign(CT_IGNORED), tdata(nullptr)
+	//{
+	//	children.push_back(c1);
+	//	children.push_back(c2);
+	//}
+	void set(CTokenType type, CTokenType opsign, void *data=nullptr)
 	{
 		this->type=type;
-		this->parent=parent;
+		this->opsign=opsign;
 		tdata=(TypeInfo*)data;
 	}
-	//void set(CTokenType type, int parent, void *data=nullptr)
-	//{
-	//	this->type=type;
-	//	this->parent=parent;
-	//	this->data=data;
-	//}
-
-	//CTokenType type;
-	//std::vector<IRNode*> children;
-	//IRNode():type(CT_IGNORED){}
-	//IRNode(CTokenType type):type(type){}
-
-	//CTokenType type;
-	//int nchildren;
-	//IRNode *children,
-	//	*next;
-	//IRNode():type(CT_IGNORED), nchildren(0), children(nullptr), next(nullptr){}
+	void set(void *data)
+	{
+		idata=0;
+		sdata=(char*)data;
+	}
 };
 namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 {
 	Expression	*current_ex=nullptr;
-	std::vector<IRNode> *current_ir=nullptr;
 	int			current_idx=0, ntokens=0, ir_size=0;
 #define			LOOK_AHEAD(K)		current_ex->operator[](current_idx+(K)).type
-#define			NODE(K)				current_ir->operator[](K)
+#define			LOOK_AHEAD_TOKEN(K)	current_ex->operator[](current_idx+(K))
+#define			ADVANCE				++current_idx
+#define			ADVANCE_BY(K)		current_idx+=K
+#define			GET_TOKEN			current_ex->operator[](current_idx++).type
 	inline void	skip_till_after(CTokenType tokentype)
 	{
 		for(;current_idx<ntokens&&LOOK_AHEAD(0)!=tokentype;++current_idx);
@@ -1264,6 +1269,26 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		error_pp(current_ex->operator[](current_idx), "%s", msg);
 		skip_till_after(CT_SEMICOLON);
 	}
+	bool		free_tree(IRNode *&root)
+	{
+		if(root)
+		{
+			for(int k=0;k<(int)root->children.size();++k)
+				free_tree(root->children[k]);
+			delete root;
+			root=nullptr;
+		}
+		return false;
+	}
+#define			INSERT_NONLEAF(ROOT, TEMP, TYPE)		TEMP=ROOT, ROOT=new IRNode(TYPE, CT_IGNORED), ROOT->children.push_back(TEMP);
+#define			INSERT_LEAF(ROOT, TYPE, DATA)			ROOT=new IRNode(TYPE, CT_IGNORED, DATA)
+#define			INSERT_CHILD(ROOT, CHILDNUM, NEXT)		ROOT->children.push_back(nullptr); if(!NEXT(ROOT->children[CHILDNUM]))return free_tree(ROOT);
+	//inline void	insert_nonleaf(IRNode *&root, IRNode *&temp, CTokenType type)
+	//{
+	//	temp=root;
+	//	root=new IRNode(type, CT_IGNORED);
+	//	root->children.push_back(temp);
+	//}
 	//inline int	append_node(IRNode const &node)
 	//{
 	//	if(ir_size<(int)current_ir->size())
@@ -1273,60 +1298,75 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//	++ir_size;
 	//	return ret;
 	//}
-	inline int	append_node(CTokenType type, int parent, IRNode *&node)
-	{
-		if(ir_size>=(int)current_ir->size())
-			parse::current_ir->growby(1024);
-		int ret=ir_size;
-		++ir_size;
-		node=&NODE(ret);
-		node->set(type, parent);
-		NODE(parent).children.push_back(ret);
-		return ret;
-	}
-	inline int	insert_node(CTokenType type, int parent, int child, IRNode *&node)
-	{
-		int root=append_node(type, parent, node);
-		
-		NODE(parent).children.back()=root;//turn child node into grand-child
-		NODE(child).parent=root;
-		node->children.push_back(child);
-		return root;
-	}
-	inline void	link_nodes(int parent, int child)
-	{
-		NODE(parent).children.push_back(child);
-		NODE(child).parent=parent;
-	}
+	//inline int	append_node(CTokenType type, int parent, IRNode *&node)
+	//{
+	//	if(ir_size>=(int)current_ir->size())
+	//		parse::current_ir->growby(1024);
+	//	int ret=ir_size;
+	//	++ir_size;
+	//	node=&NODE(ret);
+	//	node->set(type, parent);
+	//	NODE(parent).children.push_back(ret);
+	//	return ret;
+	//}
+	//inline int	insert_node(CTokenType type, int parent, int child, IRNode *&node)
+	//{
+	//	int root=append_node(type, parent, node);
+	//	
+	//	NODE(parent).children.back()=root;//turn child node into grand-child
+	//	NODE(child).parent=root;
+	//	node->children.push_back(child);
+	//	return root;
+	//}
+	//inline void	link_nodes(int parent, int child)
+	//{
+	//	NODE(parent).children.push_back(child);
+	//	NODE(child).parent=parent;
+	//}
+
+	//TODO: CHECK FOR BOUNDS
 
 	//TODO: differentiate syntax error from nothing returned
 
+	//TODO: don't use stack memory: root->children.push_back(nullptr); if(!r_condition(root->children[k]))return free_tree(root);
+
 	//recursive parser declarations
-	int			r_name(int parent);
+	bool		is_ptr_to_member(int i);
+	bool		r_ptr_to_member(IRNode *&root);
 
-	int			r_comma_expr(int parent);
-	int			r_declarator2(int parent);
-	int			r_opt_cv_qualify(int parent);
-	int			r_opt_int_type_or_class_spec(int parent);
-	int			r_cast(int parent);
-	int			r_unary(int parent);
-	int			r_assign_expr(int parent);
-	int			r_comma_expr(int parent);
+	bool		r_name(IRNode *&root);
 
-	int			r_expr_stmt(int parent);
+	enum		DeclaratorKind
+	{
+		DECLKIND_NORMAL,
+		DECLKIND_ARG,
+		DECLKIND_CAST,
+	};
+	bool		r_declarator2(IRNode *&root, bool should_be_declarator, int kind, bool is_statement);
+	bool		r_opt_cv_qualify(IRNode *&root);
+	bool		r_opt_int_type_or_class_spec(IRNode *&root);
+	bool		r_cast(IRNode *&root);
+	bool		r_unary(IRNode *&root);
+	bool		r_assign_expr(IRNode *&root);
+	bool		r_comma_expr(IRNode *&root);
 
-	int			r_typedef(int parent);
-	int			r_if(int parent);
-	int			r_switch(int parent);
-	int			r_while(int parent);
-	int			r_do_while(int parent);
-	int			r_for(int parent);
-	int			r_try_catch(int parent);
+	bool		r_expr_stmt(IRNode *&root);
 
-	int			r_compoundstatement(int parent);
-	int			r_statement(int parent);
-	int			r_declarators(int parent);
-	int			r_template_arglist(int parent);
+	bool		r_typedef(IRNode *&root);
+	bool		r_if(IRNode *&root);
+	bool		r_switch(IRNode *&root);
+	bool		r_while(IRNode *&root);
+	bool		r_do_while(IRNode *&root);
+	bool		r_for(IRNode *&root);
+	bool		r_try_catch(IRNode *&root);
+
+	bool		r_logic_or(IRNode *&root);
+	bool		r_operator_name(IRNode *&root);
+
+	bool		r_compoundstatement(IRNode *&root);
+	bool		r_statement(IRNode *&root);
+	bool		r_initialize_expr(IRNode *&root);
+	bool		r_template_arglist(IRNode *&root);
 	enum		TemplateDeclarationType
 	{
 		TEMPLATE_UNKNOWN,
@@ -1335,109 +1375,484 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		TEMPLATE_SPECIALIZATION,
 		TEMPLATE_TYPE_COUNT,
 	};
-	int			r_template_decl2(int parent, TemplateDeclarationType &templatetype);
-	int			r_declarators(int parent);
+	bool		r_template_decl2(IRNode *&root, TemplateDeclarationType &templatetype);
+	bool		r_template_decl(IRNode *&root);
+	bool		r_declarators(IRNode *&root, bool should_be_declarator, bool is_statement);
+	bool		r_using(IRNode *&root);
+	bool		r_metaclass_decl(IRNode *&root);
+	bool		r_definition(IRNode *&root);
+	bool		r_declaration(IRNode *&root);
 
 	//recursive parser functions
-	int			r_typespecifier(int parent)//type.specifier  :=  [cv.qualify]? (integral.type.or.class.spec | name) [cv.qualify]?
+	bool		is_template_args()//template.args  :=  '<' any* '>' ('(' | '::')
 	{
-		if(!r_opt_cv_qualify(parent)||!r_opt_int_type_or_class_spec(parent))
-			return false;
-		return true;
-	}
-	int			r_typename(int parent)//type.name  :=  type.specifier cast.declarator
-	{
-		if(!r_typespecifier(parent))
-			return false;
-		if(!r_declarator2(parent))
-			return false;
-		return true;
-	}
-	int			r_sizeof(int parent)
-	{
-		int t_idx=current_idx;
-		if(LOOK_AHEAD(0)==CT_LPR)
+		int i=0;
+		if(LOOK_AHEAD(i++)==CT_LESS)
 		{
-			if(r_typename(parent)&&LOOK_AHEAD(0)==CT_RPR)
+			int chevron=1;
+			while(chevron>0)
 			{
-				++current_idx;
+				switch(LOOK_AHEAD(i++))
+				{
+				case CT_LESS:
+					++chevron;
+					break;
+				case CT_GREATER:
+					--chevron;
+					break;
+				case CT_SHIFT_RIGHT:
+					chevron-=2;
+					break;
+				case CT_LPR:
+					{
+						int paren=1;
+						while(paren>0)
+						{
+							switch(LOOK_AHEAD(i++))
+							{
+							case CT_LPR:
+								++paren;
+								break;
+							case CT_RPR:
+								--paren;
+								break;
+							case CT_IGNORED:case CT_SEMICOLON:case CT_RBRACE:
+								return false;
+							}
+						}
+					}
+					break;
+				case CT_IGNORED:case CT_SEMICOLON:case CT_RBRACE:
+					return false;
+				}
+			}
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_SCOPE:
+			case CT_LPR:
 				return true;
 			}
-			current_idx=t_idx;//restore idx
-		}
-		return r_unary(parent);
-	}
-	int			r_typeid(int parent)//typeid.expr  :=  TYPEID '(' expression ')'  |  TYPEID '(' type.name ')'
-	{
-		if(LOOK_AHEAD(0)!=CT_TYPEID)
-			return false;
-		++current_idx;
-		if(LOOK_AHEAD(0)==CT_LPR)
-		{
-			int t_idx=current_idx;
-			++current_idx;
-			if(r_typename(parent)&&LOOK_AHEAD(0)==CT_RPR)//TODO: global 'suppresses errors'
-			{
-				++current_idx;
-				return true;
-			}
-			current_idx=t_idx;
-			if(r_assign_expr(parent)&&LOOK_AHEAD(0)==CT_RPR)
-			{
-				++current_idx;
-				return true;
-			}
-			current_idx=t_idx;
 		}
 		return false;
 	}
-	int			r_func_args(int parent)//function.arguments  :  empty  |  expression (',' expression)*		assumes that the next token following function.arguments is ')'
+	bool		moreVarName()
+	{
+		if(LOOK_AHEAD(0)==CT_SCOPE)
+		{
+			auto t=LOOK_AHEAD(1);
+			return t==CT_ID||t==CT_TILDE||t==CT_OPERATOR;
+		}
+		return false;
+	}
+
+	bool		r_typespecifier(IRNode *&root)//type.specifier  :=  [cv.qualify]? (integral.type.or.class.spec | name) [cv.qualify]?
+	{
+		return r_opt_cv_qualify(root)&&r_opt_int_type_or_class_spec(root);//TODO
+
+		//if(!r_opt_cv_qualify(parent)||!r_opt_int_type_or_class_spec(parent))
+		//	return false;
+		//return true;
+	}
+	bool		r_typename(IRNode *&root)//type.name  :=  type.specifier cast.declarator
+	{
+		if(!r_typespecifier(root))
+			return false;
+		if(!r_declarator2(root, false, DECLKIND_CAST, false))
+			return false;
+		return true;
+	}
+//sizeof.expr
+//  : SIZEOF unary.expr
+//  | SIZEOF '(' type.name ')'
+	bool		r_sizeof(IRNode *&root)
+	{
+		if(LOOK_AHEAD(0)!=CT_SIZEOF)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, CT_SIZEOF, nullptr);
+
+		int t_idx=current_idx;
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			root->children.push_back(nullptr);
+			if(r_typename(root->children[0])&&LOOK_AHEAD(0)==CT_RPR)
+			{
+				ADVANCE;
+				return true;
+			}
+			free_tree(root->children[0]);
+			current_idx=t_idx;//restore idx
+		}
+		return r_unary(root->children[0])||free_tree(root);
+	}
+	bool		r_typeid(IRNode *&root)//typeid.expr  :=  TYPEID '(' expression ')'  |  TYPEID '(' type.name ')'
+	{
+		if(LOOK_AHEAD(0)!=CT_TYPEID)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, CT_TYPEID, nullptr);
+
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			int t_idx=current_idx;
+			ADVANCE;
+
+			root->children.push_back(nullptr);
+			if(r_typename(root->children[0])&&LOOK_AHEAD(0)==CT_RPR)
+			{
+				ADVANCE;
+				return true;
+			}
+			free_tree(root->children[0]);
+			current_idx=t_idx;
+			if(r_assign_expr(root->children[0])&&LOOK_AHEAD(0)==CT_RPR)
+			{
+				ADVANCE;
+				return true;
+			}
+			free_tree(root->children[0]);
+			current_idx=t_idx;
+		}
+		return free_tree(root);
+	}
+	bool		r_func_args(IRNode *&root)//function.arguments  :  empty  |  expression (',' expression)*		assumes that the next token following function.arguments is ')'
 	{
 		if(LOOK_AHEAD(0)==CT_RPR)
-			return true;
+		{
+			//INSERT_LEAF(root, CT_VOID, nullptr);
+			return true;//TODO: check child for nullptr
+		}
+		INSERT_LEAF(root, PT_FUNC_ARGS, nullptr);
 		for(;;)
 		{
-			if(!r_assign_expr(parent))
-				return false;
+			IRNode *child=nullptr;
+			if(!r_assign_expr(child))
+				return free_tree(root);
+			root->children.push_back(child);
 			if(LOOK_AHEAD(0)!=CT_COMMA)
-				return true;
-			++current_idx;
+				break;
+			ADVANCE;
 		}
+		return true;
+	}
+
+//template.args
+//  : '<' '>'
+//  | '<' template.argument {',' template.argument} '>'
+	bool		r_template_args(IRNode *&root)
+	{
+		if(LOOK_AHEAD(0)!=CT_LESS)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, PT_TEMPLATE_ARGS, nullptr);
+
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_GREATER:
+		case CT_SHIFT_RIGHT:
+			ADVANCE;
+			return true;
+		}
+		for(;;)
+		{
+			root->children.push_back(nullptr);
+			if(!r_typename(root->children.back()))
+			{
+				if(!r_logic_or(root->children.back()))
+					return free_tree(root);
+			}
+			switch(LOOK_AHEAD(0))
+			{
+			case CT_GREATER:
+				ADVANCE;
+				return true;
+			case CT_SHIFT_RIGHT://TODO: do what???
+				return true;
+				ADVANCE;
+			case CT_COMMA:
+				continue;
+			default:
+				return free_tree(root);
+			}
+		}
+		return true;
 	}
 	//var.name  :=  ['::']? name2 ['::' name2]*
 	//name2  :=  Identifier {template.args}  |  '~' Identifier  |  OPERATOR operator.name
 	//if var.name ends with a template type, the next token must be '('
-	int			r_varname(int parent)
+	bool		r_varname(IRNode *&root)
 	{
 		if(LOOK_AHEAD(0)==CT_SCOPE)
 		{
 			//TODO: search global scope
 		}
+		INSERT_LEAF(root, PT_VAR_REF, nullptr);
 		for(;;)
 		{
-			switch(LOOK_AHEAD(0))
+			auto t=&LOOK_AHEAD_TOKEN(0);
+			switch(t->type)
 			{
 			case CT_ID:
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
+				if(is_template_args())
+				{
+					root->children.push_back(nullptr);
+					if(!r_template_arglist(root->children.back()))
+						return free_tree(root);
+				}
+				if(moreVarName())
+					ADVANCE;
+				else
+				{
+					//TODO: lookup variable reference
+					return true;
+				}
 				break;
 			case CT_TILDE:
-				break;
-			//case CT_OPERATOR:
-			//	break;
+				ADVANCE;
+				t=&LOOK_AHEAD_TOKEN(0);
+				if(t->type!=CT_ID)
+					return free_tree(root);
+				//TODO: lookup class name
+				root->children.push_back(new IRNode(PT_DESTRUCTOR, CT_IGNORED));
+				ADVANCE;
+				return true;
+			case CT_OPERATOR:
+				root->children.push_back(new IRNode(CT_OPERATOR, CT_IGNORED));
+				root->children.back()->children.push_back(nullptr);
+				if(!r_operator_name(root->children.back()->children.back()))
+					return free_tree(root);
+				return true;
 			default:
-				return false;
+				return free_tree(root);
 			}
 		}
+		return true;
 	}
 	//userdef.statement
 	//	:	UserKeyword '(' function.arguments ')' compound.statement
 	//	|	UserKeyword2 '(' arg.decl.list ')' compound.statement
 	//	|	UserKeyword3 '(' expr.statement [comma.expression]? ';' [comma.expression] ')' compound.statement
-	int			r_user_definition(int parent)
+	bool		r_user_definition(IRNode *&root)
 	{
 		if(LOOK_AHEAD(0)!=CT_ID||LOOK_AHEAD(1)!=CT_LPR)
 			return false;
 		//TODO
 		return true;
+	}
+	bool		r_throw_expr(IRNode *&root)//throw.expression  :=  THROW {expression}
+	{
+		if(LOOK_AHEAD(0)!=CT_THROW)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, CT_THROW, nullptr);
+
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_COLON:case CT_SEMICOLON:
+			break;
+		default:
+			root->children.push_back(nullptr);
+			if(!r_assign_expr(root->children[0]))
+				return free_tree(root);
+			break;
+		}
+		return true;
+	}
+	bool		is_type_specifier()//returns true if the next is probably a type specifier
+	{
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_ID:
+		case CT_SCOPE:
+		case CT_CONST:
+		case CT_VOLATILE:
+		case CT_VOID:case CT_BOOL:
+		case CT_CHAR:case CT_WCHAR_T:
+		case CT_SHORT:case CT_INT:case CT_LONG:
+		case CT_SIGNED:case CT_UNSIGNED:
+		case CT_FLOAT:case CT_DOUBLE:
+		case CT_CLASS:case CT_STRUCT:case CT_UNION:case CT_ENUM:
+			return true;
+		}
+		return false;
+	}
+	bool		r_allocate_initializer(IRNode *&root)//allocate.initializer  :=  '(' {initialize.expr (',' initialize.expr)* } ')'
+	{
+		if(LOOK_AHEAD(0)!=CT_LPR)
+			return false;
+		ADVANCE;
+		if(LOOK_AHEAD(0)==CT_RPR)
+		{
+			//INSERT_LEAF(root, PT_INITIALIZER_LIST, nullptr);
+			return true;//TODO: check child for nullptr
+		}
+		INSERT_LEAF(root, PT_INITIALIZER_LIST, nullptr);
+		for(;;)
+		{
+			IRNode *child=nullptr;
+			if(!r_initialize_expr(child))
+				return free_tree(root);
+			root->children.push_back(child);
+			if(LOOK_AHEAD(0)!=CT_COMMA)
+				break;
+			ADVANCE;
+		}
+		if(LOOK_AHEAD(0)!=CT_RPR)
+			return free_tree(root);
+		ADVANCE;
+		return true;
+	}
+	bool		r_opt_ptr_operator(IRNode *&root)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
+	{
+		INSERT_LEAF(root, PT_PTR_OPERATOR, nullptr);
+		for(;;)
+		{
+			auto t=LOOK_AHEAD(0);
+			if(t!=CT_ASTERIX&&t!=CT_AMPERSAND&&!is_ptr_to_member(0))
+				break;
+			IRNode *child=nullptr;
+			if(t==CT_ASTERIX||t==CT_AMPERSAND)
+			{
+				ADVANCE;
+				INSERT_LEAF(child, t, nullptr);
+			}
+			else if(!r_ptr_to_member(child))//TODO
+				return free_tree(root);
+			root->children.push_back(child);
+		}
+		return true;
+	}
+//new.declarator
+//  : empty
+//  | ptr.operator
+//  | {ptr.operator} ('[' comma.expression ']')+
+	bool		r_new_declarator(IRNode *&root)
+	{
+		INSERT_LEAF(root, PT_NEW_DECLARATOR, nullptr);
+		root->children.push_back(nullptr);
+		if(!r_opt_ptr_operator(root->children[0]))
+			return free_tree(root);
+		while(LOOK_AHEAD(0)==CT_LBRACKET)
+		{
+			ADVANCE;//skip '['
+			IRNode *child=nullptr;
+			if(!r_comma_expr(child))
+				return free_tree(root);
+			root->children.push_back(child);
+			if(LOOK_AHEAD(0)!=CT_RBRACKET)
+				return free_tree(root);
+			ADVANCE;//skip ']'
+		}
+		return true;
+	}
+//allocate.type
+//  : {'(' function.arguments ')'} type.specifier new.declarator {allocate.initializer}
+//  | {'(' function.arguments ')'} '(' type.name ')' {allocate.initializer}
+	bool		r_allocate_type(IRNode *&root)//can be inlined
+	{
+		IRNode *child=nullptr;
+		INSERT_LEAF(root, PT_ALLOCATE_TYPE, nullptr);
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			ADVANCE;
+			int idx=current_idx;//save
+			if(r_typename(root))
+			{
+				if(GET_TOKEN==CT_RPR)
+				{
+					if(LOOK_AHEAD(0)!=CT_LPR)
+					{
+						if(!is_type_specifier())
+							return true;
+					}
+					else if(r_allocate_initializer(child))
+					{
+						root->children.push_back(child);
+						if(LOOK_AHEAD(0)!=CT_LPR)
+							return true;
+					}
+				}
+			}
+			current_idx=idx;//restore
+			if(!r_func_args(child))
+				return free_tree(root);
+			root->children.push_back(child);
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(root);
+			ADVANCE;
+		}
+
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			ADVANCE;
+			if(!r_typename(child))
+				return free_tree(root);
+			root->children.push_back(child);
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(root);
+		}
+		else
+		{
+			if(!r_typespecifier(child))
+				return free_tree(root);
+			root->children.push_back(child);
+			if(!r_new_declarator(child))
+				return free_tree(root);
+			root->children.push_back(child);
+		}
+
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			if(!r_allocate_initializer(child))
+				return free_tree(root);
+			root->children.push_back(child);
+		}
+		return true;
+	}
+//allocate.expr
+//  : {Scope | userdef.keyword} NEW allocate.type
+//  | {Scope} DELETE {'[' ']'} cast.expr
+	bool		r_allocate_expr(IRNode *&root)
+	{
+		auto t=LOOK_AHEAD(0);
+		if(t==CT_SCOPE)
+		{
+			ADVANCE;
+			//TODO: use global new/delete
+			t=LOOK_AHEAD(0);
+		}
+
+		if(t==CT_DELETE)
+		{
+			ADVANCE;
+			INSERT_LEAF(root, CT_DELETE, nullptr);
+			if(LOOK_AHEAD(0)==CT_LBRACKET)
+			{
+				ADVANCE;
+				if(LOOK_AHEAD(0)!=CT_RBRACKET)
+					return free_tree(root);
+				root->opsign=CT_LBRACKET;
+			}
+			root->children.push_back(nullptr);
+			if(!r_cast(root->children[0]))
+				return free_tree(root);
+			return true;
+		}
+		else if(t==CT_NEW)
+		{
+			ADVANCE;
+			INSERT_LEAF(root, CT_NEW, nullptr);
+			root->children.push_back(nullptr);
+			return r_allocate_type(root->children[0])||free_tree(root);
+		}
+
+		return false;
 	}
 	
 	//primary.exp
@@ -1454,56 +1869,59 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//	| openc++.primary.exp
 	//
 	//openc++.primary.exp := var.name '::' userdef.statement
-	int			r_primary(int parent)
+	bool		r_primary(IRNode *&root)
 	{
-		switch(LOOK_AHEAD(0))
+		auto t=&LOOK_AHEAD_TOKEN(0);
+		switch(t->type)
 		{
 		case CT_VAL_INTEGER:
 		case CT_VAL_FLOAT:
 		case CT_VAL_STRING_LITERAL:
 		case CT_VAL_WSTRING_LITERAL:
 		case CT_VAL_CHAR_LITERAL:
-			//TODO: leaf node
-			++current_idx;
+			ADVANCE;
+			INSERT_LEAF(root, t->type, nullptr);
+			root->idata=t->idata;
 			break;
 		case CT_THIS:
-			//TODO: leaf node
-			++current_idx;
+			ADVANCE;
+			INSERT_LEAF(root, t->type, nullptr);
 			break;
 		case CT_LPR:
-			++current_idx;
-			if(!r_comma_expr(parent))
+			ADVANCE;
+			if(!r_comma_expr(root))
 				return false;
 			if(LOOK_AHEAD(0)!=CT_RPR)
-				return false;//TODO: proper error messages
-			++current_idx;
+				return free_tree(root);//TODO: proper error messages
+			ADVANCE;
 			break;
 		case CT_TYPEID:
-			return r_typeid(parent);
+			return r_typeid(root);
 		default:
 			{
-				int i_idx=ir_size;
-				if(!r_opt_int_type_or_class_spec(parent))
-					return false;
-				if(i_idx>=ir_size)
-					i_idx=-1;
-				if(i_idx!=-1)//function style cast expression
+				INSERT_LEAF(root, PT_VAR_DECL, nullptr);
+				root->children.push_back(nullptr);
+				if(!r_opt_int_type_or_class_spec(root->children[0]))
+					return free_tree(root);
+				if(root->children[0])//function style cast expression
 				{
 					if(LOOK_AHEAD(0)!=CT_LPR)
-						return false;
-					if(!r_func_args(parent))
-						return false;
+						return free_tree(root);
+					root->children.push_back(nullptr);
+					if(!r_func_args(root->children[1]))
+						return free_tree(root);
 					if(LOOK_AHEAD(0)!=CT_RPR)
-						return false;
+						return free_tree(root);
 				}
 				else
 				{
-					if(!r_varname(parent))
-						return false;
+					if(!r_varname(root->children[0]))
+						return free_tree(root);
 					if(LOOK_AHEAD(0)==CT_SCOPE)
 					{
-						if(!r_user_definition(parent))
-							return false;
+						root->children.push_back(nullptr);
+						if(!r_user_definition(root->children[1]))
+							return free_tree(root);
 					}
 				}
 			}
@@ -1525,49 +1943,64 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//	| postfix.expr ArrowOp userdef.statement
 	//
 	//Note: function-style casts are accepted as function calls.
-	int			r_postfix(int parent)
+	bool		r_postfix(IRNode *&root)
 	{
-		if(!r_primary(parent))
+		IRNode *child=nullptr;
+		if(!r_primary(child))
 			return false;
-		for(auto t=LOOK_AHEAD(0);;)
+		for(auto t=LOOK_AHEAD(0);;t=LOOK_AHEAD(0))
 		{
 			switch(t)
 			{
 			case CT_LBRACKET:
-				++current_idx;
-				if(!r_comma_expr(parent))
-					return false;
+				ADVANCE;
+				INSERT_LEAF(root, CT_LBRACKET, nullptr);
+				root->children.push_back(child);
+				root->children.push_back(nullptr);
+				if(!r_comma_expr(root->children[1]))
+					return free_tree(root);
 				if(LOOK_AHEAD(0)!=CT_RBRACKET)
-					return false;
-				++current_idx;
+					return free_tree(root);
+				ADVANCE;
 				break;
 			case CT_LPR:
-				++current_idx;
-				if(!r_func_args(parent))
-					return false;
+				ADVANCE;
+				INSERT_LEAF(root, PT_FUNC_CALL, nullptr);
+				root->children.push_back(child);
+				root->children.push_back(nullptr);
+				if(!r_func_args(root->children[1]))
+					return free_tree(root);
 				if(LOOK_AHEAD(0)!=CT_RBRACKET)
-					return false;
-				++current_idx;
+					return free_tree(root);
+				ADVANCE;
 				break;
 			case CT_INCREMENT:
+				ADVANCE;
+				INSERT_LEAF(root, PT_POST_INCREMENT, nullptr);
+				root->children.push_back(child);
+				break;
 			case CT_DECREMENT:
-				//TODO: apply post
-				++current_idx;
+				ADVANCE;
+				INSERT_LEAF(root, PT_POST_DECREMENT, nullptr);
+				root->children.push_back(child);
 				break;
 			case CT_PERIOD:
 			case CT_ARROW:
-				++current_idx;
-				if(!r_varname(parent))
-					return false;
+				ADVANCE;
+				INSERT_LEAF(root, t, nullptr);
+				root->children.push_back(child);
+				root->children.push_back(nullptr);
+				if(!r_varname(root->children[1]))
+					return free_tree(root);
 				break;
 			default:
+				root=child;
 				return true;
 			}
-			t=LOOK_AHEAD(0);
 		}
 		return true;
 	}
-	int			r_unary(int parent)//unary.expr  :=  postfix.expr  |  ('*'|'&'|'+'|'-'|'!'|'~'|IncOp) cast.expr  |  sizeof.expr  |  allocate.expr  |  throw.expression
+	bool		r_unary(IRNode *&root)//unary.expr  :=  postfix.expr  |  ('*'|'&'|'+'|'-'|'!'|'~'|IncOp) cast.expr  |  sizeof.expr  |  allocate.expr  |  throw.expression
 	{
 		auto t=LOOK_AHEAD(0);
 		switch(t)
@@ -1580,403 +2013,192 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_TILDE:
 		case CT_INCREMENT:
 		case CT_DECREMENT:
-			++current_idx;
-			if(!r_cast(parent))
-				return false;
-			//TODO: apply the unary operator
+			{
+				ADVANCE;
+				INSERT_LEAF(root, t, nullptr);
+				root->children.push_back(nullptr);
+				if(!r_cast(root->children[0]))
+					return free_tree(root);
+			}
 			break;
 		case CT_SIZEOF:
-			return r_sizeof(parent);
+			return r_sizeof(root);
 		case CT_THROW:
-			//TODO?
+			return r_throw_expr(root);
 			break;
 		default:
-			//if is_allocate_expr: r_allocate
-			return r_postfix(parent);
+			if(t==CT_SCOPE)
+				t=LOOK_AHEAD(1);
+			if(t==CT_NEW||t==CT_DELETE)
+				return r_allocate_expr(root);
+			else
+				return r_postfix(root);
 		}
 		return true;
 	}
-	int			r_cast(int parent)//cast.expr  :=  unary.expr  |  '(' type.name ')' cast.expr
+	bool		r_cast(IRNode *&root)//cast.expr  :=  unary.expr  |  '(' type.name ')' cast.expr
 	{
-		if(LOOK_AHEAD(0)!=CT_LPR)
-			return r_unary(parent);
-		++current_idx;
-		if(!r_typename(parent))
-			return false;
-		if(LOOK_AHEAD(0)!=CT_RPR)
-			return false;
-		++current_idx;
-		return true;
-	}
-	int			r_pm(int parent)//pm.expr (pointer to member .*, ->*)  :=  cast.expr  | pm.expr PmOp cast.expr
-	{
-		if(!r_cast(parent))
-			return false;
-		for(auto t=LOOK_AHEAD(0);t==CT_DOT_STAR||t==CT_ARROW_STAR;)
+		IRNode **node=&root;
+		for(;;)
 		{
-			++current_idx;
-			if(!r_cast(parent))
-				return false;
-			//TODO: bitwise_and node
+			if(LOOK_AHEAD(0)!=CT_LPR)
+				return r_unary(*node);
+			ADVANCE;
+			INSERT_LEAF(*node, PT_CAST, nullptr);
+			(*node)->children.push_back(nullptr);
+			if(!r_typename((*node)->children.back()))
+				return free_tree(*node);
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(*node);
+			ADVANCE;
+			node=&(*node)->children.back();
 		}
 		return true;
 	}
-	int			r_multiplicative(int parent)//multiply.expr  :=  pm.expr  |  multiply.expr ('*' | '/' | '%') pm.expr
+	bool		r_pm(IRNode *&root)//pm.expr (pointer to member .*, ->*)  :=  cast.expr  | pm.expr PmOp cast.expr
 	{
-		if(!r_pm(parent))
-			return -1;
-		for(auto t=LOOK_AHEAD(0);t==CT_ASTERIX||t==CT_SLASH||t==CT_MODULO;)
-		{
-			++current_idx;
-			if(!r_pm(parent))
-				return -1;
-			//TODO: bitwise_and node
-		}
-		return true;
-	}
-	int			r_additive(int parent)//additive.expr  :=  multiply.expr  |  additive.expr ('+' | '-') multiply.expr
-	{
-		int child=r_multiplicative(parent);
-		if(child==-1)
-			return -1;
+		if(!r_cast(root))
+			return free_tree(root);
 		auto t=LOOK_AHEAD(0);
-		if(t==CT_PLUS||t==CT_MINUS)			//TODO: apply this change everywhere: next call, comparisons, node type
+		if(t==CT_DOT_STAR||t==CT_ARROW_STAR)
 		{
 			IRNode *node=nullptr;
-			int root=insert_node(PT_ADD, parent, child, node);
-#if 0
-			int root=ir_size;
-			append_node(PT_ADD, parent);
+			INSERT_NONLEAF(root, node, PT_POINTER_TO_MEMBER);
+			do
+			{
+				ADVANCE;
+				if(!r_cast(node))
+					return free_tree(root);
+				node->opsign=t;
+				root->children.push_back(node);
+				t=LOOK_AHEAD(0);
+			}while(t==CT_DOT_STAR||t==CT_ARROW_STAR);
+		}
+		return true;
+	}
+#define		NEXT_CALL	r_pm
+#define		FUNC_NAME	r_multiplicative
+#define		CONDITION	t==CT_ASTERIX||t==CT_SLASH||t==CT_MODULO
+#define		LABEL		PT_MUL
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
 
-			//turn child into grand-child
-			NODE(parent).children.back()=root;
-			NODE(child).parent=root;
+#define		NEXT_CALL	r_multiplicative
+#define		FUNC_NAME	r_additive
+#define		CONDITION	t==CT_PLUS||t==CT_MINUS
+#define		LABEL		PT_ADD
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
 
-			auto node=&NODE(root);
-			node->children.push_back(child);
-			//std::vector<int> ops;
-			//ops.push_back(child);
-#endif
-			do
-			{
-				++current_idx;
-				child=r_multiplicative(root);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				//ops.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_PLUS||t==CT_MINUS);
-			return root;
-		}
-		return child;
-	}
-	int			r_shift(int parent)//shift.expr  :=  additive.expr  |  shift.expr ShiftOp additive.expr
+#define		NEXT_CALL	r_additive
+#define		FUNC_NAME	r_shift
+#define		CONDITION	t==CT_SHIFT_LEFT||t==CT_SHIFT_RIGHT
+#define		LABEL		PT_SHIFT
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+
+#define		NEXT_CALL	r_shift
+#define		FUNC_NAME	r_relational
+#define		CONDITION	t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL
+#define		LABEL		PT_RELATIONAL
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+
+#define		NEXT_CALL	r_relational
+#define		FUNC_NAME	r_equality
+#define		CONDITION	t==CT_EQUAL||t==CT_NOT_EQUAL
+#define		LABEL		PT_EQUALITY
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+
+#define		NEXT_CALL	r_equality
+#define		FUNC_NAME	r_bitwise_and
+#define		CONDITION	t==CT_AMPERSAND
+#define		LABEL		PT_BITAND
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+
+#define		NEXT_CALL	r_bitwise_and
+#define		FUNC_NAME	r_bitwise_xor
+#define		CONDITION	t==CT_CARET
+#define		LABEL		PT_BITXOR
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+
+#define		NEXT_CALL	r_bitwise_xor
+#define		FUNC_NAME	r_bitwise_or
+#define		CONDITION	t==CT_VBAR
+#define		LABEL		PT_BITOR
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+
+#define		NEXT_CALL	r_bitwise_or
+#define		FUNC_NAME	r_logic_and
+#define		CONDITION	t==CT_LOGIC_AND
+#define		LABEL		PT_LOGICAND
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+
+#define		NEXT_CALL	r_logic_and
+#define		FUNC_NAME	r_logic_or
+#define		CONDITION	t==CT_LOGIC_OR
+#define		LABEL		PT_LOGICOR
+#include	"acc2_parser_expr.h"
+#undef		FUNC_NAME
+#undef		NEXT_CALL
+#undef		CONDITION
+#undef		LABEL
+	bool		r_conditional_expr(IRNode *&root)//  conditional.expr  :=  logical.or.expr {'?' comma.expression ':' conditional.expr}  right-to-left
 	{
-		int child=r_additive(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_SHIFT, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_additive(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL);
-			return root;
-		}
-		return child;
-	}
-	int			r_relational(int parent)//relational.expr  :=  shift.expr  |  relational.expr ('<=' | '>=' | '<' | '>') shift.expr
-	{
-		int child=r_shift(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_RELATIONAL, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_shift(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL);
-			return root;
-		}
-		return child;
-#if 0
-		for(auto t=LOOK_AHEAD(0);t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL;)
-		{
-			++current_idx;
-			if(!r_shift(parent))
-				return false;
-			//TODO: bitwise_and node
-		}
-		return true;
-#endif
-	}
-	int			r_equality(int parent)//equality.expr  :=  relational.expr  |  equality.expr EqualOp relational.expr
-	{
-		int child=r_relational(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_EQUAL||t==CT_NOT_EQUAL)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_EQUALITY, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_relational(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_EQUAL||t==CT_NOT_EQUAL);
-			return root;
-		}
-		return child;
-#if 0
-		if(!r_relational(parent))
-			return false;
-		for(auto t=LOOK_AHEAD(0);t==CT_EQUAL||t==CT_NOT_EQUAL;)
-		{
-			++current_idx;
-			if(!r_relational(parent))
-				return false;
-			//TODO: bitwise_and node
-			t=LOOK_AHEAD(0);
-		}
-		return true;
-#endif
-	}
-	int			r_bitwise_and(int parent)//and.expr  :=  equality.expr  |  and.expr '&' equality.expr
-	{
-		int child=r_equality(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_AMPERSAND)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_BITAND, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_equality(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_AMPERSAND);
-			return root;
-		}
-		return child;
-#if 0
-		if(!r_equality(parent))
-			return false;
-		for(;LOOK_AHEAD(0)==CT_AMPERSAND;)
-		{
-			++current_idx;
-			if(!r_equality(parent))
-				return false;
-			//TODO: bitwise_and node
-		}
-		return true;
-#endif
-	}
-	int			r_bitwise_xor(int parent)//inclusive.or.expr  :=  exclusive.or.expr  |  inclusive.or.expr '|' exclusive.or.expr
-	{
-		int child=r_bitwise_and(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_CARET)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_BITXOR, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_bitwise_and(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_CARET);
-			return root;
-		}
-		return child;
-#if 0
-		if(!r_bitwise_and(parent))
-			return false;
-		for(;LOOK_AHEAD(0)==CT_CARET;)
-		{
-			++current_idx;
-			if(!r_bitwise_and(parent))
-				return false;
-			//TODO: bitwise_xor node
-		}
-		return true;
-#endif
-	}
-	int			r_bitwise_or(int parent)
-	{
-		int child=r_bitwise_xor(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_VBAR)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_BITOR, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_bitwise_xor(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_VBAR);
-			return root;
-		}
-		return child;
-#if 0
-		if(!r_bitwise_xor(parent))
-			return false;
-		for(;LOOK_AHEAD(0)==CT_VBAR;)
-		{
-			++current_idx;
-			if(!r_bitwise_xor(parent))
-				return false;
-			//TODO: bitwise_or node
-		}
-		return true;
-#endif
-	}
-	int			r_logic_and(int parent)//logical.and.expr  :=  inclusive.or.expr  |  logical.and.expr LogAndOp inclusive.or.expr
-	{
-		int child=r_bitwise_or(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_LOGIC_AND)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_LOGICAND, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_bitwise_or(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_LOGIC_AND);
-			return root;
-		}
-		return child;
-#if 0
-		if(!r_bitwise_or(parent))
-			return false;
-		for(;LOOK_AHEAD(0)==CT_LOGIC_AND;)
-		{
-			++current_idx;
-			if(!r_bitwise_or(parent))
-				return false;
-			//TODO: logic_and node
-		}
-		return true;
-#endif
-	}
-	int			r_logic_or(int parent)//logical.or.expr  :=  logical.and.expr  |  logical.or.expr LogOrOp logical.and.expr		left-to-right
-	{
-		int child=r_logic_and(parent);
-		if(child==-1)
-			return -1;
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_LOGIC_OR)
-		{
-			IRNode *node=nullptr;
-			int root=insert_node(PT_LOGICOR, parent, child, node);
-			do
-			{
-				++current_idx;
-				child=r_logic_and(parent);
-				if(child==-1)
-					return -1;
-				NODE(child).opsign=t;
-				node->children.push_back(child);
-				t=LOOK_AHEAD(0);
-			}while(t==CT_LOGIC_OR);
-			return root;
-		}
-		return child;
-#if 0
-		if(!r_logic_and(parent))
-			return false;
-		for(;LOOK_AHEAD(0)==CT_LOGIC_OR;)
-		{
-			++current_idx;
-			if(!r_logic_and(parent))
-				return false;
-			//TODO: logic_or node
-		}
-		return true;
-#endif
-	}
-	int			r_conditional_expr(int parent)//  conditional.expr  :=  logical.or.expr {'?' comma.expression ':' conditional.expr}  right-to-left
-	{
-		int child=r_logic_or(parent);
-		if(child==-1)
-			return -1;
+		if(!r_logic_or(root))
+			return free_tree(root);
 		if(LOOK_AHEAD(0)==CT_QUESTION)
 		{
+			ADVANCE;
 			IRNode *node=nullptr;
-			int root=insert_node(PT_CONDITIONAL, parent, child, node);
-
-			++current_idx;
-			child=r_comma_expr(parent);
-			if(child==-1)
-				return -1;
-			node->children.push_back(child);
+			INSERT_NONLEAF(root, node, PT_CONDITIONAL);
+			if(!r_comma_expr(node))
+				return free_tree(root);
+			root->children.push_back(node);
 			if(LOOK_AHEAD(0)!=CT_COLON)
-				return -1;
-			child=r_conditional_expr(parent);
-			if(child==-1)
-				return -1;
-			node->children.push_back(child);
-			return root;
+				return free_tree(root);
+			if(!r_conditional_expr(node))
+				return free_tree(root);
+			root->children.push_back(node);
 		}
-		return child;
+		return true;
 	}
-	int			r_assign_expr(int parent)//assign_expr  :=  conditional.expr [(AssignOp | '=') assign_expr]?	right-to-left		renamed from expression
+	bool		r_assign_expr(IRNode *&root)//assign_expr  :=  conditional.expr [(AssignOp | '=') assign_expr]?	right-to-left		renamed from expression
 	{
-		int child=r_conditional_expr(parent);
-		if(child==-1)
-			return -1;
+		if(!r_conditional_expr(root))
+			return free_tree(root);
 		switch(LOOK_AHEAD(0))
 		{
 		case CT_ASSIGN:
@@ -1985,70 +2207,314 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_ASSIGN_XOR:case CT_ASSIGN_OR:case CT_ASSIGN_AND:case CT_ASSIGN_SL:case CT_ASSIGN_SR:
 			{
 				IRNode *node=nullptr;
-				int root=insert_node(PT_ASSIGN, parent, child, node);
-				child=r_assign_expr(parent);
-				if(child==-1)
-					return -1;
-				node->children.push_back(child);
-				return root;
+				INSERT_NONLEAF(root, node, LOOK_AHEAD(0));
+				if(!r_assign_expr(node))
+					return free_tree(root);
+				root->children.push_back(node);
 			}
+			break;
 		}
-		return child;
+		return true;
 	}
-	int			r_comma_expr(int parent)
+	bool		r_comma_expr(IRNode *&root)//marker
 	{
-		int child=r_assign_expr(parent);
-		if(child==-1)
-			return -1;
+		if(!r_assign_expr(root))
+			return free_tree(root);
 		if(LOOK_AHEAD(0)==CT_COMMA)
 		{
 			IRNode *node=nullptr;
-			int root=insert_node(PT_COMMA, parent, child, node);
+			INSERT_NONLEAF(root, node, PT_COMMA);
 			do
 			{
-				++current_idx;
-				child=r_assign_expr(parent);
-				if(child==-1)
-					return -1;
-				node->children.push_back(child);
+				ADVANCE;
+				if(!r_assign_expr(node))
+					return free_tree(root);
+				root->children.push_back(node);
 			}while(LOOK_AHEAD(0)==CT_COMMA);
-			return root;
 		}
-		return child;
+		return true;
 	}
-	int			r_initialize_expr(int parent)//initialize.expr  :=  expression  |  '{' initialize.expr [',' initialize.expr]* [',']? '}'
+	bool		r_initialize_expr(IRNode *&root)//initialize.expr  :=  expression  |  '{' initialize.expr [',' initialize.expr]* [',']? '}'
 	{
 		if(LOOK_AHEAD(0)!=CT_LBRACE)
-			return r_assign_expr(parent);
-		++current_idx;
-		IRNode *node=nullptr;
-		int root=append_node(PT_INITIALIZER_LIST, parent, node);
+			return r_assign_expr(root);
+		ADVANCE;
+		INSERT_LEAF(root, PT_INITIALIZER_LIST, nullptr);
 		for(auto t=LOOK_AHEAD(0);t!=CT_RBRACE;t=LOOK_AHEAD(0))
 		{
-			int child=r_initialize_expr(root);
-			if(child==-1)
+			root->children.push_back(nullptr);
+			if(!r_initialize_expr(root->children.back()))
 			{
 				skip_till_after(CT_RBRACE);
-				return -1;//error recovery?
+				return free_tree(root);
 			}
-			node->children.push_back(child);
 			switch(LOOK_AHEAD(0))
 			{
 			case CT_RBRACE:
 				break;
 			case CT_COMMA:
-				++current_idx;
+				ADVANCE;
 				continue;
 			default:
 				skip_till_after(CT_RBRACE);
-				return -1;//error recovery?
+				return free_tree(root);//error recovery?
 			}
 			break;
 		}
-		return root;
+		return true;
 	}
 
-	int			r_opt_member_spec(int parent)//member.spec := (friend|inline|virtual)+
+//base.specifiers  :=  ':' base.specifier (',' base.specifier)*
+//
+//base.specifier  :=  {{VIRTUAL} (PUBLIC | PROTECTED | PRIVATE) {VIRTUAL}} name
+	bool		r_base_specifiers(IRNode *&root)
+	{
+		if(LOOK_AHEAD(0)!=CT_COLON)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, PT_BASE_SPECIFIER, nullptr);
+
+		for(;;)
+		{
+			auto t=LOOK_AHEAD(0);
+			if(t==CT_VIRTUAL)
+			{
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_VIRTUAL, CT_IGNORED));
+				t=LOOK_AHEAD(0);
+			}
+			switch(t)
+			{
+			case CT_PUBLIC:
+			case CT_PROTECTED:
+			case CT_PRIVATE:
+				ADVANCE;
+				root->children.push_back(new IRNode(t, CT_IGNORED));
+				break;
+			}
+			if(t==CT_VIRTUAL)
+			{
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_VIRTUAL, CT_IGNORED));
+				t=LOOK_AHEAD(0);
+			}
+			root->children.push_back(nullptr);
+			if(!r_name(root->children.back()))
+				return free_tree(root);
+			if(LOOK_AHEAD(0)!=CT_COMMA)
+				break;
+			ADVANCE;
+		}
+		return true;
+	}
+	bool		r_access_decl(IRNode *&root)//access.decl  :=  name ';'
+	{
+		if(!r_name(root))
+			return false;
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(root);
+		return true;
+	}
+//class.member
+//  : (PUBLIC | PROTECTED | PRIVATE) ':'
+//  | user.access.spec
+//  | ';'
+//  | typedef.stmt
+//  | template.decl
+//  | using.declaration
+//  | metaclass.decl
+//  | declaration
+//  | access.decl
+	bool		r_class_member(IRNode *&root)
+	{
+		auto t=LOOK_AHEAD(0);
+		switch(t)
+		{
+		case CT_PRIVATE:
+		case CT_PROTECTED:
+		case CT_PUBLIC:
+			ADVANCE;
+			INSERT_LEAF(root, t, nullptr);
+			if(LOOK_AHEAD(0)!=CT_COLON)
+				return free_tree(root);
+			break;
+		//case UserKeyword4://user.access.spec
+		//	break;
+		case CT_SEMICOLON:
+			break;
+		case CT_TYPEDEF:
+			if(!r_typedef(root))
+				return false;
+			break;
+		case CT_TEMPLATE:
+			if(!r_template_decl(root))
+				return false;
+			break;
+		case CT_USING:
+			if(!r_using(root))
+				return false;
+			break;
+		case CT_CLASS:
+		case CT_STRUCT:
+		case CT_UNION:
+		case CT_ENUM:
+			if(!r_metaclass_decl(root))
+				return false;
+			break;
+		default:
+			{
+				int idx=current_idx;
+				if(r_declaration(root))
+					return true;
+				current_idx=idx;
+				return r_access_decl(root);
+			}
+			break;
+		}
+		return true;
+	}
+	bool		r_class_body(IRNode *&root)//class.body  :=  '{' (class.member)* '}'
+	{
+		if(LOOK_AHEAD(0)!=CT_LBRACE)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, PT_CLASS_BODY, nullptr);
+
+		while(LOOK_AHEAD(0)!=CT_RBRACE)
+		{
+			root->children.push_back(nullptr);
+			if(!r_class_member(root->children.back()))
+			{
+				skip_till_after(CT_RBRACE);
+				return free_tree(root);
+			}
+		}
+		ADVANCE;
+		return true;
+	}
+//class.spec
+//  : {userdef.keyword} class.key class.body
+//  | {userdef.keyword} class.key name {class.body}
+//  | {userdef.keyword} class.key name ':' base.specifiers class.body
+//
+//class.key  :=  CLASS | STRUCT | UNION
+	bool		r_class_spec(IRNode *&root)
+	{
+		//TODO: understand UserKeyword
+		auto t=LOOK_AHEAD(0);
+		switch(t)
+		{
+		case CT_CLASS:
+		case CT_STRUCT:
+		case CT_UNION:
+			break;
+		default:
+			return false;
+		}
+		bool body_is_obligatory=true;
+		auto t2=&LOOK_AHEAD_TOKEN(1);
+		if(t2->type==CT_ID)
+		{
+			ADVANCE_BY(2);
+			INSERT_LEAF(root, t, t2->sdata);//children: {???}
+			//TODO: record the class name in current scope for lookup
+
+			if(body_is_obligatory=LOOK_AHEAD(0)==CT_COLON)//inheritance
+			{
+				root->children.push_back(nullptr);
+				if(!r_base_specifiers(root->children.back()))
+					return free_tree(root);
+			}
+		}
+		else//anonymous class
+		{
+			ADVANCE;
+			INSERT_LEAF(root, t, nullptr);//TODO: encode class name as a number (impossible for an identifier), if necessary
+		}
+
+		if(LOOK_AHEAD(0)==CT_LBRACE)
+		{
+			root->children.push_back(nullptr);
+			if(!r_class_body(root->children.back()))
+				return free_tree(root);
+		}
+		else if(body_is_obligatory)
+			return free_tree(root);
+		return true;
+	}
+
+	bool		r_enum_body(IRNode *&root)//enum.body  :=  Identifier {'=' expression} (',' Identifier {'=' expression})* {','}
+	{
+		INSERT_LEAF(root, PT_ENUM_BODY, nullptr);//children: {CT_ID*}
+		for(;;)
+		{
+			auto t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type==CT_RBRACE)
+				break;
+			if(t->type!=CT_ID)
+				return free_tree(root);
+			ADVANCE;
+			root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
+
+			if(LOOK_AHEAD(0)==CT_ASSIGN)
+			{
+				ADVANCE;
+				auto label=root->children.back();
+				label->children.push_back(nullptr);
+				if(!r_assign_expr(label->children.back()))
+				{
+					skip_till_after(CT_RBRACE);
+					return free_tree(root);
+				}
+			}
+
+			if(LOOK_AHEAD(0)!=CT_COMMA)
+				break;
+			ADVANCE;
+		}
+		return true;
+	}
+//enum.spec
+//  : ENUM Identifier
+//  | ENUM {Identifier} '{' {enum.body} '}'
+	bool		r_enum_spec(IRNode *&root)
+	{
+		if(LOOK_AHEAD(0)!=CT_ENUM)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, CT_ENUM, nullptr);//children: {???}
+
+		auto t=&LOOK_AHEAD_TOKEN(0);
+		if(t->type==CT_ID)
+		{
+			ADVANCE;
+			root->sdata=t->sdata;
+			//TODO: add enum name for qualified lookup
+
+			t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type==CT_LBRACE)
+				ADVANCE;
+			else
+				return true;
+		}
+		if(t->type!=CT_LBRACE)
+			return free_tree(root);
+
+		root->children.push_back(nullptr);
+		if(!r_enum_body(root->children.back()))
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)!=CT_RBRACE)
+			return free_tree(root);
+		ADVANCE;
+
+		return true;
+	}
+
+	bool		r_opt_member_spec(IRNode *&root)//member.spec := (friend|inline|virtual)+
 	{
 		auto t=LOOK_AHEAD(0);
 		switch(t)
@@ -2057,26 +2523,23 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_FRIEND:
 		case CT_VIRTUAL:
 			{
-				IRNode *node=nullptr;
-				int root=append_node(PT_MEMBER_SPEC, parent, node);
-				node->children.push_back(t);
-				++current_idx;
-				for(;t=LOOK_AHEAD(0);++current_idx)
+				INSERT_LEAF(root, PT_MEMBER_SPEC, nullptr);
+				(int&)root->opsign=int(t==CT_FRIEND)<<2|int(t==CT_VIRTUAL)<<1|int(t==CT_INLINE);
+				ADVANCE;
+				for(;t=LOOK_AHEAD(0);ADVANCE)
 				{
 					switch(t)
 					{
 					case CT_INLINE:
 					case CT_FRIEND:
 					case CT_VIRTUAL:
-						for(int k=0;k<(int)node->children.size();++k)
 						{
-							if(t<node->children[k])
+							int mask=int(t==CT_FRIEND)<<2|int(t==CT_VIRTUAL)<<1|int(t==CT_INLINE);
+							if(root->opsign&mask)
 							{
-								node->children.insert_pod(k, t);
-								break;
+								//TODO: warning: repeated member specifier
 							}
-							if(t==node->children[k])
-								break;//TODO: warning: repeated member specifier
+							(int&)root->opsign|=mask;
 						}
 						continue;
 					default:
@@ -2084,36 +2547,11 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				}
-				return root;
 			}
-		}
-		return -1;
-#if 0
-		int idx=-1;
-		for(;current_idx<ntokens;++current_idx)
-		{
-			switch(LOOK_AHEAD(0))
-			{
-			case CT_FRIEND:
-			case CT_INLINE:
-			case CT_VIRTUAL:
-				if(idx==-1)
-				{
-					idx=ir_size;
-					append_node(PT_MEMBER_SPEC, parent);
-				}
-				append_node(LOOK_AHEAD(0), idx);
-				//p->children.push_back(new IRNode(LOOK_AHEAD(0)));
-				continue;
-			default:
-				break;
-			}
-			break;
 		}
 		return true;
-#endif
 	}
-	int			r_opt_storage_spec(int parent)//storage.spec := extern|static|mutable|register
+	bool		r_opt_storage_spec(IRNode *&root)//storage.spec := extern|static|mutable|register		check root for nullptr
 	{
 		auto t=LOOK_AHEAD(0);
 		switch(t)
@@ -2122,31 +2560,15 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_STATIC:
 		case CT_MUTABLE:
 		case CT_REGISTER:
-			{
-				IRNode *node=nullptr;
-				int root=append_node(PT_MEMBER_SPEC, parent, node);
-				node->opsign=t;
-				++current_idx;
-				return root;
-			}
-		}
-		return -1;
-#if 0
-		switch(LOOK_AHEAD(0))
-		{
-		case CT_EXTERN:
-		case CT_STATIC:
-		case CT_MUTABLE:
-		case CT_REGISTER:
-			append_node(LOOK_AHEAD(0), parent);
-			//p->children.push_back(new IRNode(LOOK_AHEAD(0)));
-			++current_idx;
+			//INSERT_LEAF(root, t, nullptr);
+			INSERT_LEAF(root, PT_STORAGE_SPEC, nullptr);
+			root->opsign=t;
+			ADVANCE;
 			break;
 		}
 		return true;
-#endif
 	}
-	int			r_opt_cv_qualify(int parent)//cv.qualify  :=  (const|volatile)+
+	bool		r_opt_cv_qualify(IRNode *&root)//cv.qualify  :=  (const|volatile)+
 	{
 		auto t=LOOK_AHEAD(0);
 		switch(t)
@@ -2154,58 +2576,35 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_CONST:
 		case CT_VOLATILE:
 			{
-				IRNode *node=nullptr;
-				int root=append_node(PT_MEMBER_SPEC, parent, node);
-				(int&)node->opsign|=1<<int(t==CT_VOLATILE);
-				++current_idx;
-				for(;t=LOOK_AHEAD(0);++current_idx)
+				INSERT_LEAF(root, PT_MEMBER_SPEC, nullptr);
+				(int&)root->opsign=1<<int(t==CT_VOLATILE);
+				ADVANCE;
+				for(;t=LOOK_AHEAD(0);ADVANCE)
 				{
 					switch(t)
 					{
 					case CT_CONST:
 					case CT_VOLATILE:
-						(int&)node->opsign|=1<<int(t==CT_VOLATILE);
+						(int&)root->opsign|=1<<int(t==CT_VOLATILE);
 						continue;
 					default:
 						break;
 					}
 					break;
 				}
-				return root;
 			}
-		}
-		return -1;
-#if 0
-		int idx=-1;
-		for(;current_idx<ntokens;++current_idx)
-		{
-			switch(LOOK_AHEAD(0))
-			{
-			case CT_CONST:
-			case CT_VOLATILE:
-				if(idx==-1)
-				{
-					idx=ir_size;
-					append_node(CT_CV_QUALIFIER, parent);
-				}
-				append_node(LOOK_AHEAD(0), idx);
-				continue;
-			}
-			break;
 		}
 		return true;
-#endif
 	}
-	int			r_opt_int_type_or_class_spec(int parent)//int.type.or.class.spec := (char|wchar_t|int|short|long|signed|unsigned|float|double|void|bool)+
+	bool		r_opt_int_type_or_class_spec(IRNode *&root)//int.type.or.class.spec := (char|wchar_t|int|short|long|signed|unsigned|float|double|void|bool)+  |  class.spec  |  enum.spec
 	{
-		int root=-1;
-		IRNode *node=nullptr;
+		root=nullptr;//
 		TypeInfo type;
 		Scope *scope;
 		short long_count=0, int_count=0;
 		for(;;)
 		{
-			auto token=&current_ex->operator[](current_idx);
+			auto token=&LOOK_AHEAD_TOKEN(0);
 			switch(token->type)					//TODO: correct type spec order
 			{
 			case CT_AUTO:
@@ -2217,6 +2616,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			case CT_WCHAR_T:
 			case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
 			case CT_ID:
+				ADVANCE;
 				switch(token->type)
 				{
 				case CT_AUTO:
@@ -2396,8 +2796,12 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					scope=lookup(token->sdata);//check if identifier==class/struct/union in this/global scope
 					if(!scope)
 					{
-						//error: unexpected identifier
-						return -1;
+						ADVANCE_BY(-1);
+						if(root)
+							root->set(add_type(type));
+						return true;//not declared yet
+						
+						//return free_tree(root);//error: unexpected identifier
 					}
 					switch(scope->info->datatype)
 					{
@@ -2408,7 +2812,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					case TYPE_SIMD://special struct
 						{
 							if(type.datatype!=TYPE_UNASSIGNED)
-								return -1;
+								return free_tree(root);
 							//merge with type			//TODO: unroll the struct to typedb at declaration
 							auto typeinfo=scope->info;
 							type.datatype=typeinfo->datatype;
@@ -2419,331 +2823,322 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 						break;
 					default:
 						//error: identifier is not an enum/class/struct/union
-						return -1;
+						return free_tree(root);
 					}
 					break;
 				}
-				if(root==-1)
-					root=append_node(PT_TYPE, parent, node);
-				//append_node(t, root);
+				if(root==nullptr)
+					INSERT_LEAF(root, PT_TYPE, nullptr);
 				continue;
+			case CT_CLASS:
+			case CT_STRUCT:
+			case CT_UNION://or UserKeyword
+				return r_class_spec(root);
+			case CT_ENUM:
+				return r_enum_spec(root);
 			}
 			break;
-		}
-		node->tdata=add_type(type);
-		return root;
+		}//end for
+		if(root)
+			root->set(add_type(type));
+		return true;
 	}
 
-	int			r_simple_declaration(int parent)//condition controlling expression of switch/while/if
+	bool		r_simple_declaration(IRNode *&root)//condition controlling expression of switch/while/if
 	{
-		int c_cv=-1, c_ic=-1, c_name=-1;
-		if((c_cv=r_opt_cv_qualify(parent))==-1||(c_ic=r_opt_int_type_or_class_spec(parent))==-1)
-			return -1;
-		if((c_name=r_name(parent))==-1)
-			return -1;
+		IRNode *cv=nullptr, *ic=nullptr, *name=nullptr;
+		if(!r_opt_cv_qualify(cv)||!r_opt_int_type_or_class_spec(ic))
+			return free_tree(cv), free_tree(ic);
+		if(!r_name(name))
+			return free_tree(cv), free_tree(ic), free_tree(name);
 
-		int c_decl=r_declarator2(parent);
-		if(c_decl==-1)
-			return -1;
+		IRNode *decl=nullptr;
+		if(!r_declarator2(decl, true, DECLKIND_NORMAL, true))
+			return free_tree(cv), free_tree(ic), free_tree(name), free_tree(decl);
 		if(LOOK_AHEAD(0)!=CT_ASSIGN)//TODO: make sense of this
-			return -1;
-		++current_idx;
+			return free_tree(cv), free_tree(ic), free_tree(name), free_tree(decl);
+		ADVANCE;
 
-		int c_expr=r_assign_expr(parent);
-		if(c_expr==-1)
-			return -1;
+		IRNode *expr;
+		if(!r_assign_expr(expr))
+			return free_tree(cv), free_tree(ic), free_tree(name), free_tree(decl), free_tree(expr);
 
-		return -1;//X  always fails
+		//TODO: join nodes
+
+		return true;
 	}
-	int			r_condition(int parent)//condition  :=  simple.declaration  |  comma.expresion
+	bool		r_condition(IRNode *&root)//condition  :=  simple.declaration  |  comma.expresion
 	{
-		int t_idx=current_idx, i_idx=ir_size;
-		int child=r_simple_declaration(parent);
-		if(child!=-1)
-			return child;
-		current_idx=t_idx, ir_size=i_idx;//restore state
-		return r_comma_expr(parent);
+		int t_idx=current_idx;
+		if(!r_simple_declaration(root))
+			return false;//TODO: minimal required calls to free_tree()
+		current_idx=t_idx;//restore state
+		return r_comma_expr(root);
+		//return r_comma_expr(root)||free_tree(root);//X  not required here
 	}
 
-	int			r_typedef(int parent)//typedef.stmt  :=  TYPEDEF type.specifier declarators ';'
+	bool		r_typedef(IRNode *&root)//typedef.stmt  :=  TYPEDEF type.specifier declarators ';'
 	{
 		if(LOOK_AHEAD(0)!=CT_TYPEDEF)
 			return false;
-		++current_idx;
-		if(!r_typespecifier(parent))
+		ADVANCE;
+
+		IRNode *typespec=nullptr, *declarators=nullptr;
+		if(!r_typespecifier(typespec))
 			return false;
-		if(!r_declarators(parent))
-			return false;
-		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return false;
-		++current_idx;
+
+		if(!r_declarators(declarators, true, false)||LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(typespec);
+		ADVANCE;
+
+		INSERT_LEAF(root, CT_TYPEDEF, nullptr);
+		root->children.push_back(typespec);
+		root->children.push_back(declarators);
 		return true;
 	}
-	int			r_if(int parent)//if.statement  :=  IF '(' condition ')' statement { ELSE statement }
+	bool		r_if(IRNode *&root)//if.statement  :=  IF '(' condition ')' statement { ELSE statement }
 	{
 		if(LOOK_AHEAD(0)!=CT_IF||LOOK_AHEAD(1)!=CT_LPR)
-			return -1;
-		current_idx+=2;
+			return false;
+		ADVANCE_BY(2);
 
-		IRNode *node=nullptr;
-		int root=append_node(CT_IF, parent, node);
+		INSERT_LEAF(root, CT_IF, nullptr);
 
-		int child=r_condition(root);
-		if(child==-1)
-			return -1;
+		IRNode *child=nullptr;
+		if(!r_condition(child))
+			return free_tree(root);
+		root->children.push_back(child);
+
 		if(LOOK_AHEAD(0)!=CT_RPR)
-			return -1;
-		link_nodes(root, child);
+			return free_tree(root);
 
-		child=r_statement(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
+		if(!r_statement(child))
+			return free_tree(root);
+		root->children.push_back(child);
 
 		if(LOOK_AHEAD(0)==CT_ELSE)
 		{
-			++current_idx;
-			child=r_statement(root);
-			if(child==-1)
-				return -1;
-			link_nodes(root, child);
+			ADVANCE;
+			if(!r_statement(child))
+				return free_tree(root);
+			root->children.push_back(child);
 		}
-		return root;
+		return true;
 	}
-	int			r_switch(int parent)//switch.statement  :=  SWITCH '(' condition ')' statement
+	bool		r_switch(IRNode *&root)//switch.statement  :=  SWITCH '(' condition ')' statement
 	{
 		if(LOOK_AHEAD(0)!=CT_SWITCH||LOOK_AHEAD(1)!=CT_LPR)
-			return -1;
-		current_idx+=2;
+			return false;
+		ADVANCE_BY(2);
 
-		IRNode *node=nullptr;
-		int root=append_node(CT_SWITCH, parent, node);
+		INSERT_LEAF(root, CT_SWITCH, nullptr);
 
-		int child=r_condition(root);
-		if(child==-1)
-			return -1;
+		IRNode *child=nullptr;
+		if(!r_condition(child))
+			return free_tree(root);
+		root->children.push_back(child);
+
 		if(LOOK_AHEAD(0)!=CT_RPR)
-			return -1;
-		link_nodes(root, child);
+			return free_tree(root);
 
-		child=r_statement(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
+		if(!r_statement(child))
+			return free_tree(root);
+		root->children.push_back(child);
 
-		return root;
+		return true;
 	}
-	int			r_while(int parent)//while.statement  :=  WHILE '(' condition ')' statement
+	bool		r_while(IRNode *&root)//while.statement  :=  WHILE '(' condition ')' statement
 	{
 		if(LOOK_AHEAD(0)!=CT_WHILE||LOOK_AHEAD(1)!=CT_LPR)
-			return -1;
-		current_idx+=2;
+			return false;
+		ADVANCE_BY(2);
 
-		IRNode *node=nullptr;
-		int root=append_node(CT_WHILE, parent, node);
+		INSERT_LEAF(root, CT_WHILE, nullptr);
 
-		int child=r_condition(root);
-		if(child==-1)
-			return -1;
+		IRNode *child=nullptr;
+		if(!r_condition(child))
+			return free_tree(root);
+		root->children.push_back(child);
+
 		if(LOOK_AHEAD(0)!=CT_RPR)
-			return -1;
-		link_nodes(root, child);
+			return free_tree(root);
+		
+		if(!r_statement(child))
+			return free_tree(root);
+		root->children.push_back(child);
 
-		child=r_statement(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
-
-		return root;
+		return true;
 	}
-	int			r_do_while(int parent)//do.statement  :=  DO statement WHILE '(' comma.expression ')' ';'
+	bool		r_do_while(IRNode *&root)//do.statement  :=  DO statement WHILE '(' comma.expression ')' ';'
 	{
 		if(LOOK_AHEAD(0)!=CT_DO)
-			return -1;
-		++current_idx;
+			return false;
+		ADVANCE;
 
-		IRNode *node=nullptr;
-		int root=append_node(CT_DO, parent, node);
+		INSERT_LEAF(root, CT_DO, nullptr);
+		root->children.assign_pod(2, nullptr);
 
-		int child=r_statement(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
+		if(!r_statement(root->children[0]))
+			return free_tree(root);
 		
 		if(LOOK_AHEAD(0)!=CT_WHILE||LOOK_AHEAD(1)!=CT_LPR)
-			return -1;
-		current_idx+=2;
-
-		child=r_comma_expr(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
+			return free_tree(root);
+		ADVANCE_BY(2);
+		
+		if(!r_comma_expr(root->children[1]))
+			return free_tree(root);
 		
 		if(LOOK_AHEAD(0)!=CT_RPR||LOOK_AHEAD(1)!=CT_SEMICOLON)
-			return -1;
-		current_idx+=2;
+			return free_tree(root);
+		ADVANCE_BY(2);
 
-		return root;
+		return true;
 	}
-	int			r_for(int parent)//for.statement  :=  FOR '(' expr.statement {comma.expression} ';' {comma.expression} ')' statement
+	bool		r_for(IRNode *&root)//for.statement  :=  FOR '(' expr.statement {comma.expression} ';' {comma.expression} ')' statement
 	{
 		if(LOOK_AHEAD(0)!=CT_FOR||LOOK_AHEAD(1)!=CT_LPR)
-			return -1;
-		current_idx+=2;
-
-		IRNode *node=nullptr;
-		int root=append_node(CT_FOR, parent, node);
-
-		int child=r_expr_stmt(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
-		if(LOOK_AHEAD(0)==CT_SEMICOLON)
-		{
-			++current_idx;
-			IRNode *n2=nullptr;
-			child=append_node(PT_COMMA, root, n2);
-		}
-		else
-		{
-			child=r_comma_expr(root);
-			if(child==-1)
-				return -1;
-			link_nodes(root, child);
-		}
-		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return -1;
+			return false;
+		ADVANCE_BY(2);
 		
-		if(LOOK_AHEAD(0)==CT_RPR)
-		{
-			++current_idx;
-			IRNode *n2=nullptr;
-			child=append_node(PT_COMMA, root, n2);
-		}
-		else
-		{
-			child=r_comma_expr(root);
-			if(child==-1)
-				return -1;
-			link_nodes(root, child);
-		}
+		INSERT_LEAF(root, CT_FOR, nullptr);//children: {initialization, condition, increment, statement}, check for nullptr
+		root->children.assign_pod(4, nullptr);
+		
+		if(!r_expr_stmt(root->children[0]))
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON&&!r_comma_expr(root->children[1]))
+			return free_tree(root);
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(root);
+		ADVANCE;
+		
+		if(LOOK_AHEAD(0)!=CT_RPR&&!r_comma_expr(root->children[2]))
+			return free_tree(root);
 		if(LOOK_AHEAD(0)!=CT_RPR)
-			return -1;
+			return free_tree(root);
+		ADVANCE;
 
-		child=r_statement(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
+		if(!r_statement(root->children[3]))
+			return free_tree(root);
 
-		return root;
+		return true;
 	}
-	int			r_arg_declaration(int parent)//arg.declaration  :=  {userdef.keyword | REGISTER} type.specifier arg.declarator {'=' initialize.expr}
+	bool		r_arg_declaration(IRNode *&root)//arg.declaration  :=  {userdef.keyword | REGISTER} type.specifier arg.declarator {'=' initialize.expr}
 	{
-		if(LOOK_AHEAD(0)==CT_REGISTER)
+		INSERT_LEAF(root, PT_ARG_DECL, nullptr);//children: {type, argname [, default value]}
+
+		switch(LOOK_AHEAD(0))
 		{
-			++current_idx;
+		case CT_REGISTER:
+			ADVANCE;
 			//ignore register
+			break;
+		//case CT_CDECL:
+		//case CT_THISCALL:
+		//case CT_STDCALL:
+		//	root->children.push_back(new IRNode(LOOK_AHEAD(0), CT_IGNORED));
+		//	break;
 		}
+		root->children.push_back(nullptr);
+		root->children.push_back(nullptr);
+		
+		if(!r_typespecifier(root->children[0]))
+			return free_tree(root);
 
-		IRNode *node=nullptr;
-		int root=append_node(CT_FOR, parent, node);
-
-		int child=r_typespecifier(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
-
-		child=r_declarator2(root);
-		if(child==-1)
-			return -1;
-		link_nodes(root, child);
+		if(!r_declarator2(root->children[1], true, DECLKIND_ARG, false))
+			return free_tree(root);
 
 		if(LOOK_AHEAD(0)==CT_ASSIGN)
 		{
-			++current_idx;
-			child=r_initialize_expr(root);
-			if(child==-1)
-				return -1;
-			link_nodes(root, child);
+			ADVANCE;
+			root->children.push_back(nullptr);
+			if(!r_initialize_expr(root->children[2]))
+				return free_tree(root);
 		}
 
-		return root;
+		return true;
 	}
 //try.statement  :=  TRY compound.statement (exception.handler)+ ';'
 //
 //exception.handler  :=  CATCH '(' (arg.declaration | Ellipsis) ')' compound.statement
-	int			r_try_catch(int parent)
+	bool		r_try_catch(IRNode *&root)
 	{
 		if(LOOK_AHEAD(0)!=CT_TRY)
-			return -1;
-		++current_idx;
+			return false;
+		ADVANCE;
 
-		IRNode *node=nullptr;
-		int root=append_node(CT_FOR, parent, node);
+		INSERT_LEAF(root, CT_TRY, nullptr);//children: {statement, {arg, handlerstmt}+}
 
-		int child=r_compoundstatement(root);
-		if(child==-1)
-			return -1;
+		root->children.push_back(nullptr);
+		if(!r_compoundstatement(root->children[0]))
+			return free_tree(root);
 
 		do
 		{
 			if(LOOK_AHEAD(0)!=CT_CATCH||LOOK_AHEAD(1)!=CT_LPR)
-				return -1;
-			current_idx+=2;
+				return free_tree(root);
+			ADVANCE_BY(2);
 
 			if(LOOK_AHEAD(0)==CT_ELLIPSIS)
 			{
-				++current_idx;
-				IRNode *n2=nullptr;
-				child=append_node(CT_ELLIPSIS, parent, n2);
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_ELLIPSIS, CT_IGNORED));
 			}
 			else
 			{
-				child=r_arg_declaration(root);
+				root->children.push_back(nullptr);
+				if(!r_arg_declaration(root->children.back()))
+					return free_tree(root);
 			}
+
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(root);
+
+			root->children.push_back(nullptr);
+			if(!r_compoundstatement(root->children.back()))
+				return free_tree(root);
 		}while(LOOK_AHEAD(0)==CT_CATCH);
 
-		return root;
+		return true;
 	}
 
-	int			r_ptr_to_member(int parent)
+	bool		r_ptr_to_member(IRNode *&root)//ptr.to.member  :=  {'::'} (identifier {template.args} '::')+ '*'
 	{
-		int root=-1;
 		if(LOOK_AHEAD(0)==CT_SCOPE)
 		{
-			++current_idx;
+			ADVANCE;
 			//TODO: search only global scope
 		}
 		for(;;)
 		{
-			auto t=LOOK_AHEAD(0);
-			if(t!=CT_ID)
-				return -1;
-			++current_idx;
-			t=LOOK_AHEAD(0);
-			if(t==CT_LESS)
+			auto t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type!=CT_ID)
+				return free_tree(root);
+			ADVANCE;
+
+			t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type==CT_LESS)
 			{
-				int child=r_template_arglist(parent);
-				if(!child)
-					return -1;
+				if(!r_template_arglist(root))//
+					return free_tree(root);
 				//TODO: template call lookup
 			}
 			else
 			{
 				//TODO: simple name lookup
 			}
-			t=LOOK_AHEAD(0);
-			if(t!=CT_SCOPE)
-				return -1;
-			++current_idx;
-			t=LOOK_AHEAD(0);
-			if(t==CT_ASTERIX)
+			t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type!=CT_SCOPE)
+				return free_tree(root);
+			ADVANCE;
+			t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type==CT_ASTERIX)
 			{
-				++current_idx;
+				ADVANCE;
 				break;
 			}
 		}
-		return root;
+		return true;
 	}
 	bool		is_ptr_to_member(int i)//ptr.to.member  :=  {'::'} (identifier {'<' any* '>'} '::')+ '*'
 	{
@@ -2802,9 +3197,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		return false;
 	}
-	int			r_ptr_operator(int parent)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
+	bool		r_ptr_operator(IRNode *&root)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
 	{
-		int root=-1;
+		INSERT_LEAF(root, PT_PTR_OPERATOR, nullptr);
 		IRNode *node=nullptr;
 		for(;;)
 		{
@@ -2813,40 +3208,47 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				break;
 			if(t==CT_ASTERIX||t==CT_AMPERSAND)
 			{
-				++current_idx;
-				append_node(t, parent, node);
+				ADVANCE;
+				root->children.push_back(new IRNode(t, CT_IGNORED));
 			}
 			else
 			{
-				int child=r_ptr_to_member(parent);
-				if(child==-1)
-					return -1;
+				root->children.push_back(nullptr);
+				if(!r_ptr_to_member(root->children.back()))
+					return free_tree(root);
 			}
 		}
-		return root;
+		return true;
 	}
-	int			r_cast_operator_name(int parent)
+	bool		r_cast_operator_name(IRNode *&root)//cast.operator.name  :=  {cv.qualify} (integral.type.or.class.spec | name) {cv.qualify} {(ptr.operator)*}
 	{
-		int c_cv=r_opt_cv_qualify(parent);
-		if(c_cv==-1)
-			return -1;
-		int child=r_opt_int_type_or_class_spec(parent);
-		if(child==-1)
+		INSERT_LEAF(root, PT_CAST, nullptr);
+
+		root->children.push_back(nullptr);
+		if(!r_opt_cv_qualify(root->children.back()))
+			return free_tree(root);
+
+		root->children.push_back(nullptr);
+		if(!r_opt_int_type_or_class_spec(root->children.back()))
+			return free_tree(root);
+		if(!root->children.back())
 		{
-			child=r_name(parent);
-			if(child==-1)
-				return -1;
+			if(!r_name(root->children.back()))
+				return free_tree(root);
 		}
-		int c_cv2=r_opt_cv_qualify(parent);
-		int c_ptr=r_ptr_operator(parent);
-		if(c_ptr==-1)
-			return -1;
-		return -1;//TODO: complete this
+		root->children.push_back(nullptr);
+		if(!r_opt_cv_qualify(root->children.back()))
+			return free_tree(root);
+		
+		root->children.push_back(nullptr);
+		if(!r_ptr_operator(root->children.back()))
+			return free_tree(root);
+
+		return true;//TODO: complete this
 	}
-	int			r_operator_name(int parent)
+	bool		r_operator_name(IRNode *&root)
 	{
 		auto t=LOOK_AHEAD(0);
-		IRNode *node=nullptr;
 		switch(t)
 		{
 		case CT_ARROW:
@@ -2871,44 +3273,48 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_ASSIGN_AND:case CT_ASSIGN_XOR:case CT_ASSIGN_OR:
 
 		case CT_COMMA:
-			++current_idx;
-			return append_node(t, parent, node);
+			ADVANCE;
+			INSERT_LEAF(root, t, nullptr);
+			return true;
 
 		case CT_NEW:case CT_DELETE:
-			if(LOOK_AHEAD(1)==CT_LBRACKET&&LOOK_AHEAD(2)==CT_RBRACKET)
+			ADVANCE;
+			INSERT_LEAF(root, t, nullptr);
+			if(LOOK_AHEAD(0)==CT_LBRACKET&&LOOK_AHEAD(1)==CT_RBRACKET)
 			{
-				current_idx+=3;
-				int child=append_node(t, parent, node);
-				node->opsign=CT_LBRACKET;
-				return child;
+				ADVANCE_BY(2);
+				root->children.push_back(new IRNode(CT_LBRACKET, CT_IGNORED));
+				return true;
 			}
-			++current_idx;
-			return append_node(t, parent, node);
+			return true;
 
 		case CT_LPR:
 			if(LOOK_AHEAD(1)==CT_RPR)
 			{
-				current_idx+=2;
-				return append_node(t, parent, node);
+				ADVANCE_BY(2);
+				INSERT_LEAF(root, t, nullptr);
+				return true;
 			}
 			break;
 		case CT_LBRACKET:
 			if(LOOK_AHEAD(1)==CT_RBRACKET)
 			{
-				current_idx+=2;
-				return append_node(t, parent, node);
+				ADVANCE_BY(2);
+				INSERT_LEAF(root, t, nullptr);
+				return true;
 			}
 			break;
 
 		case CT_VAL_STRING_LITERAL://user-defined literal (since C++11)
 			if(!strlen(current_ex->operator[](current_idx).sdata))//TODO: compare pointers instead
 			{
-				++current_idx;
-				return append_node(t, parent, node);
+				ADVANCE;
+				INSERT_LEAF(root, t, nullptr);
+				return true;
 			}
 			break;
 		}
-		return r_cast_operator_name(parent);
+		return r_cast_operator_name(root);
 	}
 //name : {'::'} name2 ('::' name2)*
 //
@@ -2916,126 +3322,169 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //  : Identifier {template.args}
 //  | '~' Identifier
 //  | OPERATOR operator.name {template.args}
-	int			r_name(int parent)
+	bool		r_name(IRNode *&root)
 	{
-		auto t=LOOK_AHEAD(0);
-		if(t==CT_SCOPE)
+		INSERT_LEAF(root, PT_NAME, nullptr);//children: {::?, name(s)}
+		auto t=&LOOK_AHEAD_TOKEN(0);
+		if(t->type==CT_SCOPE)
 		{
-			++current_idx;
+			ADVANCE;
 			//TODO: search global scope only
+			root->children.push_back(new IRNode(CT_SCOPE, CT_IGNORED));
 		}
-		else if(t==CT_DECLTYPE)//TODO: search all nested scopes upwards
+		else
 		{
-			++current_idx;
-			if(LOOK_AHEAD(0)!=CT_LPR)
-				return -1;
-			int child=r_name(parent);
-			if(child==-1)
-				return -1;
-			if(LOOK_AHEAD(0)!=CT_RPR)
-				return -1;
-			return child;
+			//TODO: search all nested scopes upwards
+			if(t->type==CT_DECLTYPE)
+			{
+				ADVANCE;
+				if(LOOK_AHEAD(0)!=CT_LPR)
+					return free_tree(root);
+				root->children.push_back(new IRNode(CT_DECLTYPE, CT_IGNORED));
+				root->children.push_back(nullptr);
+				if(!r_name(root->children.back()))
+					return free_tree(root);
+				if(LOOK_AHEAD(0)!=CT_RPR)
+					return free_tree(root);
+				return true;
+			}
 		}
 		for(;;)
 		{
-			t=LOOK_AHEAD(0);
-			++current_idx;
-			switch(t)
+			t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type==CT_TEMPLATE)
 			{
-			case CT_TEMPLATE:
-				t=LOOK_AHEAD(0);
-				++current_idx;
-				break;
+				ADVANCE;
+				t=&LOOK_AHEAD_TOKEN(0);//TODO: make sure template can be skipped here
+			}
+			
+			switch(t->type)
+			{
 			case CT_ID:
-				t=LOOK_AHEAD(0);
-				if(t==CT_LESS)
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
+				t=&LOOK_AHEAD_TOKEN(0);
+				if(t->type==CT_LESS)
 				{
-					int child=r_template_arglist(parent);
-					if(child==-1)
-						return -1;
-					//TODO: template call
-					t=LOOK_AHEAD(0);
+					root->children.push_back(nullptr);
+					if(!r_template_arglist(root->children.back()))
+						return free_tree(root);
+					t=&LOOK_AHEAD_TOKEN(0);
 				}
-				else
-				{
-					//TODO: simple name
-				}
-				if(t==CT_SCOPE)
-				{
-					++current_idx;
-				}
-				else
-				{
-					return -1;//TODO: return name is now qualified
-				}
+				if(t->type!=CT_SCOPE)
+					return true;
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_SCOPE, CT_IGNORED));
 				break;
 			case CT_TILDE:
-				if(LOOK_AHEAD(0)!=CT_ID)
-					return -1;
-				//TODO: destructor
-				return -1;//TODO: return name is now qualified
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_TILDE, CT_IGNORED));
+				t=&LOOK_AHEAD_TOKEN(0);
+				if(t->type!=CT_ID)
+					return free_tree(root);
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
+				return true;
 			case CT_OPERATOR:
 				{
-					int child=r_operator_name(parent);
-					if(child==-1)
-						return -1;
-					t=LOOK_AHEAD(0);
-					if(t==CT_LESS)
+					ADVANCE;
+					root->children.push_back(new IRNode(CT_OPERATOR, CT_IGNORED));
+					root->children.push_back(nullptr);
+					if(!r_operator_name(root->children.back()))
+						return free_tree(root);
+					t=&LOOK_AHEAD_TOKEN(0);
+					if(t->type==CT_LESS)
 					{
-						int child=r_template_arglist(parent);
-						if(child==-1)
-							return -1;
+						root->children.push_back(nullptr);
+						if(!r_template_arglist(root->children.back()))
+							return free_tree(root);
 					}
-					else
-					{
-					}
-					//TODO: complete this
-					return -1;//true
+					return true;
 				}
 				break;
 			default:
-				return -1;
+				return free_tree(root);
 			}
 		}
-		return -1;
+		return true;
 	}
-	int			r_int_decl_stmt(int parent)//integral.decl.statement  :=  decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'
+	bool		r_int_decl_stmt(IRNode *&root)//integral.decl.statement  :=  decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'
 	{
-		int c_cv=r_opt_cv_qualify(parent);
+		INSERT_LEAF(root, PT_VAR_DECL, nullptr);//TODO: pass cv_q to r_int_decl_stmt()
+		root->children.push_back(nullptr);
+		if(!r_opt_cv_qualify(root->children.back()))
+			return free_tree(root);
 		if(LOOK_AHEAD(0)==CT_SEMICOLON)
 		{
-			++current_idx;
-			return -1;//TODO: debug this
+			ADVANCE;
+			return true;
 		}
-		int child=r_declarators(parent);
-		if(child==-1)
-			return -1;
+		root->children.push_back(nullptr);
+		if(!r_declarators(root->children.back(), false, true))
+			return free_tree(root);
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return -1;
-		++current_idx;
-		return -1;//TODO: debug this
+			return free_tree(root);
+		ADVANCE;
+		return true;
 	}
-	int			r_const_decl(int parent)
+	bool		r_const_decl(IRNode *&root)
 	{
-		int c_decl=r_declarators(parent);//TODO: decl these variables as const
+		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
+		root->children.push_back(nullptr);
+		if(!r_declarators(root->children.back(), false, false))//TODO: decl these variables as const
+			return false;
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return -1;						//TODO: differentiate between syntax error and no node return
-		++current_idx;
-		return -1;//sic
+			return free_tree(root);
+		ADVANCE;
+		return true;
 	}
-	int			r_other_decl(int parent)//other.decl.statement  :=  decl.head name {cv.qualify} declarators ';'
+	bool		r_other_decl(IRNode *&root)//inlined
 	{
-		int c_name=r_name(parent);
-		if(c_name==-1)
-			return -1;
-		int c_cv=r_opt_cv_qualify(parent);
-		int c_decl=r_declarators(parent);
-		if(c_decl==-1)
-			return -1;
+#if 0
+		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
+
+		root->children.push_back(nullptr);
+		if(!r_name(root->children.back()))
+			return free_tree(root);
+		
+		root->children.push_back(nullptr);
+		if(!r_opt_cv_qualify(root->children.back()))
+			return free_tree(root);
+
+		if(root->children.back()!=nullptr)
+			root->children.push_back(nullptr);
+		if(!r_declarators(root->children.back(), false, false))
+			return free_tree(root);
+
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return -1;
-		return -1;//sic
-		//return parent;//never return parent
+			return free_tree(root);
+#endif
+
+		return true;
+	}
+	bool		r_other_decl_stmt(IRNode *&root)//other.decl.statement  :=  decl.head name {cv.qualify} declarators ';'
+	{
+		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
+
+		root->children.push_back(nullptr);
+		if(!r_name(root->children.back()))
+			return free_tree(root);
+		
+		root->children.push_back(nullptr);
+		if(!r_opt_cv_qualify(root->children.back()))
+			return free_tree(root);
+
+		if(root->children.back()!=nullptr)
+			root->children.push_back(nullptr);
+		if(current_idx==12)//
+			int LOL_1=0;//
+		if(!r_declarators(root->children.back(), false, false))
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(root);
+
+		return true;
 	}
 //declaration.statement
 //  : decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'
@@ -3047,21 +3496,22 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //
 //const.declaration
 //  : cv.qualify {'*'} Identifier '=' expression {',' declarators} ';'
-	int			r_decl_stmt(int parent)
+	bool		r_decl_stmt(IRNode *&root)
 	{
-		int c_st=-1, c_cv, c_ic=-1;
-		if((c_st=r_opt_storage_spec(parent))==-1||(c_cv=r_opt_cv_qualify(parent))==-1||(c_ic=r_opt_int_type_or_class_spec(parent))==-1)
-			return -1;
-		IRNode *node=nullptr;
-		int root=insert_node(PT_VAR_DECL, parent, c_st!=-1?c_st : c_cv!=-1?c_cv:c_ic, node);
-		int child=-1;
-		if(c_ic!=-1)
+		INSERT_LEAF(root, PT_VAR_DECL, nullptr);//children: {storage, cv, integral, int/const/other decl}		TODO: improve this
+		root->children.assign_pod(4, nullptr);
+		
+		if(!r_opt_storage_spec(root->children[0])||!r_opt_cv_qualify(root->children[1])||!r_opt_int_type_or_class_spec(root->children[2]))
+			return free_tree(root);
+		//IRNode *storage=nullptr, *cv=nullptr, *integral=nullptr;
+		//if(!r_opt_storage_spec(storage)||!r_opt_cv_qualify(cv)||r_opt_int_type_or_class_spec(integral))
+		//	return free_tree(storage), free_tree(cv), free_tree(integral);
+
+		if(root->children[0])
 		{
-			child=r_int_decl_stmt(root);
-			if(child==-1)
-				return -1;
-			link_nodes(root, child);
-			return root;
+			if(!r_int_decl_stmt(root->children[3]))
+				return free_tree(root);
+			return true;
 		}
 		auto t=LOOK_AHEAD(0);
 		bool assign=false;
@@ -3074,11 +3524,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_ASSIGN_AND:case CT_ASSIGN_XOR:case CT_ASSIGN_OR:
 			assign=true;
 		}
-		if(c_cv!=-1&&(t==CT_ID&&assign||t==CT_ASTERIX))
-			child=r_const_decl(root);
-		else
-			child=r_other_decl(root);
-		return root;
+		if(root->children[2]&&(t==CT_ID&&assign||t==CT_ASTERIX))
+			return r_const_decl(root->children[3]);
+		return r_other_decl_stmt(root->children[3]);
 	}
 //expr.statement
 //  : ';'
@@ -3086,19 +3534,19 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //  | comma.expression ';'
 //  | openc++.postfix.expr
 //  | openc++.primary.exp
-	int			r_expr_stmt(int parent)
+	bool		r_expr_stmt(IRNode *&root)
 	{
 		if(LOOK_AHEAD(0)==CT_SEMICOLON)
-			return -1;
-		int t_idx=current_idx, ir_idx=ir_size;//save parser state
-		int root=r_decl_stmt(parent);
-		if(root!=-1)
-			return root;
-		current_idx=t_idx, ir_size=ir_idx;//reload parser state
-		root=r_comma_expr(parent);
+			return true;
+		int t_idx=current_idx;//save state
+		if(r_decl_stmt(root))
+			return true;
+		current_idx=t_idx;//restore state
+		if(!r_comma_expr(root))
+			return false;
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return -1;
-		return root;
+			return false;
+		return true;
 	}
 //statement
 //  : compound.statement
@@ -3117,149 +3565,382 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //  | DEFAULT ':' statement
 //  | Identifier ':' statement
 //  | expr.statement
-	int			r_statement(int parent)
+	bool		r_statement(IRNode *&root)
 	{
 		switch(LOOK_AHEAD(0))
 		{
 		case CT_LBRACE:
-			return r_compoundstatement(parent);
+			return r_compoundstatement(root);
 		case CT_TYPEDEF:
-			return r_typedef(parent);
+			return r_typedef(root);
 		case CT_IF:
-			return r_if(parent);
+			return r_if(root);
 		case CT_SWITCH:
-			return r_switch(parent);
+			return r_switch(root);
 		case CT_WHILE:
-			return r_while(parent);
+			return r_while(root);
 		case CT_DO:
-			return r_do_while(parent);
+			return r_do_while(root);
 		case CT_FOR:
-			return r_for(parent);
+			return r_for(root);
 		case CT_TRY:
-			return r_try_catch(parent);
+			return r_try_catch(root);
 		case CT_BREAK:
+			ADVANCE;
+			INSERT_LEAF(root, CT_BREAK, nullptr);
+			break;
 		case CT_CONTINUE:
-			{
-				IRNode *node=nullptr;
-				return append_node(LOOK_AHEAD(0), parent, node);
-			}
+			ADVANCE;
+			INSERT_LEAF(root, CT_CONTINUE, nullptr);
+			break;
 		case CT_RETURN:
 			{
-				++current_idx;
-				IRNode *node=nullptr;
-				int root=append_node(CT_RETURN, parent, node);
+				ADVANCE;
+				INSERT_LEAF(root, CT_RETURN, nullptr);
+
+				if(LOOK_AHEAD(0)==CT_SEMICOLON)
+					return true;
+				root->children.push_back(nullptr);
+				if(!r_comma_expr(root->children.back()))
+					return free_tree(root);
 				if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-					r_comma_expr(root);
-				if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-					return -1;//TODO: error: expected a semicolon		TODO: clean parent from inserted children
-				++current_idx;
-				return root;
+					return free_tree(root);//TODO: error: expected a semicolon
+				ADVANCE;
 			}
 			break;
 		case CT_GOTO:
 			{
-				++current_idx;
+				ADVANCE;
 				if(LOOK_AHEAD(0)!=CT_ID||LOOK_AHEAD(1)!=CT_SEMICOLON)
-					return -1;
-				IRNode *node=nullptr;
-				int root=append_node(CT_GOTO, parent, node);
-				node->sdata=current_ex->operator[](current_idx).sdata;//TODO: maintain labels inside this function
-				current_idx+=2;
+					return false;
+				auto t=&LOOK_AHEAD_TOKEN(0);
+				ADVANCE_BY(2);
+				INSERT_LEAF(root, CT_GOTO, t->sdata);//TODO: maintain labels inside this function
 			}
 			break;
 		case CT_CASE:
+			ADVANCE;
+			INSERT_LEAF(root, CT_CASE, nullptr);
+			root->children.push_back(nullptr);
+			if(!r_assign_expr(root->children.back()))
+				return free_tree(root);
+			if(LOOK_AHEAD(0)!=CT_COLON)
 			{
-				++current_idx;
-				IRNode *node=nullptr;
-				int root=append_node(CT_CASE, parent, node);
-				int child=r_assign_expr(root);
-				if(LOOK_AHEAD(0)!=CT_COLON)
-				{
-					//TODO: error: expected a colon
-					return -1;
-				}
-				++current_idx;
-				link_nodes(root, child);//TODO: use link_nodes() instead of IRNode::children.push_back()
-				return root;
+				//TODO: error: expected a colon
+				return free_tree(root);
 			}
+			ADVANCE;
+			break;
 		case CT_DEFAULT:
+			if(LOOK_AHEAD(1)!=CT_COLON)
 			{
-				++current_idx;
-				if(LOOK_AHEAD(0)!=CT_COLON)
-				{
-					//TODO: error: expected a colon
-					return -1;
-				}
-				IRNode *node=nullptr;
-				int root=append_node(CT_DEFAULT, parent, node);
+				//TODO: error: expected a colon
+				return false;
 			}
+			ADVANCE_BY(2);
+			INSERT_LEAF(root, CT_DEFAULT, nullptr);
 			break;
 		case CT_ID://label for goto
 			if(LOOK_AHEAD(1)==CT_COLON)
 			{
-				IRNode *node=nullptr;
-				int root=append_node(PT_JUMPLABEL, parent, node);
-				node->sdata=current_ex->operator[](current_idx).sdata;
-				current_idx+=2;
-				return root;
-				//return r_statement(parent);//non-standard: statement not required after label
+				INSERT_LEAF(root, PT_JUMPLABEL, LOOK_AHEAD_TOKEN(0).sdata);
+				ADVANCE_BY(2);
+				return true;//non-standard: statement not required after label
 			}
 			//no break
 		default:
-			return r_expr_stmt(parent);
+			return r_expr_stmt(root);
 		}
-		return -1;
+		return true;
 	}
-	int			r_compoundstatement(int parent)//compound.statement  :=  '{' (statement)* '}'
+	bool		r_compoundstatement(IRNode *&root)//compound.statement  :=  '{' (statement)* '}'
 	{
 		auto t=LOOK_AHEAD(0);
 		if(t!=CT_LBRACE)
-			return -1;
-		++current_idx;
-		t=LOOK_AHEAD(0);
+			return false;
+		//delayed advance
+
+		t=LOOK_AHEAD(1);
 		if(t!=CT_RBRACE)
 		{
-			IRNode *node=nullptr;
-			int root=append_node(PT_CODE_BLOCK, parent, node);
+			ADVANCE;
+			INSERT_LEAF(root, PT_CODE_BLOCK, nullptr);
 			do
 			{
-				int child=r_statement(parent);
-				if(child==-1)
+				root->children.push_back(nullptr);
+				if(!r_statement(root->children.back()))
 				{
 					skip_till_after(CT_RBRACE);//TODO: error: expected a statement
-					return -1;
+					return free_tree(root);
 				}
-				node->children.push_back(child);
 				t=LOOK_AHEAD(0);
 			}while(t!=CT_RBRACE);
-			return root;
 		}
-		return -1;
+		ADVANCE;
+		return true;
 	}
-	int			r_declarator2(int parent)
+
+	bool		r_arg_decllist(IRNode *&root)//arg.decl.list  :=  empty  |  arg.declaration ( ',' arg.declaration )* {{ ',' } Ellipses}
 	{
-		return -1;
+		INSERT_LEAF(root, PT_DECL_LIST, nullptr);
+		for(;;)
+		{
+			auto t=LOOK_AHEAD(0);
+			if(t==CT_RPR)
+			{
+				root->children.push_back(new IRNode(CT_VOID, CT_IGNORED));
+				break;
+			}
+			if(t==CT_ELLIPSIS)
+			{
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_ELLIPSIS, CT_IGNORED));
+				break;
+			}
+			root->children.push_back(nullptr);
+			if(!r_arg_declaration(root->children.back()))
+				return free_tree(root);
+			t=LOOK_AHEAD(0);
+			if(t==CT_COMMA)
+				ADVANCE;
+			else if(t!=CT_RPR&&t!=CT_ELLIPSIS)
+				return free_tree(root);
+		}
+		return true;
 	}
-	int			r_declaratorwithinit(int parent)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}
+//arg.decl.list.or.init
+//  : arg.decl.list
+//  | function.arguments
+//
+//  This rule accepts function.arguments to parse declarations like: Point p(1, 3);
+//  "(1, 3)" is arg.decl.list.or.init.
+	bool		r_arg_decllist_or_init(IRNode *&root, bool &is_args, bool maybe_init)
+	{
+		int idx=current_idx;//save state
+		if(maybe_init)
+		{
+			if(r_func_args(root))
+			{
+				if(LOOK_AHEAD(0)==CT_RPR)
+				{
+					is_args=false;
+					return true;
+				}
+			}
+			current_idx=idx;//restore state
+			return is_args=r_arg_decllist(root);
+		}
+		if(is_args=r_arg_decllist(root))
+			return true;
+		current_idx=idx;//restore state
+		return r_func_args(root);
+	}
+	bool		r_opt_throw_decl(IRNode *&root)//throw.decl  :=  THROW '(' (name {','})* {name} ')'
+	{
+		if(LOOK_AHEAD(0)==CT_THROW)
+		{
+			ADVANCE;
+
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return false;
+			ADVANCE;
+
+			INSERT_LEAF(root, CT_THROW, nullptr);
+			for(;;)
+			{
+				auto t=LOOK_AHEAD(0);
+				if(t==CT_IGNORED)//what.
+					return false;
+				
+				if(t==CT_RPR)
+					break;
+
+				root->children.push_back(nullptr);
+				if(!r_name(root->children.back()))
+					return free_tree(root);
+			}
+
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(root);
+			ADVANCE;
+		}
+		return true;
+	}
+	bool		r_member_init(IRNode *&root)//member.init  :=  name '(' function.arguments ')'
+	{
+		INSERT_LEAF(root, PR_MEMBER_INIT, nullptr);
+
+		root->children.push_back(nullptr);
+		if(!r_name(root->children.back()))
+			return free_tree(root);
+
+		//TODO: qualified name lookup
+
+		if(LOOK_AHEAD(0)!=CT_LPR)
+			return free_tree(root);
+		ADVANCE;
+
+		root->children.push_back(nullptr);
+		if(!r_func_args(root->children.back()))
+			return free_tree(root);
+		
+		if(LOOK_AHEAD(0)!=CT_RPR)
+			return free_tree(root);
+		ADVANCE;
+
+		return true;
+	}
+	bool		r_member_initializers(IRNode *&root)//member.initializers  :=  ':' member.init (',' member.init)*
+	{
+		if(LOOK_AHEAD(0)!=CT_COLON)
+			return false;
+
+		INSERT_LEAF(root, PT_MEMBER_INIT_LIST, nullptr);
+
+		for(;;)
+		{
+			root->children.push_back(nullptr);
+			if(!r_member_init(root->children.back()))
+				return free_tree(root);
+
+			if(LOOK_AHEAD(0)!=CT_COMMA)
+				break;
+			ADVANCE;
+		}
+		return true;
+	}
+//declarator
+//  : (ptr.operator)* (name | '(' declarator ')') ('[' comma.expression ']')* {func.args.or.init}
+//
+//func.args.or.init
+//  : '(' arg.decl.list.or.init ')' {cv.qualify} {throw.decl} {member.initializers}
+//
+//  Note: We assume that '(' declarator ')' is followed by '(' or '['.
+//	This is to avoid accepting a function call F(x) as a pair of a type F and a declarator x.
+//	This assumption is ignored if should_be_declarator is true.
+//
+//  Note: An argument declaration list and a function-style initializer take a different Ptree structure.
+//	e.g.
+//	    int f(char) ==> .. [f ( [[[char] 0]] )]
+//	    Point f(1)  ==> .. [f [( [1] )]]
+//
+//  Note: is_statement changes the behavior of rArgDeclListOrInit().
+	bool		r_declarator2(IRNode *&root, bool should_be_declarator, int kind, bool is_statement)
+	{
+		INSERT_LEAF(root, PT_FUNC_DECL, nullptr);//children: {???}
+
+		root->children.push_back(nullptr);
+		if(!r_opt_ptr_operator(root->children.back()))
+			return free_tree(root);
+
+		auto t=LOOK_AHEAD(0);
+		if(t==CT_LPR)
+		{
+			root->children.push_back(nullptr);
+			if(!r_declarator2(root->children.back(), true, kind, false)||LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(root);
+			ADVANCE;
+
+			if(!should_be_declarator)
+			{
+				if(kind==DECLKIND_NORMAL&&!root->children[0])
+				{
+					t=LOOK_AHEAD(0);
+					if(t!=CT_LPR&&t!=CT_LBRACKET)
+						return free_tree(root);
+				}
+			}
+		}
+		else if(kind!=DECLKIND_CAST&&(kind==DECLKIND_NORMAL||t==CT_ID||t==CT_SCOPE))
+		{
+			if(t==CT_CDECL||t==CT_THISCALL||t==CT_STDCALL)
+				ADVANCE;
+			root->children.push_back(nullptr);
+			if(!r_name(root->children.back()))
+				return free_tree(root);
+		}
+
+		for(;;)
+		{
+			t=LOOK_AHEAD(0);
+			if(t==CT_LPR)//function
+			{
+				ADVANCE;
+
+				bool is_args=true;
+				if(LOOK_AHEAD(0)==CT_RPR)
+				{
+					//f(void)
+				}
+				else
+				{
+					root->children.push_back(nullptr);
+					if(!r_arg_decllist_or_init(root->children.back(), is_args, is_statement)||LOOK_AHEAD(0)!=CT_RPR)
+						return free_tree(root);
+				}
+				ADVANCE;
+
+				if(is_args)
+				{
+					root->children.push_back(nullptr);
+					if(!r_opt_cv_qualify(root->children.back()))
+						return free_tree(root);
+				}
+				
+				root->children.push_back(nullptr);
+				if(!r_opt_throw_decl(root->children.back()))
+					return free_tree(root);
+
+				if(LOOK_AHEAD(0)==CT_COLON)
+				{
+					root->children.push_back(nullptr);
+					if(!r_member_initializers(root->children.back()))
+						return free_tree(root);
+				}
+
+				break;//T f(int)(char) is invalid
+			}
+			else if(t==CT_LBRACKET)//array
+			{
+				ADVANCE;
+
+				if(LOOK_AHEAD(0)!=CT_RBRACKET)
+				{
+					root->children.push_back(nullptr);
+					if(!r_comma_expr(root->children.back()))
+						return free_tree(root);
+				}
+				if(LOOK_AHEAD(0)!=CT_RBRACKET)
+					return free_tree(root);
+			}
+			else
+				break;
+		}
+		return true;
+	}
+	bool		r_declaratorwithinit(IRNode *&root, bool should_be_declarator, bool is_statement)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}		can be inlined
 	{
 		if(LOOK_AHEAD(0)==CT_COLON)//bit field
 		{
-			if(!r_assign_expr(parent))
+			ADVANCE;
+
+			if(!r_assign_expr(root))
 				return false;
 		}
 		else
 		{
-			if(!r_declarator2(parent))
+			if(!r_declarator2(root, should_be_declarator, DECLKIND_NORMAL, is_statement))
 				return false;
 			switch(LOOK_AHEAD(0))
 			{
 			case CT_ASSIGN:
-				++current_idx;
-				if(!r_initialize_expr(parent))
+				ADVANCE;
+				root->children.push_back(nullptr);
+				if(!r_initialize_expr(root->children.back()))
 					return false;
 				break;
-			case CT_COLON:
-				++current_idx;
+			case CT_COLON://bit field
+				ADVANCE;
 				break;
 			default:
 				break;
@@ -3267,69 +3948,215 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		return true;
 	}
-	int			r_declarators(int parent)//declarators := declarator.with.init (',' declarator.with.init)*
+	bool		r_declarators(IRNode *&root, bool should_be_declarator, bool is_statement)//declarators := declarator.with.init (',' declarator.with.init)*
 	{
+		INSERT_LEAF(root, PT_DECLARATORS, nullptr);
 		for(;;)
 		{
-			if(!r_declaratorwithinit(parent))
-				return false;
+			root->children.push_back(nullptr);
+			if(!r_declaratorwithinit(root->children.back(), should_be_declarator, is_statement))
+				return free_tree(root);
+
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				break;
+			ADVANCE;
 		}
 		return true;
 	}
-	int			r_declaration(int parent)
+	bool		is_constructor_or_decl()//returns true for an declaration like: T (a);
 	{
-		int decl_idx=ir_size;
-		IRNode *node=nullptr;
-		append_node(CT_IGNORED, parent, node);
-		int member=ir_size;
-		if(!r_opt_member_spec(decl_idx))
+		if(LOOK_AHEAD(0)!=CT_LPR)
 			return false;
-		if(member>=ir_size)
-			member=-1;
-		if(!r_opt_storage_spec(decl_idx))
-			return false;
-		if(member==-1)
+		switch(LOOK_AHEAD(1))
 		{
-			if(!r_opt_member_spec(decl_idx))
+		case CT_ASTERIX:
+		case CT_AMPERSAND:
+		case CT_LPR:
+			return false;
+		case CT_CONST:
+		case CT_VOLATILE:
+			return true;
+		}
+		return !is_ptr_to_member(1);
+	}
+	bool		r_constructor_decl(IRNode *&root)//constructor.decl  :=  '(' {arg.decl.list} ')' {cv.qualify} {throw.decl} {member.initializers} {'=' Constant}
+	{
+		if(LOOK_AHEAD(0)!=CT_LPR)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, PT_FUNC_DECL, nullptr);
+		//INSERT_LEAF(root, PT_CONSTRUCTOR_DECL, nullptr);
+
+		if(LOOK_AHEAD(0)!=CT_RPR)
+		{
+			root->children.push_back(nullptr);
+			if(!r_arg_decllist(root->children.back())||LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(root);
+		}
+		ADVANCE;
+		
+		root->children.push_back(nullptr);
+		if(!r_opt_cv_qualify(root->children.back()))
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)==CT_COLON)
+		{
+			root->children.push_back(nullptr);
+			if(!r_member_initializers(root->children.back()))
+				return free_tree(root);
+		}
+		if(LOOK_AHEAD(0)==CT_ASSIGN)
+		{
+			ADVANCE;
+			auto t=LOOK_AHEAD(0);
+			switch(t)
+			{
+			case CT_DEFAULT:
+			case CT_DELETE://TODO: check for other keywords
+				root->children.push_back(new IRNode(t, CT_IGNORED));
+				break;
+			default:
+				return free_tree(root);
+			}
+		}
+		return true;
+	}
+//declaration
+//  : integral.declaration
+//  | const.declaration
+//  | other.declaration
+//
+//decl.head
+//  : {member.spec} {storage.spec} {member.spec} {cv.qualify}
+//
+//integral.declaration
+//  : integral.decl.head declarators (';' | function.body)
+//  | integral.decl.head ';'
+//  | integral.decl.head ':' expression ';'
+//
+//integral.decl.head
+//  : decl.head integral.type.or.class.spec {cv.qualify}
+//
+//other.declaration
+//  : decl.head name {cv.qualify} declarators (';' | function.body)
+//  | decl.head name constructor.decl (';' | function.body)
+//  | FRIEND name ';'
+//
+//const.declaration
+//  : cv.qualify {'*'} Identifier '=' expression {',' declarators} ';'
+	bool		r_declaration(IRNode *&root)
+	{
+		INSERT_LEAF(root, PT_DECLARATION, nullptr);//children: {???}		TODO: organize structure
+		root->children.assign(2, nullptr);
+
+		if(!r_opt_member_spec(root->children[0])||!r_opt_storage_spec(root->children[1]))
+			return free_tree(root);
+
+		if(!root->children[0])
+		{
+			root->children.push_back(nullptr);
+			if(!r_opt_member_spec(root->children.back()))
 				return false;
 		}
-		int cv_idx=ir_size;
-		r_opt_cv_qualify(decl_idx);
-		if(cv_idx>=ir_size)
-			cv_idx=-1;
+		
+		root->children.push_back(nullptr);
+		if(!r_opt_cv_qualify(root->children.back()))
+			return free_tree(root);
 
-		int opt_spec=ir_size;
-		if(!r_opt_int_type_or_class_spec(decl_idx))
-			return false;
-		if(opt_spec>=ir_size)
-			opt_spec=-1;
-		if(opt_spec!=-1)
+		root->children.push_back(nullptr);
+		if(!r_opt_int_type_or_class_spec(root->children.back()))
+			return free_tree(root);
+
+		if(root->children.back())
 		{
-			//int declaration
-			int cv_idx2=ir_size;
-			r_opt_cv_qualify(parent);
-			if(cv_idx2>=ir_size)
-				cv_idx2=-1;
+			//root->children.push_back(nullptr);
+			//if(!r_int_declaration(root->children.back()))//got inlined
+			//	return free_tree(root);
+
+			//r_int_declaration() inlined
+			root->children.push_back(nullptr);
+			if(!r_opt_cv_qualify(root->children.back()))
+				return free_tree(root);
+
 			switch(LOOK_AHEAD(0))
 			{
 			case CT_SEMICOLON:
+				ADVANCE;
 				break;
-			case CT_COLON:
+			case CT_COLON://bit field
+				ADVANCE;
+				root->children.push_back(nullptr);
+				if(!r_assign_expr(root->children.back())||LOOK_AHEAD(0)!=CT_SEMICOLON)
+					return free_tree(root);
+				ADVANCE;
 				break;
 			default:
-				if(!r_declarators(parent))
-					return false;
-				if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+				root->children.push_back(nullptr);
+				if(!r_declarators(root->children.back(), true, false))
+					return free_tree(root);
+				if(LOOK_AHEAD(0)==CT_SEMICOLON)
+					ADVANCE;
+				else
 				{
-					if(!r_compoundstatement(parent))
-						return false;
+					root->children.push_back(nullptr);
+					if(!r_compoundstatement(root->children.back()))
+						return free_tree(root);
 				}
 				break;
 			}
+			return true;
 		}
-			//return r_opt_int_type_or_class_spec(decl_idx);
+
+		auto t=LOOK_AHEAD(0);
+		root->children.push_back(nullptr);
+		if(*(root->children.end()-3)&&(t==CT_ID&&LOOK_AHEAD(1)==CT_ASSIGN||t==CT_ASTERIX))
+			return r_const_decl(root->children.back());
+		//return r_other_decl(root->children.back());//inlined below
+
+		auto r2=root->children.back();
+
+		INSERT_LEAF(r2, PT_VAR_DECL, nullptr);
+
+		r2->children.push_back(nullptr);
+		if(!r_name(r2->children.back()))
+			return free_tree(root);
+
+		if(!*(root->children.end()-3)&&is_constructor_or_decl())
+		{
+			r2->children.push_back(nullptr);
+			if(!r_constructor_decl(r2->children.back()))
+				return free_tree(root);
+		}
+		else if(root->children[0]&&LOOK_AHEAD(0)==CT_SEMICOLON)
+		{
+			//friend name ;
+			if(root->children[0]->type==CT_FRIEND)
+			{
+				ADVANCE;
+				return true;
+			}
+			return free_tree(root);
+		}
+		else
+		{
+			r2->children.push_back(nullptr);
+			if(!r_opt_cv_qualify(r2->children.back()))
+				return free_tree(root);
+
+			r2->children.push_back(nullptr);
+			if(!r_declarators(r2->children.back(), false, false))
+				return free_tree(root);
+		}
+
+		if(LOOK_AHEAD(0)==CT_SEMICOLON)
+			ADVANCE;
+		else
+		{
+			r2->children.push_back(nullptr);
+			if(!r_compoundstatement(r2->children.back()))
+				return free_tree(root);
+		}
 		return true;
 	}
 
@@ -3337,45 +4164,71 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//	:	CLASS Identifier ['=' type.name]
 	//	|	type.specifier arg.declarator ['=' additive.expr]
 	//	|	template.decl2 CLASS Identifier ['=' type.name]
-	int			r_template_arg_decl(int parent)
+	bool		r_template_arg_decl(IRNode *&root)
 	{
 		auto t=LOOK_AHEAD(0);
 		if(t==CT_CLASS&&LOOK_AHEAD(1)==CT_ID)
 		{
-			current_idx+=2;
+			INSERT_LEAF(root, PT_TEMPLATE_ARG, LOOK_AHEAD_TOKEN(1).sdata);
+			ADVANCE_BY(2);
 			if(LOOK_AHEAD(0)==CT_ASSIGN)
 			{
-				if(!r_typename(parent))
-					return false;
+				ADVANCE;
+				root->children.push_back(nullptr);
+				if(!r_typename(root->children.back()))
+					return free_tree(root);
 			}
 		}
 		else if(t==CT_TEMPLATE)
 		{
+			ADVANCE;
 			auto templatetype=TEMPLATE_UNKNOWN;
-			if(!r_template_decl2(parent, templatetype))
+			if(!r_template_decl2(root, templatetype))
 				return false;
-			auto t0=LOOK_AHEAD(0), t1=LOOK_AHEAD(1);
-			if(t0!=CT_CLASS||t1!=CT_ID)
-				return false;
-			current_idx+=1+(t0==CT_CLASS);
+			t=LOOK_AHEAD(0);
+			if(t!=CT_CLASS||LOOK_AHEAD(1)!=CT_ID)
+				return free_tree(root);
+			ADVANCE_BY(1+(t==CT_CLASS));
+			if(LOOK_AHEAD(0)==CT_ASSIGN)
+			{
+				ADVANCE;
+				root->children.push_back(nullptr);
+				if(!r_typename(root->children.back()))
+					return free_tree(root);
+			}
 		}
 		else
 		{
+			if(!r_typespecifier(root))
+				return false;
+			root->children.push_back(nullptr);
+			if(!r_declarator2(root->children.back(), true, DECLKIND_ARG, false))
+				return free_tree(root);
+			if(LOOK_AHEAD(0)==CT_ASSIGN)
+			{
+				ADVANCE;
+				root->children.push_back(nullptr);
+				if(!r_additive(root->children.back()))
+					return free_tree(root);
+			}
 		}
 		return true;
 	}
-	int			r_template_arglist(int parent)//temp.arg.list  :=  empty  |  temp.arg.declaration (',' temp.arg.declaration)*
+	bool		r_template_arglist(IRNode *&root)//temp.arg.list  :=  empty  |  temp.arg.declaration (',' temp.arg.declaration)*
 	{
 		auto t=LOOK_AHEAD(0);
-		if(t==CT_GREATER||t==CT_SHIFT_RIGHT)
+		if(t==CT_GREATER||t==CT_SHIFT_RIGHT)//TODO: absorb one chevron in case of >>, or leave a flag
 			return true;
-		if(!r_template_arg_decl(parent))
-			return false;
-		while(LOOK_AHEAD(0)==CT_COMMA)
+		INSERT_LEAF(root, PT_TEMPLATE_ARG_LIST, nullptr);
+		for(;;)
 		{
-			++current_idx;
-			if(!r_template_arg_decl(parent))
-				return false;
+			root->children.push_back(nullptr);
+			if(!r_template_arg_decl(root->children.back()))
+				return free_tree(root);
+
+			if(LOOK_AHEAD(0)!=CT_COMMA)
+				break;
+			ADVANCE;
 		}
 		return true;
 	}
@@ -3394,23 +4247,23 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//
 	//     template <> int count(String x) { return x.length; }
 	//
-	int			r_template_decl2(int parent, TemplateDeclarationType &templatetype)
+	bool		r_template_decl2(IRNode *&root, TemplateDeclarationType &templatetype)
 	{
 		if(LOOK_AHEAD(0)!=CT_TEMPLATE)
 			return false;
-		++current_idx;
+		ADVANCE;
+		INSERT_LEAF(root, CT_TEMPLATE, nullptr);
 		if(LOOK_AHEAD(0)!=CT_LESS)//template instantiation
 		{
 			templatetype=TEMPLATE_INSTANTIATION;
 			return true;
 		}
-		++current_idx;
-		int arg_idx=ir_size;
-		if(!r_template_arglist(parent))
-			return false;
-		if(arg_idx>=ir_size)
-			arg_idx=-1;
-		auto &t=LOOK_AHEAD(0);
+		ADVANCE;
+
+		root->children.push_back(nullptr);
+		if(!r_template_arglist(root->children.back()))
+			return free_tree(root);
+		auto &t=LOOK_AHEAD(0);				//TODO: don't modify the source code
 		switch(t)
 		{
 		case CT_LESS:
@@ -3419,73 +4272,257 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			t=CT_LESS;
 			break;
 		default:
-			return false;
+			return free_tree(root);
 		}
 		while(LOOK_AHEAD(0)==CT_TEMPLATE)//ignore nested template	TODO: support nested templates
 		{
-			++current_idx;
+			ADVANCE;
 			if(LOOK_AHEAD(0)!=CT_LESS)
 				break;
-			++current_idx;
-			if(!r_template_arglist(parent))
-				return false;
-			if(LOOK_AHEAD(0)!=CT_GREATER)
+			ADVANCE;
+			root->children.push_back(nullptr);
+			if(!r_template_arglist(root->children.back()))
+				return free_tree(root);
+			auto t2=LOOK_AHEAD(0);
+			if(t2!=CT_GREATER&&t2!=CT_SHIFT_RIGHT)
 			{
-				++current_idx;
-				return false;
+				ADVANCE;
+				return free_tree(root);
 			}
 		}
-		if(arg_idx==-1)
+		if(root->children[0])
 			templatetype=TEMPLATE_SPECIALIZATION;//template < > declaration
 		else
 			templatetype=TEMPLATE_DECLARATION;//template < ... > declaration
 		return true;
 	}
-	int			r_template_decl(int parent)
+//template.decl
+//  : TEMPLATE '<' temp.arg.list '>' declaration
+//  | TEMPLATE declaration
+//  | TEMPLATE '<' '>' declaration
+	bool		r_template_decl(IRNode *&root)
 	{
-		auto &templatetoken=current_ex->operator[](current_idx);
 		auto templatetype=TEMPLATE_UNKNOWN;
-		if(!r_template_decl2(parent, templatetype))
+		if(!r_template_decl2(root, templatetype))
 			return false;
-		if(!r_declaration(parent))
+
+		root->children.push_back(nullptr);
+		if(!r_declaration(root->children.back()))
+			return free_tree(root);
+		//switch(templatetype)
+		//{
+		//case TEMPLATE_INSTANTIATION:
+		//	//TODO
+		//	break;
+		//case TEMPLATE_SPECIALIZATION:
+		//case TEMPLATE_DECLARATION:
+		//	//TODO
+		//	break;
+		//default:
+		//	//error_pp(templatetoken, "Unknown template");
+		//	break;//recover
+		//}
+		return true;
+	}
+	bool		r_extern_template_decl(IRNode *&root)//extern.template.decl  :=  EXTERN TEMPLATE declaration
+	{
+		if(LOOK_AHEAD(0)!=CT_EXTERN||LOOK_AHEAD(1)!=CT_TEMPLATE)
 			return false;
-		switch(templatetype)
+		ADVANCE_BY(2);
+
+		INSERT_LEAF(root, PT_EXTERN_TEMPLATE, nullptr);
+
+		root->children.push_back(nullptr);
+		return r_declaration(root->children.back());
+	}
+
+	bool		r_linkage_body(IRNode *&root)//linkage.body  :=  '{' (definition)* '}'
+	{
+		if(LOOK_AHEAD(0)!=CT_LBRACE)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, PT_LINKAGE_BODY, nullptr);
+
+		while(LOOK_AHEAD(0)!=CT_RBRACE)
 		{
-		case TEMPLATE_INSTANTIATION:
-			//TODO
+			root->children.push_back(nullptr);
+			if(!r_definition(root->children.back()))
+			{
+				skip_till_after(CT_RBRACE);
+				return false;
+			}
+		}
+		ADVANCE;
+		return true;
+	}
+//namespace.spec
+//  :  NAMESPACE Identifier definition
+//  |  NAMESPACE { Identifier } linkage.body
+	bool		r_namespace_spec(IRNode *&root)
+	{
+		if(LOOK_AHEAD(0)!=CT_NAMESPACE)
+			return false;
+		ADVANCE;
+
+		INSERT_LEAF(root, CT_NAMESPACE, nullptr);//children: {definition}, sdata=name
+		root->children.push_back(nullptr);
+
+		auto t=&LOOK_AHEAD_TOKEN(0);
+		if(t->type==CT_ID)
+		{
+			ADVANCE;
+			root->sdata=t->sdata;
+			t=&LOOK_AHEAD_TOKEN(0);
+		}
+		if(t->type!=CT_LBRACE)
+			return free_tree(root);
+		return r_linkage_body(root);
+	}
+	bool		r_namespace_alias(IRNode *&root)//namespace.alias  :=  NAMESPACE Identifier '=' Identifier ';'
+	{
+		auto t=&LOOK_AHEAD_TOKEN(1);
+		if(LOOK_AHEAD(0)!=CT_NAMESPACE||t->type!=CT_ID||LOOK_AHEAD(2)!=CT_ASSIGN)
+			return false;
+		ADVANCE_BY(3);
+
+		INSERT_LEAF(root, PT_NAMESPACE_ALIAS, t->sdata);//children: {newname, name[0]::...::name[n-1]}
+		if(LOOK_AHEAD(0)==CT_SCOPE)
+		{
+			ADVANCE;
+			root->children.push_back(new IRNode(CT_SCOPE, CT_IGNORED));
+		}
+
+		for(;;)
+		{
+			t=&LOOK_AHEAD_TOKEN(0);
+			if(t->type!=CT_ID)
+				return free_tree(root);
+			ADVANCE;
+			root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
+			if(LOOK_AHEAD(0)!=CT_SCOPE)
+				break;
+			ADVANCE;
+		}
+		
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(root);
+
+		return true;
+	}
+	bool		r_using(IRNode *&root)//using.declaration : USING { NAMESPACE } name ';'
+	{
+		if(LOOK_AHEAD(0)!=CT_USING)
+			return false;
+		INSERT_LEAF(root, CT_USING, nullptr);//children: {[namespace], name}
+		root->children.assign_pod(2, nullptr);
+		if(LOOK_AHEAD(0)==CT_NAMESPACE)
+		{
+			ADVANCE;
+			root->children[0]=new IRNode(CT_NAMESPACE, CT_IGNORED);
+		}
+		if(!r_name(root->children[1])||LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(root);
+		ADVANCE;
+		return true;
+	}
+
+//linkage.spec
+//  :  EXTERN StringL definition
+//  |  EXTERN StringL linkage.body
+	bool		r_linkage_spec(IRNode *&root)
+	{
+		auto t=&LOOK_AHEAD_TOKEN(1);
+		if(LOOK_AHEAD(0)!=CT_EXTERN||t->type!=CT_VAL_STRING_LITERAL)
+			return false;
+		ADVANCE_BY(2);
+
+		INSERT_LEAF(root, CT_EXTERN, t->sdata);//children: {definition/linkage_body}
+		root->children.push_back(nullptr);
+
+		if(LOOK_AHEAD(0)==CT_LBRACE)
+		{
+			if(!r_linkage_body(root->children.back()))
+				return free_tree(root);
+		}
+		else if(r_definition(root->children.back()))
+			return free_tree(root);
+		return true;
+	}
+//metaclass.decl  :=  METACLASS Identifier {{':'} Identifier {'(' meta.arguments ')'}} ';'
+//
+//  OpenC++ allows two kinds of syntax:
+//
+//  metaclass <metaclass> <class>(...);
+//  metaclass <metaclass>;
+//  metaclass <class> : <metaclass>(...);		// for backward compatibility		TODO: remove this line
+	bool		r_metaclass_decl(IRNode *&root)
+	{
+		auto t=LOOK_AHEAD(0);
+		if(t!=CT_ENUM&&t!=CT_STRUCT&&t!=CT_CLASS&&t!=CT_UNION)
+			return false;
+		auto t2=&LOOK_AHEAD_TOKEN(1);
+		if(t2->type!=CT_ID)
+			return false;
+		ADVANCE_BY(2);
+
+		INSERT_LEAF(root, PT_DECLARATION, nullptr);//children: {???}
+		root->children.assign_pod(2);
+
+		root->children[0]=new IRNode(t, CT_IGNORED);
+		root->children[1]=new IRNode(CT_ID, CT_IGNORED, t2->sdata);
+		t2=&LOOK_AHEAD_TOKEN(0);
+		switch(t2->type)
+		{
+		case CT_ID:
+			ADVANCE;
+			root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t2->sdata));
 			break;
-		case TEMPLATE_SPECIALIZATION:
-		case TEMPLATE_DECLARATION:
-			//TODO
+		case CT_COLON:
+			ADVANCE;
+			root->children.push_back(new IRNode(CT_COLON, CT_IGNORED));
+
+			t2=&LOOK_AHEAD_TOKEN(0);
+			if(t2->type!=CT_ID)
+				return free_tree(root);
+			ADVANCE;
+			root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t2->sdata));
+			break;
+		case CT_SEMICOLON:
 			break;
 		default:
-			error_pp(templatetoken, "Unknown template");
-			break;//recover
+			return free_tree(root);
 		}
 		return true;
 	}
-	int			r_definition(int parent)//OpenC++
+	bool		r_definition(IRNode *&root)
 	{
 		switch(LOOK_AHEAD(0))
 		{
 		case CT_SEMICOLON://null declaration
-			++current_idx;
+			ADVANCE;
 			break;
+
 		case CT_TYPEDEF:
-			return r_typedef(parent);
+			return r_typedef(root);
+
 		case CT_TEMPLATE:
-			return r_template_decl(parent);
-		case CT_CLASS:
+			return r_template_decl(root);
+
+		case CT_ENUM:
 		case CT_STRUCT:
+		case CT_CLASS:
 		case CT_UNION:
-			break;
+			return r_metaclass_decl(root);
+
 		case CT_EXTERN:
 			switch(LOOK_AHEAD(1))
 			{
 			case CT_VAL_STRING_LITERAL:
-				break;
+				return r_linkage_spec(root);
 			case CT_TEMPLATE:
-				break;
+				return r_extern_template_decl(root);
+
 				//variable/function declaration
 			case CT_CONSTEXPR:case CT_INLINE:
 			case CT_STATIC:case CT_REGISTER:
@@ -3497,16 +4534,20 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			case CT_CHAR:case CT_SHORT:case CT_INT:case CT_LONG:
 			case CT_FLOAT:case CT_DOUBLE:
 			case CT_WCHAR_T:case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
-				return r_declaration(parent);
+				return r_declaration(root);
 			default:
 				parse_error("Expected an extern declaration");
 				return false;
 			}
 			break;
+
 		case CT_NAMESPACE:
-			break;
+			if(LOOK_AHEAD(1)==CT_ASSIGN)
+				return r_namespace_alias(root);
+			return r_namespace_spec(root);
+
 		case CT_USING:
-			break;
+			return r_using(root);
 
 			//variable/function declaration
 		case CT_CONSTEXPR:
@@ -3531,7 +4572,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_INT16:
 		case CT_INT32:
 		case CT_INT64:
-			return r_declaration(parent);
+			return r_declaration(root);
 
 		default:
 			parse_error("Expected a declaration");
@@ -3541,37 +4582,117 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	}
 #undef			LOOK_AHEAD
 }
-void			parse_cplusplus(Expression &ex, std::vector<IRNode> &ir)//OpenC++
+inline void		token2str(CTokenType t, std::string &str)
+{
+	switch(t)
+	{
+#define		TOKEN(STR, LABEL, FLAG)		case LABEL:str+=#LABEL;break;
+#include	"acc2_keywords_c.h"
+#undef		TOKEN
+	}
+}
+void			AST2str(IRNode *root, std::string &str, int depth=0)
+{
+	if(root)
+	{
+		sprintf_s(g_buf, g_buf_size, "%5d", depth);
+		str+=g_buf;
+		for(int k=0;k<depth;++k)
+			str+='|';
+		token2str(root->type, str);
+		if(root->opsign!=CT_IGNORED)
+		{
+			str+='\t';
+			token2str(root->opsign, str);//TODO
+		}
+		switch(root->type)
+		{
+		case CT_ID:
+		case CT_CLASS:case CT_STRUCT:case CT_UNION:
+		case CT_GOTO:case PT_JUMPLABEL:
+		case PT_TEMPLATE_ARG:
+		case CT_NAMESPACE:case PT_NAMESPACE_ALIAS:
+			str+='\t';
+			str+=root->sdata;
+			break;
+		case CT_VAL_STRING_LITERAL: case CT_VAL_WSTRING_LITERAL:
+		case CT_EXTERN:
+			str+="\t\"";
+			str+=root->sdata;
+			str+='\"';
+			break;
+		case CT_VAL_CHAR_LITERAL:
+		case CT_VAL_INTEGER:
+			str+='\t';
+			sprintf_s(g_buf, g_buf_size, "%d", root->idata);
+			str+=g_buf;
+			break;
+		case CT_VAL_FLOAT:
+			str+='\t';
+			sprintf_s(g_buf, g_buf_size, "%g", root->fdata);
+			str+=g_buf;
+			break;
+		case PT_TYPE:
+			{
+				auto type=root->tdata;
+				str+='\t';
+				switch(type->datatype)
+				{
+				case TYPE_UNASSIGNED:	str+="<unassigned>";break;//TODO: elaborate
+				case TYPE_AUTO:			str+="auto";break;
+				case TYPE_VOID:			str+="void";break;
+				case TYPE_BOOL:			str+="bool";break;
+				case TYPE_CHAR:			str+="char";break;
+				case TYPE_INT:			str+="int";break;
+				case TYPE_INT_SIGNED:	str+="signed int";break;
+				case TYPE_INT_UNSIGNED:	str+="unsigned";break;
+				case TYPE_FLOAT:		str+="float";break;
+				case TYPE_ENUM:			str+="enum";break;
+				case TYPE_CLASS:		str+="class";break;
+				case TYPE_STRUCT:		str+="struct";break;
+				case TYPE_UNION:		str+="union";break;
+				case TYPE_SIMD:			str+="simd";break;
+				case TYPE_ARRAY:		str+="array";break;
+				case TYPE_POINTER:		str+="pointer";break;
+				case TYPE_FUNC:			str+="func";break;
+				case TYPE_ELLIPSIS:		str+="...";break;
+				case TYPE_NAMESPACE:	str+="namespace";break;
+					break;
+				}
+			}
+			break;
+		}
+		str+='\n';
+		for(int k=0;k<root->children.size();++k)
+			AST2str(root->children[k], str, depth+1);
+	}
+}
+void			parse_cplusplus(Expression &ex, IRNode *&root)//OpenC++
 {
 	Token nulltoken={CT_IGNORED};
 	ex.insert_pod(ex.size(), nulltoken, 16);
 	parse::current_ex=&ex;
 	parse::ntokens=ex.size()-16;
 	parse::current_idx=0;
-	parse::current_ir=&ir;
 	parse::ir_size=0;
-	parse::current_ir->resize(1024);
 
-	IRNode *node=nullptr;
-	parse::append_node(PT_PROGRAM, -1, node);//node at 0 is always CT_PROGRAM, everything stems from there
-	parse::r_definition(0);
-	for(;parse::current_idx<(int)ex.size();)
+	INSERT_LEAF(root, PT_PROGRAM, nullptr);//node at 0 is always CT_PROGRAM, everything stems from there
+	//root->children.push_back(nullptr);
+	//parse::r_definition(root->children.back());
+	for(;parse::current_idx<parse::ntokens;)
 	{
-		for(;parse::current_idx<(int)ex.size()&&!parse::r_definition(0);)
+		root->children.push_back(nullptr);
+		for(;parse::current_idx<parse::ntokens&&!parse::r_definition(root->children.back());)
 			parse::skip_till_after(CT_SEMICOLON);
 	}
-	parse::current_ir->resize(parse::ir_size);
 }
 
-void			dump_code(const char *filename)
-{
-	save_file(filename, true, code.data(), code.size());
-}
+void			dump_code(const char *filename){save_file(filename, true, code.data(), code.size());}
 
-struct			DummyNode
+struct			TestNode
 {
 	CTokenType type, opsign;
-	DummyNode *parent, *child, *next;
+	TestNode *parent, *child, *next;
 	union
 	{
 		TypeInfo *tdata;//type & function
@@ -3582,13 +4703,31 @@ struct			DummyNode
 		long long *idata;
 		double *fdata;
 	};
-	DummyNode():type(CT_IGNORED), opsign(CT_IGNORED), parent(nullptr), child(nullptr), next(nullptr), tdata(nullptr){}
+	TestNode():type(CT_IGNORED), opsign(CT_IGNORED), parent(nullptr), child(nullptr), next(nullptr), tdata(nullptr){}
+};
+struct			TestNode2
+{
+	CTokenType type, opsign;
+	TestNode2 *parent;
+	std::vector<TestNode2*> children;
+	union
+	{
+		TypeInfo *tdata;//type & function
+		VarInfo *vdata;//variable
+
+		//literals
+		char *sdata;
+		long long *idata;
+		double *fdata;
+	};
+	TestNode2():type(CT_IGNORED), opsign(CT_IGNORED), parent(nullptr), tdata(nullptr){}
 };
 void			benchmark()
 {
 	const int testsize=1024*1024;
 	
 	prof.add("bm start");
+#if 0
 	{
 		std::vector<IRNode> ir;
 		parse::current_ir=&ir;
@@ -3602,12 +4741,13 @@ void			benchmark()
 		prof.add("build");
 	}
 	prof.add("destroy");
+#endif
 
 	{
-		auto tree=new DummyNode, node=tree;
+		auto tree=new TestNode, node=tree;
 		for(int k=0;k<testsize;++k)
 		{
-			node->next=new DummyNode;
+			node->next=new TestNode;
 			node=node->next;
 		}
 		prof.add("build");
@@ -3621,6 +4761,26 @@ void			benchmark()
 		}
 		prof.add("destroy");
 	}
+
+	{
+		auto tree=new TestNode2, node=tree;
+		for(int k=0;k<testsize;++k)
+		{
+			node->children.push_back(new TestNode2);
+			node=node->children[0];
+		}
+		prof.add("build");
+
+		node=tree;
+		TestNode2 *n2=nullptr;
+		for(int k=0;k<testsize;++k)
+		{
+			n2=node->children[0];
+			delete node;
+			node=n2;
+		}
+		prof.add("destroy");
+	}
 	prof.print();
 	_getch();
 	exit(0);
@@ -3629,16 +4789,55 @@ void			benchmark()
 void			compile(LexFile &lf)
 {
 	printf("\nParser\n\n");
+#if 1
+	prof.add("entry");
+	{
+		int kd=0;
+		for(int ks=0;ks<(int)lf.expr.size();)
+		{
+			switch(lf.expr[ks].type)
+			{
+			case CT_IGNORED:
+			case CT_NEWLINE:
+				++ks;
+				break;
+			default:
+				lf.expr[kd]=lf.expr[ks];
+				++ks, ++kd;
+				break;
+			}
+		}
+		lf.expr.resize(kd);
+	}
+	prof.add("filter");
 
+	IRNode *root=nullptr;
+	parse_cplusplus(lf.expr, root);
+	prof.add("parse");
+
+	std::string str;
+	AST2str(root, str);
+	prof.add("tree2str");
+
+	save_file("D:/C/ACC2/ast.txt", false, str.c_str(), str.size());
+
+	parse::free_tree(root);
+	prof.add("free tree");
+
+	prof.print();
+	pause();
+#endif
+#if 0
 	i64 t1=0, t2=0;
 
 	t1=__rdtsc();
+
 	current_expr=&lf.expr, token_idx=0;
 
 	code_idx=0;
 	code.resize(1024);
 	
-//	emit_msdosstub();//
+	//emit_msdosstub();//
 
 	reset_regstate();
 	variables.assign(1, VarRegLib());
@@ -3660,5 +4859,6 @@ void			compile(LexFile &lf)
 	pause();
 
 	dump_code("D:/C/ACC2/codegen.bin");
+#endif
 	exit(0);//
 }
