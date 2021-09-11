@@ -1250,6 +1250,99 @@ struct			IRNode
 		sdata=(char*)data;
 	}
 };
+inline void		token2str(CTokenType t, std::string &str)
+{
+	switch(t)
+	{
+#define		TOKEN(STR, LABEL, FLAG)		case LABEL:str+=#LABEL;break;
+#include	"acc2_keywords_c.h"
+#undef		TOKEN
+	}
+}
+void			AST2str(IRNode *root, std::string &str, int depth=0)
+{
+	sprintf_s(g_buf, g_buf_size, "%5d", depth);
+	str+=g_buf;
+	for(int k=0;k<depth;++k)
+		str+='|';
+	if(!root)
+	{
+		str+="<nullptr>\n";
+		return;
+	}
+	token2str(root->type, str);
+	if(root->opsign!=CT_IGNORED)
+	{
+		str+='\t';
+		token2str(root->opsign, str);//TODO
+	}
+	switch(root->type)
+	{
+	case CT_ID:
+	case CT_CLASS:case CT_STRUCT:case CT_UNION:
+	case CT_GOTO:case PT_JUMPLABEL:
+	case PT_TEMPLATE_ARG:
+	case CT_NAMESPACE:case PT_NAMESPACE_ALIAS:
+		str+='\t';
+		str+=root->sdata;
+		break;
+	case CT_VAL_STRING_LITERAL: case CT_VAL_WSTRING_LITERAL:
+	case CT_EXTERN:
+		str+="\t\"";
+		str+=root->sdata;
+		str+='\"';
+		break;
+	case CT_VAL_CHAR_LITERAL:
+	case CT_VAL_INTEGER:
+		str+='\t';
+		sprintf_s(g_buf, g_buf_size, "%d", root->idata);
+		str+=g_buf;
+		break;
+	case CT_VAL_FLOAT:
+		str+='\t';
+		sprintf_s(g_buf, g_buf_size, "%g", root->fdata);
+		str+=g_buf;
+		break;
+	case PT_TYPE:
+		{
+			auto type=root->tdata;
+			str+='\t';
+			switch(type->datatype)
+			{
+			case TYPE_UNASSIGNED:	str+="<unassigned>";break;//TODO: elaborate
+			case TYPE_AUTO:			str+="auto";break;
+			case TYPE_VOID:			str+="void";break;
+			case TYPE_BOOL:			str+="bool";break;
+			case TYPE_CHAR:			str+="char";break;
+			case TYPE_INT:			str+="int";break;
+			case TYPE_INT_SIGNED:	str+="signed int";break;
+			case TYPE_INT_UNSIGNED:	str+="unsigned";break;
+			case TYPE_FLOAT:		str+="float";break;
+			case TYPE_ENUM:			str+="enum";break;
+			case TYPE_CLASS:		str+="class";break;
+			case TYPE_STRUCT:		str+="struct";break;
+			case TYPE_UNION:		str+="union";break;
+			case TYPE_SIMD:			str+="simd";break;
+			case TYPE_ARRAY:		str+="array";break;
+			case TYPE_POINTER:		str+="pointer";break;
+			case TYPE_FUNC:			str+="func";break;
+			case TYPE_ELLIPSIS:		str+="...";break;
+			case TYPE_NAMESPACE:	str+="namespace";break;
+				break;
+			}
+		}
+		break;
+	}
+	str+='\n';
+	for(int k=0;k<(int)root->children.size();++k)
+		AST2str(root->children[k], str, depth+1);
+}
+void			debugprint(IRNode *root)
+{
+	std::string str;
+	AST2str(root, str);
+	printf("%s\n\n", str.c_str());
+}
 namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 {
 	Expression	*current_ex=nullptr;
@@ -1325,10 +1418,6 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//}
 
 	//TODO: CHECK FOR BOUNDS
-
-	//TODO: differentiate syntax error from nothing returned
-
-	//TODO: don't use stack memory: root->children.push_back(nullptr); if(!r_condition(root->children[k]))return free_tree(root);
 
 	//recursive parser declarations
 	bool		is_ptr_to_member(int i);
@@ -1710,21 +1799,24 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	}
 	bool		r_opt_ptr_operator(IRNode *&root)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
 	{
-		INSERT_LEAF(root, PT_PTR_OPERATOR, nullptr);
 		for(;;)
 		{
 			auto t=LOOK_AHEAD(0);
 			if(t!=CT_ASTERIX&&t!=CT_AMPERSAND&&!is_ptr_to_member(0))
 				break;
-			IRNode *child=nullptr;
+			if(!root)
+				INSERT_LEAF(root, PT_PTR_OPERATOR, nullptr);
 			if(t==CT_ASTERIX||t==CT_AMPERSAND)
 			{
 				ADVANCE;
-				INSERT_LEAF(child, t, nullptr);
+				root->children.push_back(new IRNode(t, CT_IGNORED));
 			}
-			else if(!r_ptr_to_member(child))//TODO
-				return free_tree(root);
-			root->children.push_back(child);
+			else
+			{
+				root->children.push_back(nullptr);
+				if(!r_ptr_to_member(root->children.back()))
+					return free_tree(root);
+			}
 		}
 		return true;
 	}
@@ -2894,6 +2986,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		INSERT_LEAF(root, CT_TYPEDEF, nullptr);
 		root->children.push_back(typespec);
 		root->children.push_back(declarators);
+		debugprint(root);//
 		return true;
 	}
 	bool		r_if(IRNode *&root)//if.statement  :=  IF '(' condition ')' statement { ELSE statement }
@@ -3197,29 +3290,6 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		return false;
 	}
-	bool		r_ptr_operator(IRNode *&root)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
-	{
-		INSERT_LEAF(root, PT_PTR_OPERATOR, nullptr);
-		IRNode *node=nullptr;
-		for(;;)
-		{
-			auto t=LOOK_AHEAD(0);
-			if(t!=CT_ASTERIX&&t!=CT_AMPERSAND&&!is_ptr_to_member(0))
-				break;
-			if(t==CT_ASTERIX||t==CT_AMPERSAND)
-			{
-				ADVANCE;
-				root->children.push_back(new IRNode(t, CT_IGNORED));
-			}
-			else
-			{
-				root->children.push_back(nullptr);
-				if(!r_ptr_to_member(root->children.back()))
-					return free_tree(root);
-			}
-		}
-		return true;
-	}
 	bool		r_cast_operator_name(IRNode *&root)//cast.operator.name  :=  {cv.qualify} (integral.type.or.class.spec | name) {cv.qualify} {(ptr.operator)*}
 	{
 		INSERT_LEAF(root, PT_CAST, nullptr);
@@ -3241,7 +3311,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			return free_tree(root);
 		
 		root->children.push_back(nullptr);
-		if(!r_ptr_operator(root->children.back()))
+		if(!r_opt_ptr_operator(root->children.back()))
 			return free_tree(root);
 
 		return true;//TODO: complete this
@@ -4581,91 +4651,6 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		return true;
 	}
 #undef			LOOK_AHEAD
-}
-inline void		token2str(CTokenType t, std::string &str)
-{
-	switch(t)
-	{
-#define		TOKEN(STR, LABEL, FLAG)		case LABEL:str+=#LABEL;break;
-#include	"acc2_keywords_c.h"
-#undef		TOKEN
-	}
-}
-void			AST2str(IRNode *root, std::string &str, int depth=0)
-{
-	if(root)
-	{
-		sprintf_s(g_buf, g_buf_size, "%5d", depth);
-		str+=g_buf;
-		for(int k=0;k<depth;++k)
-			str+='|';
-		token2str(root->type, str);
-		if(root->opsign!=CT_IGNORED)
-		{
-			str+='\t';
-			token2str(root->opsign, str);//TODO
-		}
-		switch(root->type)
-		{
-		case CT_ID:
-		case CT_CLASS:case CT_STRUCT:case CT_UNION:
-		case CT_GOTO:case PT_JUMPLABEL:
-		case PT_TEMPLATE_ARG:
-		case CT_NAMESPACE:case PT_NAMESPACE_ALIAS:
-			str+='\t';
-			str+=root->sdata;
-			break;
-		case CT_VAL_STRING_LITERAL: case CT_VAL_WSTRING_LITERAL:
-		case CT_EXTERN:
-			str+="\t\"";
-			str+=root->sdata;
-			str+='\"';
-			break;
-		case CT_VAL_CHAR_LITERAL:
-		case CT_VAL_INTEGER:
-			str+='\t';
-			sprintf_s(g_buf, g_buf_size, "%d", root->idata);
-			str+=g_buf;
-			break;
-		case CT_VAL_FLOAT:
-			str+='\t';
-			sprintf_s(g_buf, g_buf_size, "%g", root->fdata);
-			str+=g_buf;
-			break;
-		case PT_TYPE:
-			{
-				auto type=root->tdata;
-				str+='\t';
-				switch(type->datatype)
-				{
-				case TYPE_UNASSIGNED:	str+="<unassigned>";break;//TODO: elaborate
-				case TYPE_AUTO:			str+="auto";break;
-				case TYPE_VOID:			str+="void";break;
-				case TYPE_BOOL:			str+="bool";break;
-				case TYPE_CHAR:			str+="char";break;
-				case TYPE_INT:			str+="int";break;
-				case TYPE_INT_SIGNED:	str+="signed int";break;
-				case TYPE_INT_UNSIGNED:	str+="unsigned";break;
-				case TYPE_FLOAT:		str+="float";break;
-				case TYPE_ENUM:			str+="enum";break;
-				case TYPE_CLASS:		str+="class";break;
-				case TYPE_STRUCT:		str+="struct";break;
-				case TYPE_UNION:		str+="union";break;
-				case TYPE_SIMD:			str+="simd";break;
-				case TYPE_ARRAY:		str+="array";break;
-				case TYPE_POINTER:		str+="pointer";break;
-				case TYPE_FUNC:			str+="func";break;
-				case TYPE_ELLIPSIS:		str+="...";break;
-				case TYPE_NAMESPACE:	str+="namespace";break;
-					break;
-				}
-			}
-			break;
-		}
-		str+='\n';
-		for(int k=0;k<root->children.size();++k)
-			AST2str(root->children[k], str, depth+1);
-	}
 }
 void			parse_cplusplus(Expression &ex, IRNode *&root)//OpenC++
 {

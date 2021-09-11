@@ -136,7 +136,14 @@ inline void		lex_push_tok(const char *p, int k, int linestart, int lineno, Expre
 	};
 	ex.push_back(token);
 }
-inline void		lex_push_string(const char *p, int k, int linestart, int lineno, Expression &ex, int len, CTokenType tokentype, char c0, char c1, bool raw)
+enum			StringType
+{
+	STR_ID,
+	STR_RAW,
+	STR_LITERAL,
+	CHAR_LITERAL,
+};
+inline void		lex_push_string(const char *p, int k, int linestart, int lineno, Expression &ex, int len, CTokenType tokentype, char c0, char c1, StringType strtype)
 {
 	Token token=
 	{
@@ -147,7 +154,7 @@ inline void		lex_push_string(const char *p, int k, int linestart, int lineno, Ex
 	};
 
 	std::string processed;
-	if(raw)
+	if(strtype==STR_ID||strtype==STR_RAW)
 		processed.append(p+k, len);
 	else
 	{
@@ -155,7 +162,22 @@ inline void		lex_push_string(const char *p, int k, int linestart, int lineno, Ex
 		token.len=processed.size();//processed size
 	}
 
-	token.sdata=add_string(processed);
+	if(strtype!=CHAR_LITERAL)
+		token.sdata=add_string(processed);
+	else
+	{
+		token.idata=0;
+		if(processed.size()>8)
+			error_lex(lineno, k-linestart, "Too many characters in character constant");
+		else if(processed.size()>1)
+		{
+			token.type=CT_VAL_INTEGER;
+			for(int k=0;k<(int)processed.size();++k)
+				token.idata|=(long long)processed[k]<<(k<<3);
+		}
+		else
+			token.idata=processed[0];
+	}
 
 	ex.push_back(token);
 }
@@ -278,7 +300,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 						case CT_DOUBLEQUOTE:	tokentype=CT_VAL_STRING_LITERAL;break;
 						case CT_DQUOTE_WIDE:	tokentype=CT_VAL_WSTRING_LITERAL;break;
 						}
-						lex_push_string(p, start, linestart, lineno, lf.expr, k2-start, tokentype, k>0?p[k-1]:0, p[k2+1], false);
+						lex_push_string(p, start, linestart, lineno, lf.expr, k2-start, tokentype, k>0?p[k-1]:0, p[k2+1], popt->token==CT_QUOTE?CHAR_LITERAL:STR_LITERAL);
 					}
 				}
 				break;
@@ -309,7 +331,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					{
 						start=dstart;
 						for(end=start+1;end<size&&p[dend]!='\n'&&p[dend]!='\"';++end);
-						lex_push_string(p, start, linestart, lineno, lf.expr, end-start, CT_VAL_STRING_LITERAL, k>0?p[k-1]:0, p[end+1], false);
+						lex_push_string(p, start, linestart, lineno, lf.expr, end-start, CT_VAL_STRING_LITERAL, k>0?p[k-1]:0, p[end+1], STR_LITERAL);
 					}
 					else
 					{
@@ -343,7 +365,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 							advance=end+1+dlen+1-k;//skip ) delimiter "
 						else
 							advance=end+1-k;
-						lex_push_string(p, start, linestart, lineno, lf.expr, end-start, CT_VAL_STRING_LITERAL, k>0?p[k-1]:0, p[k+advance], true);
+						lex_push_string(p, start, linestart, lineno, lf.expr, end-start, CT_VAL_STRING_LITERAL, k>0?p[k-1]:0, p[k+advance], STR_RAW);
 					}
 				}
 				break;
@@ -361,10 +383,10 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					int end=start+1;
 					for(;end<size&&p[end]&&p[end]!='\n';lineinc+=p[end]==flag_esc_nl, ++end);//BUG: esc nl flags remain in error msg
 					advance=end-k;
-					lex_push_string(p, start, linestart, lineno, lf.expr, end-start, CT_VAL_STRING_LITERAL, k>0?p[start-1]:0, p[end], false);
+					lex_push_string(p, start, linestart, lineno, lf.expr, end-start, CT_VAL_STRING_LITERAL, k>0?p[start-1]:0, p[end], STR_LITERAL);
 				}
 				else
-					lex_push_string(p, k, linestart, lineno, lf.expr, 5, CT_ID, k>0?p[k-1]:0, p[k+7], false);
+					lex_push_string(p, k, linestart, lineno, lf.expr, 5, CT_ID, k>0?p[k-1]:0, p[k+7], STR_LITERAL);
 				break;
 			case CT_INCLUDE:
 				if(state_include_chevrons==IC_HASH)
@@ -373,7 +395,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					lex_push_tok(p, k, linestart, lineno, lf.expr, popt);
 				}
 				else
-					lex_push_string(p, k, linestart, lineno, lf.expr, 7, CT_ID, k>0?p[k-1]:0, p[k+7], false);
+					lex_push_string(p, k, linestart, lineno, lf.expr, 7, CT_ID, k>0?p[k-1]:0, p[k+7], STR_LITERAL);
 				break;
 			case CT_LESS:
 				if(state_include_chevrons==IC_INCLUDE)
@@ -382,7 +404,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					for(;k2<size&&p[k2]&&p[k2]!='>'&&p[k2]!='\n';lineinc+=p[k2]==flag_esc_nl, ++k2);
 					advance=k2+1-k;
 					if(p[k]=='<'&&p[k2]=='>')
-						lex_push_string(p, k+1, linestart, lineno, lf.expr, k2-(k+1), CT_INCLUDENAME_STD, k>0?p[k-1]:0, p[k2+1], false);
+						lex_push_string(p, k+1, linestart, lineno, lf.expr, k2-(k+1), CT_INCLUDENAME_STD, k>0?p[k-1]:0, p[k2+1], STR_LITERAL);
 					else
 					{
 						//error: unmatched chevron
@@ -451,7 +473,7 @@ void			lex(LexFile &lf)//utf8 text is modified to remove esc newlines
 					int k2=k+1;
 					for(;k2<size&&p[k2]&&is_alphanumeric(p[k2]);++k2);
 					advance=k2-k;
-					lex_push_string(p, k, linestart, lineno, lf.expr, advance, CT_ID, k>0?p[k-1]:0, p[k2], false);
+					lex_push_string(p, k, linestart, lineno, lf.expr, advance, CT_ID, k>0?p[k-1]:0, p[k2], STR_ID);
 				}
 				else//error: unrecognized text
 				{
