@@ -1,6 +1,10 @@
 #include		"acc2.h"
+#include		"include/tree.hpp"
 #include		"acc2_codegen_x86_64.h"
 #include		"include/intrin.h"
+
+	#define		DEBUG_PARSER
+
 const char*		token2str(CTokenType tokentype)
 {
 	switch(tokentype)
@@ -1091,6 +1095,28 @@ struct	TypeInfo
 	std::vector<TypeInfo*> args;//TODO: template args
 
 	TypeInfo():flags(0), size(0){}
+	TypeInfo(TypeInfo const &other):flags(other.flags), size(other.size), args(other.args){}
+	TypeInfo(TypeInfo &&other):flags(other.flags), size(other.size), args((std::vector<TypeInfo*>&&)other.args){}
+	TypeInfo& operator=(TypeInfo const &other)
+	{
+		if(this!=&other)
+		{
+			flags=other.flags;
+			size=other.size;
+			args=other.args;
+		}
+		return *this;
+	}
+	TypeInfo& operator=(TypeInfo &&other)
+	{
+		if(this!=&other)
+		{
+			flags=other.flags, other.flags=0;
+			size=other.size, other.size=0;
+			args=(std::vector<TypeInfo*>&&)other.args;
+		}
+		return *this;
+	}
 	TypeInfo(char datatype, char logalign, char is_const, char is_volatile, char storagetype, int size):flags(0), size(size)
 	{
 		this->datatype=datatype;
@@ -1137,38 +1163,111 @@ TypeInfo*		add_type(TypeInfo &type)
 	return t3;
 }
 
-struct			Scope;
-typedef std::map<char*, Scope*> DeclLib;
-struct			Scope
+enum			NameType
 {
-	TypeInfo *info;
-	int level;
-	DeclLib declarations;
+	NAME_NAMESPACE,
+	NAME_STRUCT,//or class
+	NAME_UNION,
+	NAME_ENUM,
+	NAME_TEMPLATE_STRUCT,
+	NAME_TEMPLATE_UNION,
+	NAME_FUNCTION,
+	NAME_TEMPLATE_FUNCTION,
+	NAME_VARIABLE,
 };
-//vector of declaration trees
-//each element contains all immediately visible identifiers at corresponding scope
-//first element is the global scope
-std::vector<DeclLib> declstack;
-void			scope_enter()
+struct			NameInfo
 {
-	declstack.push_back(declstack.back());//duplicate symbol table
+	NameType type;
+	TypeInfo *tdata;
+	std::vector<CTokenType> *template_args;
+	//std::vector<CTokenType> template_args;
+};
+typedef std::maptree<NameInfo, char*> Name;
+Name			scope_global;
+char			*scope_id_lbrace=nullptr;
+void			scope_init()
+{
+	scope_id_lbrace=add_string("{");
+}
+Name::Node*		scope_enter(char *name, bool *old=nullptr)
+{
+	return scope_global.open(name);
 }
 void			scope_exit()
 {
-	declstack.pop_back();
-}
-Scope*			lookup(char *id)
-{
-	for(int k=declstack.size()-1;k>=0;--k)
+	if(scope_global.path.size()<=0)
 	{
-		auto &declarations=declstack[k];
-		auto it=declarations.find(id);
-		if(it)
-			return it->second;
+		Token t={};
+		error_pp(t, "Excess closing brace(s)");//TODO: better error reporting
+		return;
 	}
-	return nullptr;
+	if(*scope_global.get_topmost_key()==scope_id_lbrace)
+		scope_global.close_and_erase();
+	else
+		scope_global.close();
 }
-
+void			scope_declare_member(char *name, NameInfo const &s)
+{
+	scope_global.insert(name, s, true);
+}
+Name::Node*		scope_lookup(char *id, bool global)
+{
+	if(global)
+		return scope_global.find_root(id);
+	return scope_global.find(id);
+}
+#if 0
+std::vector<Name::Container::EType> scope_path;
+//const int LOL_1=sizeof(Name);
+//typedef std::map<char*, Name> GlobalScope;
+//GlobalScope global_scope;
+//struct			Name
+//{
+//	NameType type;
+//	std::map<char*, Name*> decl;
+//};
+char			*scope_id_lbrace=nullptr;
+void			scope_init()
+{
+	scope_id_lbrace=add_string("{");
+	scope_path.push_back(Name::Container::EType(scope_id_lbrace, &scope_global));
+}
+Name::Container::EType scope_enter(char *name, bool *old=nullptr)
+{
+	assert(scope_path.size()>0);
+	auto &current=scope_path.back();
+	bool oldflag=false;
+	auto ret=current.second->insert_no_overwrite(name, &oldflag);
+	//scope_path.push_back(ret
+	if(old)
+		*old=oldflag;
+	return ret;
+}
+void			scope_exit()
+{
+	if(scope_path.size()<=1)
+	{
+		Token t={};//TODO: more detail
+		error_pp(t, "Extra closing brace(s)");
+		return;
+	}
+	auto current=scope_path.back();
+	if(current.first==scope_id_lbrace)
+	{
+	}
+	scope_path.pop_back();
+	current=scope_path.back();
+	current=
+}
+void			scope_declare_member(char *name, NameInfo const &s)
+{
+}
+Name*			scope_lookup(char *id, bool global)
+{
+	return nullptr;//
+}
+#endif
+#if 0
 //typedef std::vector<char*> QName;//qualified name
 //struct			QNameCmp
 //{
@@ -1205,6 +1304,75 @@ struct			VarInfoCmp
 };
 std::set<VarInfo*, VarInfoCmp> vardb;//scope?
 
+enum			NameType
+{
+	NAME_NAMESPACE,
+	NAME_DATATYPE,
+	NAME_VARIABLE,
+	NAME_FUNCTION,
+};
+struct			Name;
+typedef std::set<Name*> NameSet;//memory leak fix
+typedef std::map<char*, Name*> DeclLib;
+struct			Name
+{
+	unsigned short type, level;
+	union
+	{
+		TypeInfo *tdata;
+		VarInfo *vdata;
+	};
+	DeclLib declarations;
+};
+NameSet nameset;
+//vector of declaration trees
+//each element contains all immediately visible identifiers at corresponding scope
+//first element is the global scope
+std::vector<DeclLib> declstack;
+void			scope_enter()
+{
+	declstack.push_back(declstack.back());//duplicate symbol table
+}
+void			scope_exit()
+{
+	if(!declstack.size())
+	{
+		//TODO: error: end of global scope???
+		return;
+	}
+	declstack.pop_back();
+}
+void			scope_declare_member(char *name, Name *s)
+{
+	nameset.insert(s);
+	declstack.back().insert(DeclLib::EType(name, s));
+}
+Name*			decl_lookup_global(char *id)
+{
+	auto it=declstack[0].find(id);
+	if(it)
+		return it->second;
+	return nullptr;
+}
+Name*			decl_lookup_local(char *id)
+{
+	for(int k=declstack.size()-1;k>=0;--k)
+	{
+		auto &declarations=declstack[k];
+		auto it=declarations.find(id);
+		if(it)
+			return it->second;
+	}
+	return nullptr;
+}
+Name*			scope_lookup(char *id, bool global)
+{
+	if(global)
+		return decl_lookup_global(id);
+	return decl_lookup_local(id);
+}
+#endif
+
 struct			IRNode;
 //union			IRLink
 //{
@@ -1221,7 +1389,7 @@ struct			IRNode
 	union
 	{
 		TypeInfo *tdata;//type & function
-		VarInfo *vdata;//variable
+	//	VarInfo *vdata;//variable
 
 		//literals
 		char *sdata;
@@ -1263,8 +1431,10 @@ void			AST2str(IRNode *root, std::string &str, int depth=0)
 {
 	sprintf_s(g_buf, g_buf_size, "%5d", depth);
 	str+=g_buf;
+	str+=' ';
 	for(int k=0;k<depth;++k)
 		str+='|';
+	str+=' ';
 	if(!root)
 	{
 		str+="<nullptr>\n";
@@ -1274,7 +1444,7 @@ void			AST2str(IRNode *root, std::string &str, int depth=0)
 	if(root->opsign!=CT_IGNORED)
 	{
 		str+='\t';
-		token2str(root->opsign, str);//TODO
+		token2str(root->opsign, str);
 	}
 	switch(root->type)
 	{
@@ -1432,7 +1602,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		DECLKIND_CAST,
 	};
 	bool		r_declarator2(IRNode *&root, bool should_be_declarator, int kind, bool is_statement);
-	bool		r_opt_cv_qualify(IRNode *&root);
+	bool		r_opt_cv_qualify(int &cv_flag);//{bit 1: volatile, bit 0: const}
 	bool		r_opt_int_type_or_class_spec(IRNode *&root);
 	bool		r_cast(IRNode *&root);
 	bool		r_unary(IRNode *&root);
@@ -1533,18 +1703,61 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		return false;
 	}
-
-	bool		r_typespecifier(IRNode *&root)//type.specifier  :=  [cv.qualify]? (integral.type.or.class.spec | name) [cv.qualify]?
+	bool		maybe_typename_or_classtemplate()
 	{
-		return r_opt_cv_qualify(root)&&r_opt_int_type_or_class_spec(root);//TODO
+		return true;
+	}
 
-		//if(!r_opt_cv_qualify(parent)||!r_opt_int_type_or_class_spec(parent))
-		//	return false;
-		//return true;
+	bool		r_typespecifier(IRNode *&root, bool check)//type.specifier  :=  [cv.qualify]? (integral.type.or.class.spec | name) [cv.qualify]?
+	{
+		TypeInfo type={};
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
+			return false;
+		if(!r_opt_int_type_or_class_spec(root))
+			return false;
+		if(!root)
+		{
+			if(check&&!maybe_typename_or_classtemplate())
+				return false;
+			if(!r_name(root))
+				return false;
+			if(!r_opt_cv_qualify(cv_flag))
+				return false;
+			//TODO: combine cv_flag with id
+			return true;
+		}
+		if(!r_opt_cv_qualify(cv_flag))
+			return false;
+		type=*root->tdata;
+		type.is_const=cv_flag&1;
+		type.is_volatile=cv_flag>>1;
+		root->tdata=add_type(type);
+		return true;
+#if 0
+		INSERT_LEAF(root, PT_TYPESPEC, nullptr);
+		root->children.assign_pod(3, nullptr);
+
+		if(!r_opt_cv_qualify(root->children[0])||!r_opt_int_type_or_class_spec(root->children[1]))
+			return free_tree(root);
+		if(!root->children[1])
+		{
+			if(check)
+			{
+				if(!maybe_typename_or_classtemplate())
+					return free_tree(root);
+			}
+			if(!r_name(root->children[1]))
+				return free_tree(root);
+		}
+		if(!r_opt_cv_qualify(root->children[2]))
+			return free_tree(root);
+		return true;
+#endif
 	}
 	bool		r_typename(IRNode *&root)//type.name  :=  type.specifier cast.declarator
 	{
-		if(!r_typespecifier(root))
+		if(!r_typespecifier(root, true))
 			return false;
 		if(!r_declarator2(root, false, DECLKIND_CAST, false))
 			return false;
@@ -1658,7 +1871,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			case CT_GREATER:
 				ADVANCE;
 				return true;
-			case CT_SHIFT_RIGHT://TODO: do what???
+			case CT_SHIFT_RIGHT:
+				ADVANCE;//TODO: return 2 for 2 templates were closed
 				return true;
 				ADVANCE;
 			case CT_COMMA:
@@ -1674,10 +1888,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//if var.name ends with a template type, the next token must be '('
 	bool		r_varname(IRNode *&root)
 	{
-		if(LOOK_AHEAD(0)==CT_SCOPE)
-		{
-			//TODO: search global scope
-		}
+		bool global=LOOK_AHEAD(0)==CT_SCOPE;
+		ADVANCE_BY((int)global);
 		INSERT_LEAF(root, PT_VAR_REF, nullptr);
 		for(;;)
 		{
@@ -1891,7 +2103,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		else
 		{
-			if(!r_typespecifier(child))
+			if(!r_typespecifier(child, false))
 				return free_tree(root);
 			root->children.push_back(child);
 			if(!r_new_declarator(child))
@@ -1913,7 +2125,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	bool		r_allocate_expr(IRNode *&root)
 	{
 		auto t=LOOK_AHEAD(0);
-		if(t==CT_SCOPE)
+		bool global=t==CT_SCOPE;
+		if(global)
 		{
 			ADVANCE;
 			//TODO: use global new/delete
@@ -2169,7 +2382,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		return true;
 	}
 #define		NEXT_CALL	r_pm
-#define		FUNC_NAME	r_multiplicative
+#define		FUNC_NAME	r_multiplicative//multiply.expr  :=  pm.expr  |  multiply.expr ('*' | '/' | '%') pm.expr
 #define		CONDITION	t==CT_ASTERIX||t==CT_SLASH||t==CT_MODULO
 #define		LABEL		PT_MUL
 #include	"acc2_parser_expr.h"
@@ -2179,7 +2392,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_multiplicative
-#define		FUNC_NAME	r_additive
+#define		FUNC_NAME	r_additive		//additive.expr  :=  multiply.expr  |  additive.expr ('+' | '-') multiply.expr
 #define		CONDITION	t==CT_PLUS||t==CT_MINUS
 #define		LABEL		PT_ADD
 #include	"acc2_parser_expr.h"
@@ -2189,7 +2402,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_additive
-#define		FUNC_NAME	r_shift
+#define		FUNC_NAME	r_shift			//shift.expr  :=  additive.expr  |  shift.expr ShiftOp additive.expr
 #define		CONDITION	t==CT_SHIFT_LEFT||t==CT_SHIFT_RIGHT
 #define		LABEL		PT_SHIFT
 #include	"acc2_parser_expr.h"
@@ -2199,7 +2412,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_shift
-#define		FUNC_NAME	r_relational
+#define		FUNC_NAME	r_relational	//relational.expr  :=  shift.expr  |  relational.expr (RelOp | '<' | '>') shift.expr
 #define		CONDITION	t==CT_LESS||t==CT_LESS_EQUAL||t==CT_GREATER||t==CT_GREATER_EQUAL
 #define		LABEL		PT_RELATIONAL
 #include	"acc2_parser_expr.h"
@@ -2209,7 +2422,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_relational
-#define		FUNC_NAME	r_equality
+#define		FUNC_NAME	r_equality		//equality.expr  :=  relational.expr  |  equality.expr EqualOp relational.expr
 #define		CONDITION	t==CT_EQUAL||t==CT_NOT_EQUAL
 #define		LABEL		PT_EQUALITY
 #include	"acc2_parser_expr.h"
@@ -2219,7 +2432,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_equality
-#define		FUNC_NAME	r_bitwise_and
+#define		FUNC_NAME	r_bitwise_and	//and.expr  :=  equality.expr  |  and.expr '&' equality.expr
 #define		CONDITION	t==CT_AMPERSAND
 #define		LABEL		PT_BITAND
 #include	"acc2_parser_expr.h"
@@ -2229,7 +2442,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_bitwise_and
-#define		FUNC_NAME	r_bitwise_xor
+#define		FUNC_NAME	r_bitwise_xor	//exclusive.or.expr  :=  and.expr  |  exclusive.or.expr '^' and.expr
 #define		CONDITION	t==CT_CARET
 #define		LABEL		PT_BITXOR
 #include	"acc2_parser_expr.h"
@@ -2239,7 +2452,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_bitwise_xor
-#define		FUNC_NAME	r_bitwise_or
+#define		FUNC_NAME	r_bitwise_or	//inclusive.or.expr  :=  exclusive.or.expr  |  inclusive.or.expr '|' exclusive.or.expr
 #define		CONDITION	t==CT_VBAR
 #define		LABEL		PT_BITOR
 #include	"acc2_parser_expr.h"
@@ -2249,7 +2462,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_bitwise_or
-#define		FUNC_NAME	r_logic_and
+#define		FUNC_NAME	r_logic_and		//logical.and.expr  :=  inclusive.or.expr  |  logical.and.expr LogAndOp inclusive.or.expr
 #define		CONDITION	t==CT_LOGIC_AND
 #define		LABEL		PT_LOGICAND
 #include	"acc2_parser_expr.h"
@@ -2259,7 +2472,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 #undef		LABEL
 
 #define		NEXT_CALL	r_logic_and
-#define		FUNC_NAME	r_logic_or
+#define		FUNC_NAME	r_logic_or		//logical.or.expr  :=  logical.and.expr  |  logical.or.expr LogOrOp logical.and.expr		left-to-right
 #define		CONDITION	t==CT_LOGIC_OR
 #define		LABEL		PT_LOGICOR
 #include	"acc2_parser_expr.h"
@@ -2471,6 +2684,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		if(LOOK_AHEAD(0)!=CT_LBRACE)
 			return false;
 		ADVANCE;
+		scope_enter(scope_id_lbrace);
 
 		INSERT_LEAF(root, PT_CLASS_BODY, nullptr);
 
@@ -2480,10 +2694,12 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			if(!r_class_member(root->children.back()))
 			{
 				skip_till_after(CT_RBRACE);
+				scope_exit();
 				return free_tree(root);
 			}
 		}
 		ADVANCE;
+		scope_exit();
 		return true;
 	}
 //class.spec
@@ -2660,17 +2876,41 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		return true;
 	}
-	bool		r_opt_cv_qualify(IRNode *&root)//cv.qualify  :=  (const|volatile)+
+	bool		r_opt_cv_qualify(int &cv_flag)//cv.qualify  :=  (const|volatile)+		//{bit 1: volatile, bit 0: const}
 	{
 		auto t=LOOK_AHEAD(0);
 		switch(t)
 		{
 		case CT_CONST:
 		case CT_VOLATILE:
+			ADVANCE;
+			cv_flag|=1<<int(t==CT_VOLATILE);
+			break;
+			for(;t=LOOK_AHEAD(0);ADVANCE)
 			{
+				switch(t)
+				{
+				case CT_CONST:
+				case CT_VOLATILE:
+					cv_flag|=1<<int(t==CT_VOLATILE);
+					continue;
+				default:
+					break;
+				}
+				break;
+			}
+		}
+		return true;
+#if 0
+		auto t=LOOK_AHEAD(0);
+		switch(t)
+		{
+		case CT_CONST:
+		case CT_VOLATILE:
+			{
+				ADVANCE;
 				INSERT_LEAF(root, PT_MEMBER_SPEC, nullptr);
 				(int&)root->opsign=1<<int(t==CT_VOLATILE);
-				ADVANCE;
 				for(;t=LOOK_AHEAD(0);ADVANCE)
 				{
 					switch(t)
@@ -2687,12 +2927,13 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			}
 		}
 		return true;
+#endif
 	}
 	bool		r_opt_int_type_or_class_spec(IRNode *&root)//int.type.or.class.spec := (char|wchar_t|int|short|long|signed|unsigned|float|double|void|bool)+  |  class.spec  |  enum.spec
 	{
 		root=nullptr;//
 		TypeInfo type;
-		Scope *scope;
+		Name::Node *scope=nullptr;
 		short long_count=0, int_count=0;
 		for(;;)
 		{
@@ -2885,7 +3126,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_ID:
-					scope=lookup(token->sdata);//check if identifier==class/struct/union in this/global scope
+					scope=scope_lookup(token->sdata, false);//check if identifier==class/struct/union in this/global scope		TODO: support global lookup
 					if(!scope)
 					{
 						ADVANCE_BY(-1);
@@ -2895,7 +3136,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 						
 						//return free_tree(root);//error: unexpected identifier
 					}
-					switch(scope->info->datatype)
+					switch(scope->data.tdata->datatype)
 					{
 					case TYPE_ENUM:
 					case TYPE_CLASS:
@@ -2906,7 +3147,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 							if(type.datatype!=TYPE_UNASSIGNED)
 								return free_tree(root);
 							//merge with type			//TODO: unroll the struct to typedb at declaration
-							auto typeinfo=scope->info;
+							auto typeinfo=scope->data.tdata;
 							type.datatype=typeinfo->datatype;
 							if(type.logalign<typeinfo->logalign)
 								type.logalign=typeinfo->logalign;
@@ -2938,22 +3179,23 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 	bool		r_simple_declaration(IRNode *&root)//condition controlling expression of switch/while/if
 	{
-		IRNode *cv=nullptr, *ic=nullptr, *name=nullptr;
-		if(!r_opt_cv_qualify(cv)||!r_opt_int_type_or_class_spec(ic))
-			return free_tree(cv), free_tree(ic);
+		int cv_flag=0;
+		IRNode *ic=nullptr, *name=nullptr;
+		if(!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(ic))
+			return free_tree(ic);
 		if(!r_name(name))
-			return free_tree(cv), free_tree(ic), free_tree(name);
+			return free_tree(ic), free_tree(name);
 
 		IRNode *decl=nullptr;
 		if(!r_declarator2(decl, true, DECLKIND_NORMAL, true))
-			return free_tree(cv), free_tree(ic), free_tree(name), free_tree(decl);
+			return free_tree(ic), free_tree(name), free_tree(decl);
 		if(LOOK_AHEAD(0)!=CT_ASSIGN)//TODO: make sense of this
-			return free_tree(cv), free_tree(ic), free_tree(name), free_tree(decl);
+			return free_tree(ic), free_tree(name), free_tree(decl);
 		ADVANCE;
 
 		IRNode *expr;
 		if(!r_assign_expr(expr))
-			return free_tree(cv), free_tree(ic), free_tree(name), free_tree(decl), free_tree(expr);
+			return free_tree(ic), free_tree(name), free_tree(decl), free_tree(expr);
 
 		//TODO: join nodes
 
@@ -2975,18 +3217,19 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			return false;
 		ADVANCE;
 
-		IRNode *typespec=nullptr, *declarators=nullptr;
-		if(!r_typespecifier(typespec))
-			return false;
+		INSERT_LEAF(root, CT_TYPEDEF, nullptr);
+		root->children.assign_pod(2, nullptr);
 
-		if(!r_declarators(declarators, true, false)||LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return free_tree(typespec);
+		if(!r_typespecifier(root->children[0], false))
+			return free_tree(root);
+
+		if(!r_declarators(root->children[1], true, false)||LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(root);
 		ADVANCE;
 
-		INSERT_LEAF(root, CT_TYPEDEF, nullptr);
-		root->children.push_back(typespec);
-		root->children.push_back(declarators);
+#ifdef DEBUG_PARSER
 		debugprint(root);//
+#endif
 		return true;
 	}
 	bool		r_if(IRNode *&root)//if.statement  :=  IF '(' condition ')' statement { ELSE statement }
@@ -3135,7 +3378,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		root->children.push_back(nullptr);
 		root->children.push_back(nullptr);
 		
-		if(!r_typespecifier(root->children[0]))
+		if(!r_typespecifier(root->children[0], true))
 			return free_tree(root);
 
 		if(!r_declarator2(root->children[1], true, DECLKIND_ARG, false))
@@ -3294,8 +3537,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	{
 		INSERT_LEAF(root, PT_CAST, nullptr);
 
-		root->children.push_back(nullptr);
-		if(!r_opt_cv_qualify(root->children.back()))
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 
 		root->children.push_back(nullptr);
@@ -3307,7 +3550,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				return free_tree(root);
 		}
 		root->children.push_back(nullptr);
-		if(!r_opt_cv_qualify(root->children.back()))
+		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 		
 		root->children.push_back(nullptr);
@@ -3481,8 +3724,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	bool		r_int_decl_stmt(IRNode *&root)//integral.decl.statement  :=  decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);//TODO: pass cv_q to r_int_decl_stmt()
-		root->children.push_back(nullptr);
-		if(!r_opt_cv_qualify(root->children.back()))
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 		if(LOOK_AHEAD(0)==CT_SEMICOLON)
 		{
@@ -3540,8 +3783,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		if(!r_name(root->children.back()))
 			return free_tree(root);
 		
-		root->children.push_back(nullptr);
-		if(!r_opt_cv_qualify(root->children.back()))
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 
 		if(root->children.back()!=nullptr)
@@ -3569,9 +3812,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	bool		r_decl_stmt(IRNode *&root)
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);//children: {storage, cv, integral, int/const/other decl}		TODO: improve this
-		root->children.assign_pod(4, nullptr);
-		
-		if(!r_opt_storage_spec(root->children[0])||!r_opt_cv_qualify(root->children[1])||!r_opt_int_type_or_class_spec(root->children[2]))
+		root->children.assign_pod(3, nullptr);
+		int cv_flag=0;
+		if(!r_opt_storage_spec(root->children[0])||!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(root->children[1]))
 			return free_tree(root);
 		//IRNode *storage=nullptr, *cv=nullptr, *integral=nullptr;
 		//if(!r_opt_storage_spec(storage)||!r_opt_cv_qualify(cv)||r_opt_int_type_or_class_spec(integral))
@@ -3579,7 +3822,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 		if(root->children[0])
 		{
-			if(!r_int_decl_stmt(root->children[3]))
+			if(!r_int_decl_stmt(root->children[2]))
 				return free_tree(root);
 			return true;
 		}
@@ -3594,9 +3837,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_ASSIGN_AND:case CT_ASSIGN_XOR:case CT_ASSIGN_OR:
 			assign=true;
 		}
-		if(root->children[2]&&(t==CT_ID&&assign||t==CT_ASTERIX))
-			return r_const_decl(root->children[3]);
-		return r_other_decl_stmt(root->children[3]);
+		if(root->children[1]&&(t==CT_ID&&assign||t==CT_ASTERIX))
+			return r_const_decl(root->children[2]);
+		return r_other_decl_stmt(root->children[2]);
 	}
 //expr.statement
 //  : ';'
@@ -3729,6 +3972,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		if(t!=CT_LBRACE)
 			return false;
 		//delayed advance
+		scope_enter(scope_id_lbrace);
 
 		t=LOOK_AHEAD(1);
 		if(t!=CT_RBRACE)
@@ -3747,6 +3991,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			}while(t!=CT_RBRACE);
 		}
 		ADVANCE;
+		scope_exit();
 		return true;
 	}
 
@@ -3906,6 +4151,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		auto t=LOOK_AHEAD(0);
 		if(t==CT_LPR)
 		{
+			ADVANCE;
 			root->children.push_back(nullptr);
 			if(!r_declarator2(root->children.back(), true, kind, false)||LOOK_AHEAD(0)!=CT_RPR)
 				return free_tree(root);
@@ -3950,10 +4196,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				}
 				ADVANCE;
 
+				int cv_flag=0;
 				if(is_args)
 				{
-					root->children.push_back(nullptr);
-					if(!r_opt_cv_qualify(root->children.back()))
+					if(!r_opt_cv_qualify(cv_flag))
 						return free_tree(root);
 				}
 				
@@ -4066,8 +4312,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		ADVANCE;
 		
-		root->children.push_back(nullptr);
-		if(!r_opt_cv_qualify(root->children.back()))
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 
 		if(LOOK_AHEAD(0)==CT_COLON)
@@ -4130,8 +4376,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				return false;
 		}
 		
-		root->children.push_back(nullptr);
-		if(!r_opt_cv_qualify(root->children.back()))
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 
 		root->children.push_back(nullptr);
@@ -4145,8 +4391,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			//	return free_tree(root);
 
 			//r_int_declaration() inlined
-			root->children.push_back(nullptr);
-			if(!r_opt_cv_qualify(root->children.back()))
+			int cv_flag=0;
+			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
 
 			switch(LOOK_AHEAD(0))
@@ -4210,8 +4456,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		else
 		{
-			r2->children.push_back(nullptr);
-			if(!r_opt_cv_qualify(r2->children.back()))
+			int cv_flag=0;
+			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
 
 			r2->children.push_back(nullptr);
@@ -4269,7 +4515,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		else
 		{
-			if(!r_typespecifier(root))
+			if(!r_typespecifier(root, true))
 				return false;
 			root->children.push_back(nullptr);
 			if(!r_declarator2(root->children.back(), true, DECLKIND_ARG, false))
@@ -4681,7 +4927,7 @@ struct			TestNode
 	union
 	{
 		TypeInfo *tdata;//type & function
-		VarInfo *vdata;//variable
+		//VarInfo *vdata;//variable
 
 		//literals
 		char *sdata;
@@ -4698,7 +4944,7 @@ struct			TestNode2
 	union
 	{
 		TypeInfo *tdata;//type & function
-		VarInfo *vdata;//variable
+		//VarInfo *vdata;//variable
 
 		//literals
 		char *sdata;
@@ -4794,7 +5040,8 @@ void			compile(LexFile &lf)
 		}
 		lf.expr.resize(kd);
 	}
-	prof.add("filter");
+	scope_init();
+	prof.add("prepare");
 
 	IRNode *root=nullptr;
 	parse_cplusplus(lf.expr, root);
