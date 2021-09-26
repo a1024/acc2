@@ -1046,6 +1046,7 @@ enum	StorageTypeSpecifier
 	STORAGE_STATIC,
 	STORAGE_MUTABLE,
 	STORAGE_REGISTER,
+	STORAGE_UNSPECIFIED,
 };
 enum	DataType
 {
@@ -1373,7 +1374,7 @@ Name*			scope_lookup(char *id, bool global)
 }
 #endif
 
-struct			IRNode;
+//struct		IRNode;
 //union			IRLink
 //{
 //	IRNode *p;
@@ -1383,7 +1384,19 @@ struct			IRNode;
 //};
 struct			IRNode
 {
-	CTokenType type, opsign;
+	CTokenType type;
+	union
+	{
+		struct
+		{
+			unsigned int
+				flag_esmr:2,//storage specifier := extern|static|mutable|register
+				flag_const:1, flag_volatile:1,//cv qualifier
+				flag_friend:1, flag_inline:1, flag_virtual:1;//member specifier
+		};
+		int flags;
+		CTokenType opsign;
+	};
 	//std::vector<IRLink> children;//X  makes free_tree() more complicated
 	std::vector<IRNode*> children;
 	union
@@ -1589,6 +1602,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 	//TODO: CHECK FOR BOUNDS
 
+	//void		t_extract_func_args_type(IRNode *root)
+	//{
+	//}
+
 	//recursive parser declarations
 	bool		is_ptr_to_member(int i);
 	bool		r_ptr_to_member(IRNode *&root);
@@ -1601,7 +1618,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		DECLKIND_ARG,
 		DECLKIND_CAST,
 	};
-	bool		r_declarator2(IRNode *&root, bool should_be_declarator, int kind, bool is_statement);
+	bool		r_declarator2(IRNode *&root, int kind, bool recursive, bool should_be_declarator, bool is_statement);
 	bool		r_opt_cv_qualify(int &cv_flag);//{bit 1: volatile, bit 0: const}
 	bool		r_opt_int_type_or_class_spec(IRNode *&root);
 	bool		r_cast(IRNode *&root);
@@ -1636,7 +1653,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	};
 	bool		r_template_decl2(IRNode *&root, TemplateDeclarationType &templatetype);
 	bool		r_template_decl(IRNode *&root);
-	bool		r_declarators(IRNode *&root, bool should_be_declarator, bool is_statement);
+	bool		r_declarators_nonnull(IRNode *&root, bool should_be_declarator, bool is_statement);
 	bool		r_using(IRNode *&root);
 	bool		r_metaclass_decl(IRNode *&root);
 	bool		r_definition(IRNode *&root);
@@ -1759,7 +1776,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	{
 		if(!r_typespecifier(root, true))
 			return false;
-		if(!r_declarator2(root, false, DECLKIND_CAST, false))
+		if(!r_declarator2(root, DECLKIND_CAST, false, false, false))
 			return false;
 		return true;
 	}
@@ -2029,6 +2046,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				if(!r_ptr_to_member(root->children.back()))
 					return free_tree(root);
 			}
+			int cv_flag=0;
+			if(!r_opt_cv_qualify(cv_flag))
+				return free_tree(root);
+			(int&)root->children.back()->opsign=cv_flag;//TODO: encode the pointer operator
 		}
 		return true;
 	}
@@ -2188,6 +2209,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			INSERT_LEAF(root, t->type, nullptr);
 			root->idata=t->idata;
 			break;
+		case CT_NULLPTR:
 		case CT_THIS:
 			ADVANCE;
 			INSERT_LEAF(root, t->type, nullptr);
@@ -2556,6 +2578,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			switch(LOOK_AHEAD(0))
 			{
 			case CT_RBRACE:
+				ADVANCE;
 				break;
 			case CT_COMMA:
 				ADVANCE;
@@ -2822,17 +2845,24 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		return true;
 	}
 
-	bool		r_opt_member_spec(IRNode *&root)//member.spec := (friend|inline|virtual)+
+	bool		r_opt_member_spec(int &fvi_flag)//member.spec := (friend|inline|virtual)+		bitfield: {bit2: friend, bit1: virtual, bit0: inline}
 	{
-		auto t=LOOK_AHEAD(0);
+		for(auto t=LOOK_AHEAD(0);t==CT_INLINE||t==CT_VIRTUAL||t==CT_FRIEND;)
+		{
+			ADVANCE;
+			fvi_flag|=int(t==CT_FRIEND)<<2|int(t==CT_VIRTUAL)<<1|int(t==CT_INLINE);
+			t=LOOK_AHEAD(0);
+		}
+	/*	auto t=LOOK_AHEAD(0);
 		switch(t)
 		{
 		case CT_INLINE:
 		case CT_FRIEND:
 		case CT_VIRTUAL:
 			{
-				INSERT_LEAF(root, PT_MEMBER_SPEC, nullptr);
-				(int&)root->opsign=int(t==CT_FRIEND)<<2|int(t==CT_VIRTUAL)<<1|int(t==CT_INLINE);
+				fvi_flag|=int(t==CT_FRIEND)<<2|int(t==CT_VIRTUAL)<<1|int(t==CT_INLINE);
+				//INSERT_LEAF(root, PT_MEMBER_SPEC, nullptr);
+				//(int&)root->opsign=int(t==CT_FRIEND)<<2|int(t==CT_VIRTUAL)<<1|int(t==CT_INLINE);
 				ADVANCE;
 				for(;t=LOOK_AHEAD(0);ADVANCE)
 				{
@@ -2856,12 +2886,31 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					break;
 				}
 			}
-		}
+		}//*/
 		return true;
 	}
-	bool		r_opt_storage_spec(IRNode *&root)//storage.spec := extern|static|mutable|register		check root for nullptr
+	bool		r_opt_storage_spec(StorageTypeSpecifier &esmr_flag)//storage.spec := extern|static|mutable|register
 	{
-		auto t=LOOK_AHEAD(0);
+		switch(LOOK_AHEAD(0))
+		{
+		case CT_EXTERN:
+			esmr_flag=STORAGE_EXTERN;
+			break;
+		case CT_STATIC:
+			esmr_flag=STORAGE_STATIC;
+			break;
+		case CT_MUTABLE:
+			esmr_flag=STORAGE_MUTABLE;
+			break;
+		case CT_REGISTER:
+			esmr_flag=STORAGE_REGISTER;
+			break;
+		default:
+			esmr_flag=STORAGE_UNSPECIFIED;
+			//esmr_flag=STORAGE_EXTERN;
+			break;
+		}
+	/*	auto t=LOOK_AHEAD(0);
 		switch(t)
 		{
 		case CT_EXTERN:
@@ -2873,32 +2922,16 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			root->opsign=t;
 			ADVANCE;
 			break;
-		}
+		}//*/
 		return true;
 	}
 	bool		r_opt_cv_qualify(int &cv_flag)//cv.qualify  :=  (const|volatile)+		//{bit 1: volatile, bit 0: const}
 	{
-		auto t=LOOK_AHEAD(0);
-		switch(t)
+		for(auto t=LOOK_AHEAD(0);t==CT_CONST||t==CT_VOLATILE;)
 		{
-		case CT_CONST:
-		case CT_VOLATILE:
 			ADVANCE;
 			cv_flag|=1<<int(t==CT_VOLATILE);
-			break;
-			for(;t=LOOK_AHEAD(0);ADVANCE)
-			{
-				switch(t)
-				{
-				case CT_CONST:
-				case CT_VOLATILE:
-					cv_flag|=1<<int(t==CT_VOLATILE);
-					continue;
-				default:
-					break;
-				}
-				break;
-			}
+			t=LOOK_AHEAD(0);
 		}
 		return true;
 #if 0
@@ -3081,7 +3114,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				case CT_FLOAT:
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
-						type.datatype=CT_FLOAT;
+						type.datatype=TYPE_FLOAT;
 						type.size=4;
 					}
 					else
@@ -3092,12 +3125,12 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				case CT_DOUBLE://TODO: differentiate long double (ok) & int double (error)
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
-						type.datatype=CT_FLOAT;
+						type.datatype=TYPE_FLOAT;
 						type.size=8;
 					}
 					else if(type.datatype==TYPE_INT&&long_count==1&&!int_count)
 					{
-						type.datatype=CT_FLOAT;
+						type.datatype=TYPE_FLOAT;
 						type.size=16;
 					}
 					else
@@ -3187,7 +3220,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			return free_tree(ic), free_tree(name);
 
 		IRNode *decl=nullptr;
-		if(!r_declarator2(decl, true, DECLKIND_NORMAL, true))
+		if(!r_declarator2(decl, DECLKIND_NORMAL, false, true, true))
 			return free_tree(ic), free_tree(name), free_tree(decl);
 		if(LOOK_AHEAD(0)!=CT_ASSIGN)//TODO: make sense of this
 			return free_tree(ic), free_tree(name), free_tree(decl);
@@ -3218,18 +3251,34 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		ADVANCE;
 
 		INSERT_LEAF(root, CT_TYPEDEF, nullptr);
-		root->children.assign_pod(2, nullptr);
 
-		if(!r_typespecifier(root->children[0], false))
+		root->children.push_back(nullptr);
+		if(!r_typespecifier(root->children.back(), false))
 			return free_tree(root);
 
-		if(!r_declarators(root->children[1], true, false)||LOOK_AHEAD(0)!=CT_SEMICOLON)
+		if(!r_declarators_nonnull(root, true, false)||LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
 		ADVANCE;
 
 #ifdef DEBUG_PARSER
 		debugprint(root);//
 #endif
+
+		//if(root->children[0]&&root->children[1])//type & declarations node
+		//{
+		//	auto rtype=add_type(*root->children[0]->tdata);
+		//	for(int k=0;k<root->children[1]->children.size();++k)
+		//	{
+		//		auto declk=root->children[1]->children[k];
+		//		if(declk->children.size()==2&&declk->children[1])//function decl
+		//		{
+		//			for(int k2=0;declk->children[1]->children.size();++k2)//X  func args could be function pointers
+		//			{
+		//				auto argtype=declk->children[1]->children[k2];
+		//			}
+		//		}
+		//	}
+		//}
 		return true;
 	}
 	bool		r_if(IRNode *&root)//if.statement  :=  IF '(' condition ')' statement { ELSE statement }
@@ -3376,19 +3425,21 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		//	break;
 		}
 		root->children.push_back(nullptr);
-		root->children.push_back(nullptr);
 		
-		if(!r_typespecifier(root->children[0], true))
+		if(!r_typespecifier(root->children.back(), true))
 			return free_tree(root);
 
-		if(!r_declarator2(root->children[1], true, DECLKIND_ARG, false))
+		root->children.push_back(nullptr);
+		if(!r_declarator2(root->children.back(), DECLKIND_ARG, false, true, false))
 			return free_tree(root);
+		if(!root->children.back())//TODO: differentiate between: no parens, and ()
+			root->children.pop_back();
 
 		if(LOOK_AHEAD(0)==CT_ASSIGN)
 		{
 			ADVANCE;
 			root->children.push_back(nullptr);
-			if(!r_initialize_expr(root->children[2]))
+			if(!r_initialize_expr(root->children.back()))
 				return free_tree(root);
 		}
 
@@ -3732,8 +3783,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			ADVANCE;
 			return true;
 		}
-		root->children.push_back(nullptr);
-		if(!r_declarators(root->children.back(), false, true))
+		if(!r_declarators_nonnull(root, false, true))
+		//root->children.push_back(nullptr);
+		//if(!r_declarators(root->children.back(), false, true))
 			return free_tree(root);
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
@@ -3743,8 +3795,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	bool		r_const_decl(IRNode *&root)
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
-		root->children.push_back(nullptr);
-		if(!r_declarators(root->children.back(), false, false))//TODO: decl these variables as const
+		if(!r_declarators_nonnull(root, false, false))//TODO: decl these variables as const
+		//root->children.push_back(nullptr);
+		//if(!r_declarators(root->children.back(), false, false))
 			return false;
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
@@ -3787,11 +3840,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 
-		if(root->children.back()!=nullptr)
-			root->children.push_back(nullptr);
-		if(current_idx==12)//
-			int LOL_1=0;//
-		if(!r_declarators(root->children.back(), false, false))
+		//if(root->children.back()!=nullptr)
+		//	root->children.push_back(nullptr);
+		//if(!r_declarators(root->children.back(), false, false))
+		if(!r_declarators_nonnull(root, false, false))
 			return free_tree(root);
 
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
@@ -3812,20 +3864,31 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	bool		r_decl_stmt(IRNode *&root)
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);//children: {storage, cv, integral, int/const/other decl}		TODO: improve this
-		root->children.assign_pod(3, nullptr);
+
+		StorageTypeSpecifier esmr_flag=STORAGE_EXTERN;//TODO: storage specifier
 		int cv_flag=0;
-		if(!r_opt_storage_spec(root->children[0])||!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(root->children[1]))
+		bool cv_specified=false;
+		if(!r_opt_storage_spec(esmr_flag)||!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(root->children[1]))
 			return free_tree(root);
+		root->flags=0;
+		if(esmr_flag==STORAGE_UNSPECIFIED)
+			root->flag_esmr=STORAGE_EXTERN;
+		else
+			root->flag_esmr=esmr_flag;
+		root->flag_const=cv_flag&1;
+		root->flag_volatile=cv_flag>>1&1;
 		//IRNode *storage=nullptr, *cv=nullptr, *integral=nullptr;
 		//if(!r_opt_storage_spec(storage)||!r_opt_cv_qualify(cv)||r_opt_int_type_or_class_spec(integral))
 		//	return free_tree(storage), free_tree(cv), free_tree(integral);
 
-		if(root->children[0])
+		root->children.push_back(nullptr);
+		if(esmr_flag!=STORAGE_UNSPECIFIED)
 		{
-			if(!r_int_decl_stmt(root->children[2]))
+			if(!r_int_decl_stmt(root->children.back()))
 				return free_tree(root);
 			return true;
 		}
+
 		auto t=LOOK_AHEAD(0);
 		bool assign=false;
 		switch(LOOK_AHEAD(1))
@@ -3837,9 +3900,15 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_ASSIGN_AND:case CT_ASSIGN_XOR:case CT_ASSIGN_OR:
 			assign=true;
 		}
-		if(root->children[1]&&(t==CT_ID&&assign||t==CT_ASTERIX))
-			return r_const_decl(root->children[2]);
-		return r_other_decl_stmt(root->children[2]);
+		if(cv_flag&&(t==CT_ID&&assign||t==CT_ASTERIX))
+		{
+			if(!r_const_decl(root->children.back()))
+				return free_tree(root);
+			return true;
+		}
+		if(!r_other_decl_stmt(root->children.back()))
+			return free_tree(root);
+		return true;
 	}
 //expr.statement
 //  : ';'
@@ -4016,6 +4085,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			if(!r_arg_declaration(root->children.back()))
 				return free_tree(root);
 			t=LOOK_AHEAD(0);
+			if(t==CT_RPR)
+				break;
 			if(t==CT_COMMA)
 				ADVANCE;
 			else if(t!=CT_RPR&&t!=CT_ELLIPSIS)
@@ -4140,20 +4211,25 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //	    Point f(1)  ==> .. [f [( [1] )]]
 //
 //  Note: is_statement changes the behavior of rArgDeclListOrInit().
-	bool		r_declarator2(IRNode *&root, bool should_be_declarator, int kind, bool is_statement)
+	bool		r_declarator2(IRNode *&root, int kind, bool recursive, bool should_be_declarator, bool is_statement)
 	{
-		INSERT_LEAF(root, PT_FUNC_DECL, nullptr);//children: {???}
+		if(recursive)
+			INSERT_LEAF(root, PT_DECLARATION_PARENS, nullptr);//children: {???}			TODO: no declaration if has nothing
+		else
+			INSERT_LEAF(root, PT_DECLARATION, nullptr);
 
-		root->children.push_back(nullptr);
+		root->children.push_back(nullptr);//TODO: don't push back to root optional stuff
 		if(!r_opt_ptr_operator(root->children.back()))
 			return free_tree(root);
+		if(!root->children.back())
+			root->children.pop_back();
 
 		auto t=LOOK_AHEAD(0);
 		if(t==CT_LPR)
 		{
 			ADVANCE;
 			root->children.push_back(nullptr);
-			if(!r_declarator2(root->children.back(), true, kind, false)||LOOK_AHEAD(0)!=CT_RPR)
+			if(!r_declarator2(root->children.back(), kind, true, true, false)||LOOK_AHEAD(0)!=CT_RPR)
 				return free_tree(root);
 			ADVANCE;
 
@@ -4169,6 +4245,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		else if(kind!=DECLKIND_CAST&&(kind==DECLKIND_NORMAL||t==CT_ID||t==CT_SCOPE))
 		{
+			//if this is an argument declarator, "int (*)()" is valid
 			if(t==CT_CDECL||t==CT_THISCALL||t==CT_STDCALL)
 				ADVANCE;
 			root->children.push_back(nullptr);
@@ -4206,6 +4283,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				root->children.push_back(nullptr);
 				if(!r_opt_throw_decl(root->children.back()))
 					return free_tree(root);
+				if(!root->children.back())
+					root->children.pop_back();
 
 				if(LOOK_AHEAD(0)==CT_COLON)
 				{
@@ -4219,19 +4298,29 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			else if(t==CT_LBRACKET)//array
 			{
 				ADVANCE;
+				root->children.push_back(new IRNode(CT_LBRACKET, CT_IGNORED));
 
 				if(LOOK_AHEAD(0)!=CT_RBRACKET)
 				{
-					root->children.push_back(nullptr);
-					if(!r_comma_expr(root->children.back()))
+					root->children.back()->children.push_back(nullptr);
+					if(!r_comma_expr(root->children.back()->children.back()))
 						return free_tree(root);
 				}
 				if(LOOK_AHEAD(0)!=CT_RBRACKET)
 					return free_tree(root);
+				ADVANCE;
 			}
 			else
 				break;
 		}
+		if(kind==DECLKIND_ARG)
+		{
+			root->type=PT_ARG_DECL;
+			if(!root->children.size())
+				root->children.push_back(new IRNode(CT_VOID, CT_IGNORED));
+		}
+		else if(!root->children.size())
+			free_tree(root);
 		return true;
 	}
 	bool		r_declaratorwithinit(IRNode *&root, bool should_be_declarator, bool is_statement)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}		can be inlined
@@ -4245,7 +4334,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		else
 		{
-			if(!r_declarator2(root, should_be_declarator, DECLKIND_NORMAL, is_statement))
+			if(!r_declarator2(root, DECLKIND_NORMAL, false, should_be_declarator, is_statement))
 				return false;
 			switch(LOOK_AHEAD(0))
 			{
@@ -4264,14 +4353,15 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		return true;
 	}
-	bool		r_declarators(IRNode *&root, bool should_be_declarator, bool is_statement)//declarators := declarator.with.init (',' declarator.with.init)*
+	bool		r_declarators_nonnull(IRNode *&root, bool should_be_declarator, bool is_statement)//declarators := declarator.with.init (',' declarator.with.init)*
 	{
-		INSERT_LEAF(root, PT_DECLARATORS, nullptr);
+		//INSERT_LEAF(root, PT_DECLARATORS, nullptr);
 		for(;;)
 		{
 			root->children.push_back(nullptr);
 			if(!r_declaratorwithinit(root->children.back(), should_be_declarator, is_statement))
-				return free_tree(root);
+				return false;
+				//return free_tree(root);
 
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				break;
@@ -4364,17 +4454,19 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	bool		r_declaration(IRNode *&root)
 	{
 		INSERT_LEAF(root, PT_DECLARATION, nullptr);//children: {???}		TODO: organize structure
-		root->children.assign(2, nullptr);
-
-		if(!r_opt_member_spec(root->children[0])||!r_opt_storage_spec(root->children[1]))
+		//root->children.assign(2, nullptr);
+		
+		StorageTypeSpecifier esmr_flag=STORAGE_EXTERN;//TODO: storage specifier
+		int fvi_flag=0;
+		if(!r_opt_member_spec(fvi_flag)||!r_opt_storage_spec(esmr_flag)||!r_opt_member_spec(fvi_flag))
 			return free_tree(root);
 
-		if(!root->children[0])
-		{
-			root->children.push_back(nullptr);
-			if(!r_opt_member_spec(root->children.back()))
-				return false;
-		}
+		//if(!root->children[0])
+		//{
+		//	root->children.push_back(nullptr);
+		//	if(!r_opt_member_spec(root->children.back()))
+		//		return false;
+		//}
 		
 		int cv_flag=0;
 		if(!r_opt_cv_qualify(cv_flag))
@@ -4408,8 +4500,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				ADVANCE;
 				break;
 			default:
-				root->children.push_back(nullptr);
-				if(!r_declarators(root->children.back(), true, false))
+				if(!r_declarators_nonnull(root, true, false))
+				//root->children.push_back(nullptr);
+				//if(!r_declarators_nonnull(root->children.back(), true, false))
 					return free_tree(root);
 				if(LOOK_AHEAD(0)==CT_SEMICOLON)
 					ADVANCE;
@@ -4460,8 +4553,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
 
-			r2->children.push_back(nullptr);
-			if(!r_declarators(r2->children.back(), false, false))
+			if(!r_declarators_nonnull(r2, false, false))
+			//r2->children.push_back(nullptr);
+			//if(!r_declarators(r2->children.back(), false, false))
 				return free_tree(root);
 		}
 
@@ -4518,7 +4612,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			if(!r_typespecifier(root, true))
 				return false;
 			root->children.push_back(nullptr);
-			if(!r_declarator2(root->children.back(), true, DECLKIND_ARG, false))
+			if(!r_declarator2(root->children.back(), DECLKIND_ARG, false, true, false))
 				return free_tree(root);
 			if(LOOK_AHEAD(0)==CT_ASSIGN)
 			{
@@ -4888,7 +4982,15 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_INT16:
 		case CT_INT32:
 		case CT_INT64:
+#ifdef DEBUG_PARSER
+			{
+				bool res=r_declaration(root);
+				debugprint(root);//
+				return res;
+			}
+#else
 			return r_declaration(root);
+#endif
 
 		default:
 			parse_error("Expected a declaration");
