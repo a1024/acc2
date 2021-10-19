@@ -148,7 +148,7 @@ struct			PEHeader//wiki.osdev.org/PE
 	unsigned timedatestamp, pointertosymboltable, numberofsymbols;
 	unsigned short sizeofoptionalheader, characteristics;
 };
-struct Pe32OptionalHeader// 1 byte aligned
+struct			Pe32OptionalHeader// 1 byte aligned
 {
 	unsigned short mMagic; // 0x010b - PE32, 0x020b - PE32+ (64 bit)
 	byte mMajorLinkerVersion, mMinorLinkerVersion;
@@ -186,861 +186,9 @@ struct Pe32OptionalHeader// 1 byte aligned
 		mNumberOfRvaAndSizes;
 };
 
-//Programming an x64 compiler from scratch - part 2		https://www.youtube.com/watch?v=Mx29YQ4zAuM		3:32:00 - code generation
-//Programming an x64 compiler from scratch - part 3		https://www.youtube.com/watch?v=olSZ0d-nksE
-int				first_reg=R15;
-inline int		get_next_register(int reg)
-{
-	assert(reg>R8);
-	return reg-1;
-}
-//char register_alloc_order[]=
-//{
-//	R15,
-//	R14,
-//	R13,
-//	R12,
-//	R11,
-//	R10,
-//	R9,
-//	R8,
-//};
-//inline int		get_register(int index)
-//{
-//	assert(index<SIZEOF(register_alloc_order));
-//	return register_alloc_order[index];
-//}
-//inline int		get_next_register(int index)
-//{
-//	assert(index<SIZEOF(register_alloc_order));
-//	return register_alloc_order[index+1];
-//
-//	//assert(r<=R15);
-//	//return r+1+(r==RDX-1);
-//	//return r+1;
-//}
-/*int			next_register=0;
-int				allocate_register()
-{
-	assert(next_register<=R15);
-	return next_register++;
-}
-void			free_register()
-{
-	assert(next_register>RAX);
-	--next_register;
-}//*/
-static Expression const *current_expr=nullptr;//set by read_token()
-static int token_idx=0;
-static Token const *prev_token=nullptr, *current_token=nullptr;
-inline bool		read_token()
-{
-	while(token_idx<(int)current_expr->size())
-	{
-		prev_token=current_token;
-		current_token=&current_expr->operator[](token_idx);
-		++token_idx;
-		if(current_token->type>CT_IGNORED&&current_token->type<=CT_ACC2)
-			return true;
-	}
-	return false;
-}
-inline Token const* peek_token(Token const *c)
-{
-	int peek=c-current_expr->data();
-	++peek;
-	while(peek<(int)current_expr->size())
-	{
-		Token const *token=&current_expr->operator[](peek);
-		if(token->type>CT_IGNORED&&token->type<=CT_ACC2)
-			return token;
-		++peek;
-	}
-	return nullptr;
-}
-inline void		seek2token(Token const *token)
-{
-	current_token=token;
-	token_idx=token+1-current_expr->data();
-}
+//PARSER
 
-//enum			OperandTypeExt//TODO: use register numbers, immediate types have negative values
-//{
-//	OPERAND_IMM8=-3,
-//	OPERAND_IMM4=-2,
-//	OPERAND_IMM1=-1,
-//};
-enum			OperandType
-{
-	OPERAND_UNINITIALIZED=0,
-	OPERAND_IMM8='8',
-	OPERAND_REG_TEMP='E',		//temp reg
-	OPERAND_REG_REFERENCE='R',	//reference to a variable
-//	OPERAND_FRAME_OFFSET,		//rbp+offset			person.age: rbp+offset+age_offset
-//	OPERAND_ADDRESS,			//address
-};
-#if 1
-unsigned		reg_state=0;//0xFF00;//true means free, false means taken
-int				get_new_reg()
-{
-	unsigned long k=0;
-	char free_registers_flag=_BitScanForward(&k, reg_state);
-	assert(free_registers_flag);
-
-	//assert2(reg_state, "Out of registers.");
-	//int k=first_set_bit16(reg_state);
-
-	reg_state&=~(1<<k);//clear bit
-	return k;
-}
-void			reset_regstate()
-{
-	const char available_regs[]=
-	{
-		RCX,
-		RBX,
-		RSI,
-		RDI,
-		R8,
-		R9,
-		R10,
-		R11,
-		R12,
-		R13,
-		R14,
-		R15,
-	};
-	reg_state=0;
-	int nregs=SIZEOF(available_regs);
-	for(int k=0;k<nregs;++k)
-		reg_state|=1<<available_regs[k];
-	//reg_state=0xFF00;
-}
-inline void		free_register(char &reg)
-{
-	if(reg>=0)
-	{
-		assert(!(reg_state&1<<reg));//should be cleared
-		reg_state|=1<<reg;//set bit
-		reg=-1;
-	}
-}
-#else
-char			used_registers[16]={};
-int				get_new_reg()
-{
-	int k=0;
-	for(;k<16;++k)
-	{
-		auto &rk=used_registers[k];
-		if(k==RAX||k==RDX)//use 14 of 16 x86-64 registers
-			continue;
-		++rk;
-		if(rk==1)
-			break;
-	}
-	assert2(k<16, "Out of registers.");
-	return k;
-}
-void			reset_regstate()
-{
-	memset(used_registers, 0, 16);
-}
-inline void		free_register(char &reg)
-{
-	if(reg>=0)
-	{
-		used_registers[reg]=0;
-		reg=-1;
-	}
-}
-#endif
-struct			Operand
-{
-	byte type;
-	//byte islvalue;
-	//7 bytes padding
-	union
-	{
-		struct
-		{
-			union
-			{
-				char reg;
-				//3 bytes padding
-				unsigned frame_offset;
-			};
-			const char *id;
-		};
-		i64 addr;
-		//struct
-		//{
-		//	char reg;
-		//	//3 bytes padding
-		//	const char *id;
-		//};
-		i64 imm8;
-	};
-	Operand():type(OPERAND_UNINITIALIZED), imm8(0){}
-	//Operand():type(OPERAND_UNINITIALIZED), islvalue(false), imm8(0){}
-	//void mov2reg()
-	//{
-	//	assert2(type!=OPERAND_UNINITIALIZED, "Uninitialized operand.");
-	//	if(type==OPERAND_IMM8)
-	//	{
-	//		int k=get_new_reg();
-	//		EMIT_MOV_R_I(k, imm8);
-	//		type=OPERAND_REG_TEMP;
-	//		imm8=k;
-	//	}
-	//}
-};
-
-struct			Variable
-{
-	char reg;
-	bool initialized;
-	Variable():reg(0), initialized(false){}
-	Variable(char reg):reg(reg), initialized(false){}
-};
-typedef std::map<const char*, Variable> VarRegLib;
-static std::vector<VarRegLib> variables;//latest scope at the end
-//static VarRegLib variables;
-VarRegLib::EType* find_variable(const char *name)
-{
-	for(int ks=variables.size()-1;ks>=0;--ks)
-	{
-		auto pv=variables[ks].find(name);
-		if(pv)
-			return pv;
-	}
-	return nullptr;
-}
-
-static i64		parse_temp_result=0;
-static Token const *parse_temp_token=nullptr;
-
-static void		parse_assignment(Operand *dst);
-static void		parse_unary(Operand *dst)
-{
-	switch(current_token->type)
-	{
-	case CT_VAL_INTEGER:
-		dst->type=OPERAND_IMM8;
-		dst->imm8=current_token->idata;
-		read_token();//skip the integer
-		break;
-	case CT_ID:
-		{
-			parse_temp_token=current_token;
-			read_token();//skip the variable
-			auto id_var=find_variable(parse_temp_token->sdata);//reference to an int
-			//auto id_var=variables.find(parse_temp_token->sdata);
-			if(!id_var)
-				error_pp(*parse_temp_token, "Undeclared identifier: \'%s\'.", parse_temp_token->sdata);
-			else
-			{
-				dst->type=OPERAND_REG_REFERENCE;
-				dst->reg=id_var->second.reg;
-				dst->id=id_var->first;
-
-				//dst->type=OPERAND_REG_TEMP;
-				//dst->reg=get_new_reg();
-				//EMIT_R_R(MOV, dst->reg, id_var->second.reg);
-			}
-		}
-		break;
-	case CT_LPR:
-		read_token();
-		parse_assignment(dst);
-		if(current_token->type==CT_RPR)
-			read_token();//skip closing parenthesis
-		else
-			error_pp(*current_token, "Parenthesis mismatch.");
-		break;
-	default:
-		error_pp(*current_token, "Unexpected token: %d: %s", current_token->type, token2str(current_token->type));
-		break;
-	}
-}
-static void		parse_product(Operand *dst)
-{
-	parse_unary(dst);
-	while(current_token->type==CT_ASTERIX||current_token->type==CT_SLASH||current_token->type==CT_MODULO)
-	{
-		Operand next;
-		switch(current_token->type)
-		{
-		case CT_ASTERIX:
-			parse_temp_token=current_token;
-			read_token();//skip operator
-			parse_unary(&next);
-			if(dst->type==OPERAND_IMM8)
-			{
-				if(next.type==OPERAND_IMM8)	//dst=imm, next=imm
-					dst->imm8*=next.imm8;
-				else						//dst=imm, next=reg
-				{
-					dst->type=OPERAND_REG_TEMP;
-					if(is_pot(dst->imm8))//dst.reg=next.reg<<log2(dst->imm)
-					{
-						if(next.type==OPERAND_REG_REFERENCE)
-						{
-							int k=get_new_reg();
-							EMIT_R_R(MOV, k, next.reg);
-							next.imm8=k;
-						}
-						EMIT_R_I1(SHL, next.reg, floor_log2(dst->imm8));
-						dst->imm8=next.reg;
-					}
-					else//dst.reg=next.reg*dst->imm
-					{
-						EMIT_MOV_R_I(RAX, dst->imm8);
-						EMIT_X_R(MUL, next.reg);//{hi=RDX|lo=RAX} = RAX * operand
-						if(next.type==OPERAND_REG_REFERENCE)
-							dst->imm8=get_new_reg();
-						else//next is temp
-							dst->imm8=next.reg;//take the temp reg
-						EMIT_R_R(MOV, dst->reg, RAX);				//EXTRA MOV
-					}
-				}
-			}
-			else//dst->type == temp or reg
-			{
-				if(next.type==OPERAND_IMM8)	//dst=reg, next=imm
-				{
-					if(is_pot(next.imm8))//dst<<=log2(next.imm)
-					{
-						if(dst->type==OPERAND_REG_REFERENCE)
-						{
-							dst->type=OPERAND_REG_TEMP;
-							int k=get_new_reg();
-							EMIT_R_R(MOV, k, dst->reg);
-							dst->imm8=k;
-						}
-						EMIT_R_I1(SHL, dst->reg, floor_log2(next.imm8));
-					}
-					else//dst*=next.imm
-					{
-						EMIT_MOV_R_I(RAX, next.imm8);
-						EMIT_X_R(MUL, dst->reg);//SAWPPED
-						if(dst->type==OPERAND_REG_REFERENCE)
-						{
-							dst->type=OPERAND_REG_TEMP;
-							dst->imm8=get_new_reg();
-						}
-						EMIT_R_R(MOV, dst->reg, RAX);
-					}
-				}
-				else						//dst=reg, next=reg
-				{
-					EMIT_R_R(MOV, RAX, dst->reg);
-					EMIT_X_R(MUL, next.reg);
-					if(dst->type==OPERAND_REG_REFERENCE)
-					{
-						dst->type=OPERAND_REG_TEMP;
-						if(next.type==OPERAND_REG_TEMP)
-							dst->imm8=next.reg;
-						else//next is ref
-							dst->imm8=get_new_reg();
-					}
-					else if(next.type==OPERAND_REG_TEMP)
-						free_register(next.reg);
-					EMIT_R_R(MOV, dst->reg, RAX);
-				}
-			}
-			break;
-		case CT_SLASH:
-			parse_temp_token=current_token;
-			read_token();//skip operator
-			parse_unary(&next);
-			if(dst->type==OPERAND_IMM8)
-			{
-				if(next.type==OPERAND_IMM8)	//dst=imm, next=imm
-				{
-					if(next.imm8)
-						dst->imm8/=next.imm8;
-					else
-						error_pp(*parse_temp_token, "Integer division by zero.");
-				}
-				else						//dst=imm, next=reg		dst.reg=dst->imm/next.reg
-				{
-					EMIT_MOV_R_I(RAX, dst->imm8);
-					EMIT_X_R(DIV, next.reg);//{hi=RDX|lo=RAX} = RAX * operand
-					dst->type=OPERAND_REG_TEMP;
-					if(next.type==OPERAND_REG_REFERENCE)
-						dst->imm8=get_new_reg();
-					else//next is temp
-						dst->imm8=next.reg;//take the temp reg
-					EMIT_R_R(MOV, dst->reg, RAX);
-				}
-			}
-			else//dst->type == temp or reg
-			{
-				if(next.type==OPERAND_IMM8)	//dst=reg, next=imm
-				{
-					if(is_pot(dst->imm8))//dst.reg>>=log2(next.imm)
-					{
-						if(dst->type==OPERAND_REG_REFERENCE)
-						{
-							dst->type=OPERAND_REG_TEMP;
-							int k=get_new_reg();
-							EMIT_R_R(MOV, k, dst->reg);
-							dst->imm8=k;
-						}
-						EMIT_R_I1(SLR, dst->reg, floor_log2(next.imm8));
-						//EMIT_R_I1(SAR, dst->reg, floor_log2(next.imm8));
-					}
-					else//dst.reg=dst->reg/next.imm
-					{
-						EMIT_R_R(MOV, RAX, dst->reg);
-						EMIT_MOV_R_I(RDX, next.imm8);
-						EMIT_X_R(DIV, RDX);
-						if(dst->type==OPERAND_REG_REFERENCE)
-						{
-							dst->type=OPERAND_REG_TEMP;
-							dst->imm8=get_new_reg();
-						}
-						EMIT_R_R(MOV, dst->reg, RAX);
-					}
-				}
-				else						//dst=reg, next=reg
-				{
-					EMIT_R_R(MOV, RAX, dst->reg);
-					EMIT_X_R(DIV, next.reg);
-					if(dst->type==OPERAND_REG_REFERENCE)
-					{
-						dst->type=OPERAND_REG_TEMP;
-						if(next.type==OPERAND_REG_TEMP)
-							dst->imm8=next.reg;
-						else//next is ref
-							dst->imm8=get_new_reg();
-					}
-					else if(next.type==OPERAND_REG_TEMP)
-						free_register(next.reg);
-					EMIT_R_R(MOV, dst->reg, RAX);
-				}
-			}
-			break;
-		case CT_MODULO:
-			parse_temp_token=current_token;
-			read_token();//skip operator
-			parse_unary(&next);
-			if(dst->type==OPERAND_IMM8)
-			{
-				if(next.type==OPERAND_IMM8)	//dst=imm, next=imm
-				{
-					if(next.imm8)
-						dst->imm8%=next.imm8;
-					else
-						error_pp(*parse_temp_token, "Integer division by zero.");
-				}
-				else						//dst=imm, next=reg
-				{
-					EMIT_MOV_R_I(RAX, dst->imm8);
-					EMIT_X_R(DIV, next.reg);//{hi=RDX|lo=RAX} = RAX * operand
-					dst->type=OPERAND_REG_TEMP;
-					if(next.type==OPERAND_REG_REFERENCE)
-						dst->imm8=get_new_reg();
-					else//next is temp
-						dst->imm8=next.reg;//take the temp reg
-					EMIT_R_R(MOV, dst->reg, RDX);
-				}
-			}
-			else//dst->type == temp or reg
-			{
-				if(next.type==OPERAND_IMM8)	//dst=reg, next=imm
-				{
-					if(is_pot(next.imm8))//dst.reg>>=log2(next.imm)
-					{
-						if(dst->type==OPERAND_REG_REFERENCE)
-						{
-							dst->type=OPERAND_REG_TEMP;
-							int k=get_new_reg();
-							EMIT_R_R(MOV, k, dst->reg);
-							dst->imm8=k;
-						}
-						EMIT_R_I(AND, dst->reg, next.imm8-1);
-					}
-					else
-					{
-						EMIT_R_R(MOV, RAX, dst->reg);
-						EMIT_MOV_R_I(RDX, next.imm8);
-						EMIT_X_R(DIV, RDX);
-						if(dst->type==OPERAND_REG_REFERENCE)
-						{
-							dst->type=OPERAND_REG_TEMP;
-							dst->imm8=get_new_reg();
-						}
-						EMIT_R_R(MOV, dst->reg, RDX);
-					}
-				}
-				else						//dst=reg, next=reg
-				{
-					EMIT_R_R(MOV, RAX, dst->reg);
-					EMIT_X_R(DIV, next.reg);
-					if(dst->type==OPERAND_REG_REFERENCE)
-					{
-						dst->type=OPERAND_REG_TEMP;
-						if(next.type==OPERAND_REG_TEMP)
-							dst->imm8=next.reg;
-						else//next is ref
-							dst->imm8=get_new_reg();
-					}
-					else if(next.type==OPERAND_REG_TEMP)
-						free_register(next.reg);
-					EMIT_R_R(MOV, dst->reg, RDX);
-				}
-			}
-			break;
-		}
-	}
-}
-static void		parse_summation(Operand *dst)
-{
-	parse_product(dst);
-	while(current_token->type==CT_PLUS||current_token->type==CT_MINUS)
-	{
-		Operand next;
-		switch(current_token->type)
-		{
-		case CT_PLUS://dst + next
-			read_token();//skip +/-
-			parse_product(&next);
-			switch(dst->type)
-			{
-			case OPERAND_IMM8:
-				switch(next.type)
-				{
-				case OPERAND_IMM8:			//dst=imm, next=imm
-					dst->imm8+=next.imm8;
-					break;
-				case OPERAND_REG_TEMP:		//dst=imm, next=temp
-					dst->type=OPERAND_REG_TEMP;
-					dst->imm8=next.reg;
-					EMIT_R_I(ADD, next.reg, dst->imm8);//SWAPPED
-					break;
-				case OPERAND_REG_REFERENCE:	//dst=imm, next=ref
-					{
-						dst->type=OPERAND_REG_TEMP;
-						int k=get_new_reg();
-						EMIT_MOV_R_I(k, dst->imm8);
-						dst->imm8=k;
-						EMIT_R_R(ADD, dst->reg, next.reg);
-					}
-					break;
-				}
-				break;
-			case OPERAND_REG_TEMP:
-				switch(next.type)
-				{
-				case OPERAND_IMM8:			//dst=temp, next=imm
-					EMIT_R_I(ADD, dst->reg, next.imm8);
-					break;
-				case OPERAND_REG_TEMP:		//dst=temp, next=temp
-					EMIT_R_R(ADD, dst->reg, next.reg);
-					free_register(next.reg);
-					break;
-				case OPERAND_REG_REFERENCE:	//dst=temp, next=ref
-					EMIT_R_R(ADD, dst->reg, next.reg);
-					break;
-				}
-				break;
-			case OPERAND_REG_REFERENCE:
-				dst->type=OPERAND_REG_TEMP;
-				switch(next.type)
-				{
-				case OPERAND_IMM8:			//dst=ref, next=imm
-					{
-						int k=get_new_reg();
-						EMIT_R_R(MOV, k, dst->reg);
-						dst->imm8=k;
-						EMIT_R_I(ADD, dst->reg, next.imm8);
-					}
-					break;
-				case OPERAND_REG_TEMP:		//dst=ref, next=temp
-					EMIT_R_R(ADD, next.reg, dst->reg);//SWAPPED
-					dst->reg=next.reg;
-					break;
-				case OPERAND_REG_REFERENCE:	//dst=ref, next=ref
-					{
-						int k=get_new_reg();
-						EMIT_R_R(MOV, k, dst->reg);
-						dst->imm8=k;
-						EMIT_R_R(ADD, dst->reg, next.reg);
-					}
-					break;
-				}
-				break;
-			}
-			break;
-		case CT_MINUS://dst - next
-			read_token();//skip +/-
-			parse_product(&next);
-			switch(dst->type)
-			{
-			case OPERAND_IMM8:
-				switch(next.type)
-				{
-				case OPERAND_IMM8:			//dst=imm, next=imm
-					dst->imm8-=next.imm8;
-					break;
-				case OPERAND_REG_TEMP:		//dst=imm, next=temp
-				case OPERAND_REG_REFERENCE:	//dst=imm, next=ref
-					{
-						dst->type=OPERAND_REG_TEMP;
-						int k=get_new_reg();
-						EMIT_MOV_R_I(k, dst->imm8);
-						dst->imm8=k;
-						EMIT_R_R(SUB, dst->reg, next.reg);
-					}
-					break;
-				}
-				break;
-			case OPERAND_REG_TEMP:
-				switch(next.type)
-				{
-				case OPERAND_IMM8:			//dst=temp, next=imm
-					//EMIT_R_I(ADD, dst->reg, -next.imm8);
-					EMIT_R_I(SUB, dst->reg, next.imm8);
-					break;
-				case OPERAND_REG_TEMP:		//dst=temp, next=temp
-					EMIT_R_R(SUB, dst->reg, next.reg);
-					free_register(next.reg);
-					break;
-				case OPERAND_REG_REFERENCE:	//dst=temp, next=ref
-					EMIT_R_R(SUB, dst->reg, next.reg);
-					break;
-				}
-				break;
-			case OPERAND_REG_REFERENCE:
-				{
-					dst->type=OPERAND_REG_TEMP;
-					int k=get_new_reg();
-					EMIT_R_R(MOV, k, dst->reg);
-					dst->imm8=k;
-					switch(next.type)
-					{
-					case OPERAND_IMM8:			//dst=ref, next=imm
-						//EMIT_R_I(ADD, dst->reg, -next.imm8);
-						EMIT_R_I(SUB, dst->reg, next.imm8);
-						break;
-					case OPERAND_REG_TEMP:		//dst=ref, next=temp
-					case OPERAND_REG_REFERENCE:	//dst=ref, next=ref
-						EMIT_R_R(ADD, dst->reg, next.reg);
-						break;
-					}
-				}
-				break;
-			}
-			break;
-		}
-	}
-}
-VarRegLib::EType *parse_temp_pvar=nullptr;
-static void		parse_assignment(Operand *dst)
-{
-	auto identifier=current_token;
-	if(identifier&&identifier->type==CT_ID)
-	{
-		auto assignment=peek_token(current_token);
-		auto id_var=find_variable(identifier->sdata);
-		//auto id_var=variables.find(identifier->sdata);
-		if(!id_var)
-			error_pp(*identifier, "Undeclared identifier.");
-		else if(assignment)
-		{
-			if(assignment->type==CT_ASSIGN)
-			{
-				seek2token(assignment);
-				read_token();
-				Operand op;
-				parse_assignment(&op);
-				if(op.type==OPERAND_IMM8)
-					EMIT_MOV_R_I(id_var->second.reg, op.imm8);
-				else if(id_var->second.reg!=op.reg)
-				{
-					//if(op.type==OPERAND_REG_REFERENCE)
-						EMIT_R_R(MOV, id_var->second.reg, op.reg);
-					//else
-					//{
-					//	free_register(id_var->second.reg);//invalidates references
-					//	id_var->second.reg=op.reg;
-					//}
-				}
-				dst->type=OPERAND_REG_REFERENCE;
-				dst->reg=id_var->second.reg;
-				dst->id=id_var->first;
-			}
-			else//no assignment, parse starting from the identifier
-				parse_summation(dst);
-		}
-	}
-	else
-		parse_summation(dst);
-}
-static void		parse_statements()
-{
-	do
-	{
-		Operand op;
-		switch(current_token->type)
-		{
-		case CT_INT://declaration
-			{
-				read_token();//skip type
-				auto id_token=current_token;
-				if(id_token->type!=CT_ID)
-					error_pp(*id_token, "Expected an identifier.");
-				else//new variable declaration
-				{
-					read_token();//skip id
-					if(current_token->type==CT_ASSIGN)//assignment declaration
-					{
-						read_token();//skip assignment operator
-						parse_assignment(&op);
-		
-						bool old=false;
-						auto &id_reg=variables.back().insert_no_overwrite(VarRegLib::EType(id_token->sdata, Variable()), &old);
-						if(old)
-							error_pp(*id_token, "Redifinition of \'%s\'.", id_token->sdata);
-						else if(op.type==OPERAND_REG_REFERENCE)
-						{
-							id_reg.second.reg=get_new_reg();
-							EMIT_R_R(MOV, id_reg.second.reg, op.reg);
-							parse_temp_pvar=find_variable(op.id);
-							//parse_temp_pvar=variables.find(op.id);
-							id_reg.second.initialized=parse_temp_pvar&&parse_temp_pvar->second.initialized;
-							if(!id_reg.second.initialized)
-								error_pp(current_token[-1], "Uninitialized variable is used: \'%s\'", op.id);
-						}
-						else
-						{
-							id_reg.second.initialized=true;
-							if(op.type==OPERAND_IMM8)
-							{
-								id_reg.second.reg=get_new_reg();
-								EMIT_MOV_R_I(id_reg.second.reg, op.imm8);
-							}
-							else
-								id_reg.second.reg=op.reg;
-						}
-					}
-					else//declaration
-					{
-						bool old=false;
-						auto &id_reg=variables.back().insert_no_overwrite(VarRegLib::EType(id_token->sdata, op.reg), &old);
-						if(old)
-							error_pp(*id_token, "Redifinition of \'%s\'.", id_token->sdata);
-						else
-						{
-							id_reg.second.reg=get_new_reg();
-							id_reg.second.initialized=false;
-						}
-					}
-				}
-			}
-			break;
-		//case CT_IF:
-		//	break;
-		//case CT_FOR:
-		//	break;
-		default:
-			parse_assignment(&op);
-			if(op.type!=OPERAND_REG_REFERENCE)
-				free_register(op.reg);
-			break;
-		}
-
-		if(current_token->type!=CT_SEMICOLON)
-		{
-			error_pp(*current_token, "Expected a semicolon \';\'.");
-			break;
-		}
-	}while(read_token());//skip semicolon
-}
-static void		parse_globalstatement()
-{
-	switch(current_token->type)
-	{
-	case CT_EXTERN:
-		break;
-	case CT_STATIC:
-	case CT_CONST:
-	case CT_AUTO:
-	case CT_SIGNED:
-	case CT_UNSIGNED:
-	case CT_VOID:
-	case CT_BOOL:
-	case CT_CHAR:
-	case CT_SHORT:
-	case CT_INT:
-	case CT_LONG:
-	case CT_FLOAT:
-	case CT_DOUBLE:
-	case CT_WCHAR_T:
-	case CT_INT8:
-	case CT_INT16:
-	case CT_INT32:
-	case CT_INT64:
-	//case CT_M128:
-	//case CT_M128I:
-	//case CT_M128D:
-		break;
-	case CT_CLASS:
-	case CT_STRUCT:
-	case CT_UNION:
-		break;
-	case CT_ENUM:
-		break;
-	case CT_TYPEDEF:
-		break;
-	}
-}
-static void		parse_program()
-{
-}
-/*void			parse_eval_rec(Expression const &expr)
-{
-	current_expr=&expr, token_idx=0;
-
-	code_idx=0;
-	code.resize(1024);
-	
-//	emit_msdosstub();//
-
-	reset_regstate();
-	variables.assign(1, VarRegLib());
-	read_token();
-	parse_statements();
-
-	code.resize(code_idx);
-}//*/
-
-/*namespace		resources
-{
-	const int
-		statement1[]={CT_INT, CT_ID, CT_ASSIGN, -1, CT_SEMICOLON},
-		statement2[]={-1, CT_SEMICOLON};
-	const int
-		assignment1[]={-2},
-		assignment2[]={CT_ID, CT_ASSIGN, -1};
-	const int
-		summation1[]={-3},
-		summation2[]={-2, CT_PLUS, -3},
-		summation3[]={-2, CT_MINUS, -3};
-	const int
-		product1[]={-4},
-		product2[]={-3, CT_ASTERIX, -4},
-		product3[]={-3, CT_SLASH, -4},
-		product4[]={-3, CT_MODULO, -4};
-	const int
-		unary1[]={CT_VAL_INTEGER},
-		unary2[]={CT_ID},
-		unary3[]={CT_LPR, 0, CT_RPR};
-}//*/
-
-enum	StorageTypeSpecifier
+enum			StorageTypeSpecifier
 {
 	STORAGE_EXTERN,
 	STORAGE_STATIC,
@@ -1048,7 +196,7 @@ enum	StorageTypeSpecifier
 	STORAGE_REGISTER,
 	STORAGE_UNSPECIFIED,
 };
-enum	DataType
+enum			DataType
 {
 	TYPE_UNASSIGNED,
 	TYPE_AUTO,
@@ -1066,11 +214,13 @@ enum	DataType
 	TYPE_SIMD,//special struct
 	TYPE_ARRAY,
 	TYPE_POINTER,
+	TYPE_REFERENCE,
 	TYPE_FUNC,
 	TYPE_ELLIPSIS,
 	TYPE_NAMESPACE,
 };
-struct	TypeInfo
+struct			IRNode;
+struct			TypeInfo
 {
 	union
 	{
@@ -1078,22 +228,26 @@ struct	TypeInfo
 		{
 			unsigned short
 				datatype:5,//master attribute
-			//	is_unsigned:1,//only for int types
+			//	is_unsigned:1,//X  only for int types
 				logalign:3,//in bytes
 				is_const:1, is_volatile:1,
+				is_inline:1, is_virtual:1, is_friend:1,
 				storagetype:2;//one of: extern/static/mutable/register
-			//21 bits padding
+			//17 bits padding
 		};
 		int flags;
 	};
-	int size;//in bytes
+	int size;//in bytes			what about bitfields?
+
 	//char *name;				//X  primitive types only, a type can be aliased				//names must be qualified
+
+	std::vector<IRNode*> template_args, methods;//links
 
 	//class/struct/union: args points at member types, can include padding as void of nonzero size
 	//array/pointers: only one element pointing at pointed type
 	//array: 'size' is the count of pointed type
 	//functions: 1st element is points at return type
-	std::vector<TypeInfo*> args;//TODO: template args
+	std::vector<TypeInfo*> args;
 
 	TypeInfo():flags(0), size(0){}
 	TypeInfo(TypeInfo const &other):flags(other.flags), size(other.size), args(other.args){}
@@ -1127,6 +281,13 @@ struct	TypeInfo
 		this->is_volatile=is_volatile;
 		this->storagetype=storagetype;
 		//this->name=name;
+	}
+	void set_flags(byte esmr_flag, byte fvi_flag, byte cv_flag)
+	{
+		if(esmr_flag!=STORAGE_UNSPECIFIED)
+			storagetype=esmr_flag;
+		is_inline|=fvi_flag&1, is_virtual|=fvi_flag>>1&1, is_friend|=fvi_flag>>2&1;
+		is_const|=cv_flag&1, is_volatile|=cv_flag>>1&1;
 	}
 };
 struct	TypeInfoCmp
@@ -1526,8 +687,8 @@ void			debugprint(IRNode *root)
 	AST2str(root, str);
 	printf("%s\n\n", str.c_str());
 }
-namespace		parse//OpenC++		http://opencxx.sourceforge.net/
-{
+//namespace		parse//OpenC++		http://opencxx.sourceforge.net/
+//{
 	Expression	*current_ex=nullptr;
 	int			current_idx=0, ntokens=0, ir_size=0;
 #define			LOOK_AHEAD(K)		current_ex->operator[](current_idx+(K)).type
@@ -1555,6 +716,16 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			root=nullptr;
 		}
 		return false;
+	}
+	void		free_tree_not_an_error(IRNode *&root)
+	{
+		if(root)
+		{
+			for(int k=0;k<(int)root->children.size();++k)
+				free_tree_not_an_error(root->children[k]);
+			delete root;
+			root=nullptr;
+		}
 	}
 #define			INSERT_NONLEAF(ROOT, TEMP, TYPE)		TEMP=ROOT, ROOT=new IRNode(TYPE, CT_IGNORED), ROOT->children.push_back(TEMP);
 #define			INSERT_LEAF(ROOT, TYPE, DATA)			ROOT=new IRNode(TYPE, CT_IGNORED, DATA)
@@ -1602,6 +773,8 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 	//TODO: CHECK FOR BOUNDS
 
+	//TODO: only top-level functions can call free_tree()
+
 	//void		t_extract_func_args_type(IRNode *root)
 	//{
 	//}
@@ -1618,9 +791,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		DECLKIND_ARG,
 		DECLKIND_CAST,
 	};
-	bool		r_declarator2(IRNode *&root, int kind, bool recursive, bool should_be_declarator, bool is_statement);
+	bool		r_declarator2(IRNode *&root, TypeInfo &type, int kind, bool recursive, bool should_be_declarator, bool is_statement);
 	bool		r_opt_cv_qualify(int &cv_flag);//{bit 1: volatile, bit 0: const}
-	bool		r_opt_int_type_or_class_spec(IRNode *&root);
+	bool		r_opt_int_type_or_class_spec(IRNode *&root, TypeInfo &type);
 	bool		r_cast(IRNode *&root);
 	bool		r_unary(IRNode *&root);
 	bool		r_assign_expr(IRNode *&root);
@@ -1727,11 +900,11 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 	bool		r_typespecifier(IRNode *&root, bool check)//type.specifier  :=  [cv.qualify]? (integral.type.or.class.spec | name) [cv.qualify]?
 	{
-		TypeInfo type={};
+		TypeInfo type;
 		int cv_flag=0;
 		if(!r_opt_cv_qualify(cv_flag))
 			return false;
-		if(!r_opt_int_type_or_class_spec(root))
+		if(!r_opt_int_type_or_class_spec(root, type))
 			return false;
 		if(!root)
 		{
@@ -1741,36 +914,19 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				return false;
 			if(!r_opt_cv_qualify(cv_flag))
 				return false;
+			type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
+			root->tdata=add_type(type);
 			//TODO: combine cv_flag with id
 			return true;
 		}
 		if(!r_opt_cv_qualify(cv_flag))
 			return false;
-		type=*root->tdata;
-		type.is_const=cv_flag&1;
-		type.is_volatile=cv_flag>>1;
+		type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
+		//type=*root->tdata;
+		//type.is_const=cv_flag&1;
+		//type.is_volatile=cv_flag>>1;
 		root->tdata=add_type(type);
 		return true;
-#if 0
-		INSERT_LEAF(root, PT_TYPESPEC, nullptr);
-		root->children.assign_pod(3, nullptr);
-
-		if(!r_opt_cv_qualify(root->children[0])||!r_opt_int_type_or_class_spec(root->children[1]))
-			return free_tree(root);
-		if(!root->children[1])
-		{
-			if(check)
-			{
-				if(!maybe_typename_or_classtemplate())
-					return free_tree(root);
-			}
-			if(!r_name(root->children[1]))
-				return free_tree(root);
-		}
-		if(!r_opt_cv_qualify(root->children[2]))
-			return free_tree(root);
-		return true;
-#endif
 	}
 	bool		r_typename(IRNode *&root)//type.name  :=  type.specifier cast.declarator
 	{
@@ -1838,18 +994,15 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	}
 	bool		r_func_args(IRNode *&root)//function.arguments  :  empty  |  expression (',' expression)*		assumes that the next token following function.arguments is ')'
 	{
+		INSERT_LEAF(root, PT_FUNC_ARGS, nullptr);//TODO: less ambiguous parse token name
 		if(LOOK_AHEAD(0)==CT_RPR)
-		{
-			//INSERT_LEAF(root, CT_VOID, nullptr);
-			return true;//TODO: check child for nullptr
-		}
-		INSERT_LEAF(root, PT_FUNC_ARGS, nullptr);
+			return true;
 		for(;;)
 		{
-			IRNode *child=nullptr;
-			if(!r_assign_expr(child))
+			root->children.push_back(nullptr);
+			if(!r_assign_expr(root->children.back()))
 				return free_tree(root);
-			root->children.push_back(child);
+
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				break;
 			ADVANCE;
@@ -1903,10 +1056,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	//var.name  :=  ['::']? name2 ['::' name2]*
 	//name2  :=  Identifier {template.args}  |  '~' Identifier  |  OPERATOR operator.name
 	//if var.name ends with a template type, the next token must be '('
-	bool		r_varname(IRNode *&root)
+	bool		r_varname_nonnull(IRNode *&root)
 	{
-		bool global=LOOK_AHEAD(0)==CT_SCOPE;
-		ADVANCE_BY((int)global);
+		char global=LOOK_AHEAD(0)==CT_SCOPE;
+		ADVANCE_BY(global);
 		INSERT_LEAF(root, PT_VAR_REF, nullptr);
 		for(;;)
 		{
@@ -1923,21 +1076,26 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 						return free_tree(root);
 				}
 				if(moreVarName())
+				{
 					ADVANCE;
+					root->children.push_back(new IRNode(CT_SCOPE, CT_IGNORED));//TODO: reduce all this to a lookup
+				}
 				else
 				{
 					//TODO: lookup variable reference
 					return true;
 				}
 				break;
-			case CT_TILDE:
+			case CT_TILDE://obj.std::vector<int>::~vector();
 				ADVANCE;
 				t=&LOOK_AHEAD_TOKEN(0);
-				if(t->type!=CT_ID)
+				if(t->type!=CT_ID||LOOK_AHEAD(1)!=CT_LPR||LOOK_AHEAD(2)!=CT_RPR)
 					return free_tree(root);
+				ADVANCE_BY(3);
+
 				//TODO: lookup class name
 				root->children.push_back(new IRNode(PT_DESTRUCTOR, CT_IGNORED));
-				ADVANCE;
+				root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
 				return true;
 			case CT_OPERATOR:
 				root->children.push_back(new IRNode(CT_OPERATOR, CT_IGNORED));
@@ -2026,29 +1184,41 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		ADVANCE;
 		return true;
 	}
-	bool		r_opt_ptr_operator(IRNode *&root)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
+	bool		r_opt_ptr_operator_nonnull(IRNode *&root, TypeInfo &type)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
 	{
 		for(;;)
 		{
 			auto t=LOOK_AHEAD(0);
 			if(t!=CT_ASTERIX&&t!=CT_AMPERSAND&&!is_ptr_to_member(0))
 				break;
-			if(!root)
-				INSERT_LEAF(root, PT_PTR_OPERATOR, nullptr);
+
+			auto pt=add_type(type);
+			type=TypeInfo();
+			type.args.push_back(pt);
+
 			if(t==CT_ASTERIX||t==CT_AMPERSAND)
 			{
 				ADVANCE;
 				root->children.push_back(new IRNode(t, CT_IGNORED));
+				if(t==CT_ASTERIX)
+					type.datatype=TYPE_POINTER;
+				else
+				{
+					if(type.args[0]->datatype==TYPE_REFERENCE)
+						return free_tree(root);
+					type.datatype=TYPE_REFERENCE;
+				}
 			}
 			else
 			{
-				root->children.push_back(nullptr);
+				root->children.push_back(nullptr);//TODO: support "*classname::member_pointer"
 				if(!r_ptr_to_member(root->children.back()))
 					return free_tree(root);
 			}
 			int cv_flag=0;
 			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
+			type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
 			(int&)root->children.back()->opsign=cv_flag;//TODO: encode the pointer operator
 		}
 		return true;
@@ -2057,11 +1227,12 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //  : empty
 //  | ptr.operator
 //  | {ptr.operator} ('[' comma.expression ']')+
-	bool		r_new_declarator(IRNode *&root)
+	bool		r_new_declarator(IRNode *&root)//can be inlined
 	{
 		INSERT_LEAF(root, PT_NEW_DECLARATOR, nullptr);
-		root->children.push_back(nullptr);
-		if(!r_opt_ptr_operator(root->children[0]))
+		//root->children.push_back(nullptr);
+		//if(!r_opt_ptr_operator(root->children[0]))
+		if(!r_opt_ptr_operator_nonnull(root))
 			return free_tree(root);
 		while(LOOK_AHEAD(0)==CT_LBRACKET)
 		{
@@ -2127,7 +1298,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			if(!r_typespecifier(child, false))
 				return free_tree(root);
 			root->children.push_back(child);
-			if(!r_new_declarator(child))
+			if(!r_new_declarator(child))//can be inlined
 				return free_tree(root);
 			root->children.push_back(child);
 		}
@@ -2175,7 +1346,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			ADVANCE;
 			INSERT_LEAF(root, CT_NEW, nullptr);
 			root->children.push_back(nullptr);
-			return r_allocate_type(root->children[0])||free_tree(root);
+			if(!r_allocate_type(root->children[0]))//can be inlined
+				return free_tree(root);
+			return true;
 		}
 
 		return false;
@@ -2226,28 +1399,32 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			return r_typeid(root);
 		default:
 			{
-				INSERT_LEAF(root, PT_VAR_DECL, nullptr);
+				INSERT_LEAF(root, PT_CAST, nullptr);
 				root->children.push_back(nullptr);
-				if(!r_opt_int_type_or_class_spec(root->children[0]))
+				TypeInfo type;
+				if(!r_opt_int_type_or_class_spec(root->children.back(), type))
 					return free_tree(root);
-				if(root->children[0])//function style cast expression
+				root->tdata=add_type(type);
+				if(root->children.back())//function style cast expression
 				{
 					if(LOOK_AHEAD(0)!=CT_LPR)
 						return free_tree(root);
 					root->children.push_back(nullptr);
-					if(!r_func_args(root->children[1]))
+					if(!r_func_args(root->children.back()))
 						return free_tree(root);
 					if(LOOK_AHEAD(0)!=CT_RPR)
 						return free_tree(root);
 				}
 				else
 				{
-					if(!r_varname(root->children[0]))
+					root->children.pop_back();
+					root->type=PT_VAR_REF;
+					if(!r_varname_nonnull(root))
 						return free_tree(root);
 					if(LOOK_AHEAD(0)==CT_SCOPE)
 					{
 						root->children.push_back(nullptr);
-						if(!r_user_definition(root->children[1]))
+						if(!r_user_definition(root->children.back()))
 							return free_tree(root);
 					}
 				}
@@ -2275,51 +1452,56 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		IRNode *child=nullptr;
 		if(!r_primary(child))
 			return false;
-		for(auto t=LOOK_AHEAD(0);;t=LOOK_AHEAD(0))
+		for(auto t=LOOK_AHEAD(0);;t=LOOK_AHEAD(0))//primary(args)[comma]	should be:  SUBSCRIPT(CALL(primary, args), comma)
 		{
 			switch(t)
 			{
 			case CT_LBRACKET:
 				ADVANCE;
-				INSERT_LEAF(root, CT_LBRACKET, nullptr);
+				INSERT_LEAF(root, PT_ARRAY_SUBSCRIPT, nullptr);//primary[comma1][comma2] should be:  SUBSCRIPT(SUBSCRIPT(primary, comma1), comma2)
 				root->children.push_back(child);
 				root->children.push_back(nullptr);
-				if(!r_comma_expr(root->children[1]))
+				if(!r_comma_expr(root->children.back()))
 					return free_tree(root);
 				if(LOOK_AHEAD(0)!=CT_RBRACKET)
 					return free_tree(root);
 				ADVANCE;
-				break;
+				child=root;
+				continue;
 			case CT_LPR:
 				ADVANCE;
-				INSERT_LEAF(root, PT_FUNC_CALL, nullptr);
+				INSERT_LEAF(root, PT_FUNC_CALL, nullptr);//primary(args1)(args2) should be:  CALL(CALL(primary, args1), args2)
 				root->children.push_back(child);
 				root->children.push_back(nullptr);
-				if(!r_func_args(root->children[1]))
+				if(!r_func_args(root->children.back()))
 					return free_tree(root);
 				if(LOOK_AHEAD(0)!=CT_RBRACKET)
 					return free_tree(root);
 				ADVANCE;
-				break;
+				child=root;
+				continue;
 			case CT_INCREMENT:
 				ADVANCE;
 				INSERT_LEAF(root, PT_POST_INCREMENT, nullptr);
 				root->children.push_back(child);
-				break;
+				child=root;
+				continue;
 			case CT_DECREMENT:
 				ADVANCE;
 				INSERT_LEAF(root, PT_POST_DECREMENT, nullptr);
 				root->children.push_back(child);
-				break;
+				child=root;
+				continue;
 			case CT_PERIOD:
 			case CT_ARROW:
 				ADVANCE;
 				INSERT_LEAF(root, t, nullptr);
 				root->children.push_back(child);
-				root->children.push_back(nullptr);
-				if(!r_varname(root->children[1]))
+				root->children.push_back(new IRNode(PT_VAR_REF, CT_IGNORED));
+				if(!r_varname_nonnull(root->children.back()))
 					return free_tree(root);
-				break;
+				child=root;
+				continue;
 			default:
 				root=child;
 				return true;
@@ -2344,7 +1526,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				ADVANCE;
 				INSERT_LEAF(root, t, nullptr);
 				root->children.push_back(nullptr);
-				if(!r_cast(root->children[0]))
+				if(!r_cast(root->children.back()))
 					return free_tree(root);
 			}
 			break;
@@ -2962,17 +2144,16 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		return true;
 #endif
 	}
-	bool		r_opt_int_type_or_class_spec(IRNode *&root)//int.type.or.class.spec := (char|wchar_t|int|short|long|signed|unsigned|float|double|void|bool)+  |  class.spec  |  enum.spec
+	bool		r_opt_int_type_or_class_spec(IRNode *&root, TypeInfo &type)//int.type.or.class.spec := (char|wchar_t|int|short|long|signed|unsigned|float|double|void|bool)+  |  class.spec  |  enum.spec			type & root? assemble yourself
 	{
-		root=nullptr;//
-		TypeInfo type;
 		Name::Node *scope=nullptr;
 		short long_count=0, int_count=0;
 		for(;;)
 		{
 			auto token=&LOOK_AHEAD_TOKEN(0);
-			switch(token->type)					//TODO: correct type spec order
+			switch(token->type)
 			{
+			case CT_CONST:case CT_VOLATILE:
 			case CT_AUTO:
 			case CT_SIGNED:case CT_UNSIGNED:
 			case CT_VOID:
@@ -2982,10 +2163,18 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			case CT_WCHAR_T:
 			case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
 			case CT_ID:
-				ADVANCE;
 				switch(token->type)
 				{
+				case CT_CONST://"long const long" should work, cv_qualifiers can appear many times, same effect
+					ADVANCE;
+					type.is_const=true;
+					break;
+				case CT_VOLATILE:
+					ADVANCE;
+					type.is_volatile=true;
+					break;
 				case CT_AUTO:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
 						type.datatype=TYPE_AUTO;
 					else
@@ -2994,6 +2183,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_SIGNED:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED||type.datatype==TYPE_INT)
 					{
 						type.datatype=TYPE_INT_SIGNED;
@@ -3005,6 +2195,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_UNSIGNED:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED||type.datatype==TYPE_INT)
 					{
 						type.datatype=TYPE_INT_UNSIGNED;
@@ -3016,6 +2207,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_VOID:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
 						type.datatype=TYPE_VOID;
 					else
@@ -3024,6 +2216,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_BOOL:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_BOOL;
@@ -3031,6 +2224,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_CHAR:
+					ADVANCE;
 					switch(type.datatype)
 					{
 					case TYPE_UNASSIGNED:
@@ -3046,6 +2240,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_SHORT:
+					ADVANCE;
 					switch(type.datatype)
 					{
 					case TYPE_UNASSIGNED:
@@ -3061,6 +2256,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_INT:
+					ADVANCE;
 					++int_count;
 					switch(type.datatype)
 					{
@@ -3077,6 +2273,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_LONG:
+					ADVANCE;
 					++long_count;
 					switch(type.datatype)
 					{
@@ -3112,6 +2309,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_FLOAT:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_FLOAT;
@@ -3123,6 +2321,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_DOUBLE://TODO: differentiate long double (ok) & int double (error)
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_FLOAT;
@@ -3139,6 +2338,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_WCHAR_T:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_CHAR;
@@ -3146,6 +2346,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					}
 					break;
 				case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
+					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_CHAR;
@@ -3162,13 +2363,14 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 					scope=scope_lookup(token->sdata, false);//check if identifier==class/struct/union in this/global scope		TODO: support global lookup
 					if(!scope)
 					{
-						ADVANCE_BY(-1);
-						if(root)
-							root->set(add_type(type));
+						//ADVANCE_BY(-1);
+						//if(root)
+						//	root->set(add_type(type));
 						return true;//not declared yet
 						
 						//return free_tree(root);//error: unexpected identifier
 					}
+					ADVANCE;
 					switch(scope->data.tdata->datatype)
 					{
 					case TYPE_ENUM:
@@ -3189,6 +2391,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 						break;
 					default:
 						//error: identifier is not an enum/class/struct/union
+						//return false;
 						return free_tree(root);
 					}
 					break;
@@ -3199,14 +2402,18 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			case CT_CLASS:
 			case CT_STRUCT:
 			case CT_UNION://or UserKeyword
+				if(root)
+					return free_tree(root);
 				return r_class_spec(root);
 			case CT_ENUM:
+				if(root)
+					return free_tree(root);
 				return r_enum_spec(root);
 			}
 			break;
 		}//end for
-		if(root)
-			root->set(add_type(type));
+		//if(root)
+		//	root->set(add_type(type));
 		return true;
 	}
 
@@ -3214,8 +2421,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 	{
 		int cv_flag=0;
 		IRNode *ic=nullptr, *name=nullptr;
-		if(!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(ic))
+		TypeInfo type;
+		if(!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(ic, type))
 			return free_tree(ic);
+		type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
 		if(!r_name(name))
 			return free_tree(ic), free_tree(name);
 
@@ -3230,7 +2439,13 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		if(!r_assign_expr(expr))
 			return free_tree(ic), free_tree(name), free_tree(decl), free_tree(expr);
 
-		//TODO: join nodes
+		//join nodes
+		INSERT_LEAF(root, PT_SIMPLE_DECLARATION, nullptr);
+		root->tdata=add_type(type);
+		root->children.push_back(ic);
+		root->children.push_back(name);
+		root->children.push_back(decl);
+		root->children.push_back(expr);
 
 		return true;
 	}
@@ -3592,8 +2807,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 
+		TypeInfo type;
 		root->children.push_back(nullptr);
-		if(!r_opt_int_type_or_class_spec(root->children.back()))
+		if(!r_opt_int_type_or_class_spec(root->children.back(), type))
 			return free_tree(root);
 		if(!root->children.back())
 		{
@@ -3604,11 +2820,14 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
 		
-		root->children.push_back(nullptr);
-		if(!r_opt_ptr_operator(root->children.back()))
+		//root->children.push_back(nullptr);
+		//if(!r_opt_ptr_operator(root->children.back()))
+		if(!r_opt_ptr_operator_nonnull(root))
 			return free_tree(root);
 
-		return true;//TODO: complete this
+		//TODO: complete type & join nodes
+
+		return true;
 	}
 	bool		r_operator_name(IRNode *&root)
 	{
@@ -3686,7 +2905,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //  : Identifier {template.args}
 //  | '~' Identifier
 //  | OPERATOR operator.name {template.args}
-	bool		r_name(IRNode *&root)
+	bool		r_name(IRNode *&root)//TODO: use the lookup system here (except argument-dependent lookup), and store the potentially referenced namespace/type/object/function/method(s)
 	{
 		INSERT_LEAF(root, PT_NAME, nullptr);//children: {::?, name(s)}
 		auto t=&LOOK_AHEAD_TOKEN(0);
@@ -3804,9 +3023,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		ADVANCE;
 		return true;
 	}
+#if 0
 	bool		r_other_decl(IRNode *&root)//inlined
 	{
-#if 0
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
 
 		root->children.push_back(nullptr);
@@ -3824,10 +3043,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
-#endif
 
 		return true;
 	}
+#endif
 	bool		r_other_decl_stmt(IRNode *&root)//other.decl.statement  :=  decl.head name {cv.qualify} declarators ';'
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
@@ -3863,23 +3082,22 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //  : cv.qualify {'*'} Identifier '=' expression {',' declarators} ';'
 	bool		r_decl_stmt(IRNode *&root)
 	{
-		INSERT_LEAF(root, PT_VAR_DECL, nullptr);//children: {storage, cv, integral, int/const/other decl}		TODO: improve this
+		//INSERT_LEAF(root, PT_VAR_DECL, nullptr);//children: {storage, cv, integral, int/const/other decl}		TODO: improve this
 
+		TypeInfo type;
 		StorageTypeSpecifier esmr_flag=STORAGE_EXTERN;//TODO: storage specifier
 		int cv_flag=0;
-		bool cv_specified=false;
-		if(!r_opt_storage_spec(esmr_flag)||!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(root->children[1]))
+		if(!r_opt_storage_spec(esmr_flag)||!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(root, type))
 			return free_tree(root);
-		root->flags=0;
-		if(esmr_flag==STORAGE_UNSPECIFIED)
-			root->flag_esmr=STORAGE_EXTERN;
-		else
-			root->flag_esmr=esmr_flag;
-		root->flag_const=cv_flag&1;
-		root->flag_volatile=cv_flag>>1&1;
-		//IRNode *storage=nullptr, *cv=nullptr, *integral=nullptr;
-		//if(!r_opt_storage_spec(storage)||!r_opt_cv_qualify(cv)||r_opt_int_type_or_class_spec(integral))
-		//	return free_tree(storage), free_tree(cv), free_tree(integral);
+		type.set_flags(esmr_flag, 0, cv_flag);
+		root->tdata=add_type(type);
+		//root->flags=0;
+		//if(esmr_flag==STORAGE_UNSPECIFIED)
+		//	root->flag_esmr=STORAGE_EXTERN;
+		//else
+		//	root->flag_esmr=esmr_flag;
+		//root->flag_const=cv_flag&1;
+		//root->flag_volatile=cv_flag>>1&1;
 
 		root->children.push_back(nullptr);
 		if(esmr_flag!=STORAGE_UNSPECIFIED)
@@ -3899,6 +3117,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		case CT_ASSIGN_SL:case CT_ASSIGN_SR:
 		case CT_ASSIGN_AND:case CT_ASSIGN_XOR:case CT_ASSIGN_OR:
 			assign=true;
+			break;
 		}
 		if(cv_flag&&(t==CT_ID&&assign||t==CT_ASTERIX))
 		{
@@ -4066,15 +3285,12 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 	bool		r_arg_decllist(IRNode *&root)//arg.decl.list  :=  empty  |  arg.declaration ( ',' arg.declaration )* {{ ',' } Ellipses}
 	{
-		INSERT_LEAF(root, PT_DECL_LIST, nullptr);
+		INSERT_LEAF(root, PT_ARG_DECLLIST, nullptr);
+		auto t=LOOK_AHEAD(0);
+		if(t==CT_RPR)
+			return true;
 		for(;;)
 		{
-			auto t=LOOK_AHEAD(0);
-			if(t==CT_RPR)
-			{
-				root->children.push_back(new IRNode(CT_VOID, CT_IGNORED));
-				break;
-			}
 			if(t==CT_ELLIPSIS)
 			{
 				ADVANCE;
@@ -4211,18 +3427,23 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //	    Point f(1)  ==> .. [f [( [1] )]]
 //
 //  Note: is_statement changes the behavior of rArgDeclListOrInit().
-	bool		r_declarator2(IRNode *&root, int kind, bool recursive, bool should_be_declarator, bool is_statement)
+	bool		r_declarator2(IRNode *&root, TypeInfo &type, int kind, bool recursive, bool should_be_declarator, bool is_statement)
 	{
 		if(recursive)
-			INSERT_LEAF(root, PT_DECLARATION_PARENS, nullptr);//children: {???}			TODO: no declaration if has nothing
+			INSERT_LEAF(root, PT_DECLARATOR_PARENS, nullptr);//children: {???}			TODO: no declaration if has nothing
 		else
-			INSERT_LEAF(root, PT_DECLARATION, nullptr);
+			INSERT_LEAF(root, PT_DECLARATOR, nullptr);
 
-		root->children.push_back(nullptr);//TODO: don't push back to root optional stuff
-		if(!r_opt_ptr_operator(root->children.back()))
+		//root->children.push_back(nullptr);//TODO: don't push back to root optional stuff
+		//if(!r_opt_ptr_operator(root->children.back()))
+		//if(!r_opt_ptr_operator(root))
+		if(!r_opt_ptr_operator_nonnull(root))
 			return free_tree(root);
-		if(!root->children.back())
-			root->children.pop_back();
+		//if(root)
+		//	root->children.push_back(nullptr);
+		//auto &r2=root?root:root->children.back();
+		//if(!root->children.back())
+		//	root->children.pop_back();
 
 		auto t=LOOK_AHEAD(0);
 		if(t==CT_LPR)
@@ -4235,7 +3456,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 
 			if(!should_be_declarator)
 			{
-				if(kind==DECLKIND_NORMAL&&!root->children[0])
+				if(kind==DECLKIND_NORMAL&&root->children.size()==1)
 				{
 					t=LOOK_AHEAD(0);
 					if(t!=CT_LPR&&t!=CT_LBRACKET)
@@ -4247,7 +3468,10 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		{
 			//if this is an argument declarator, "int (*)()" is valid
 			if(t==CT_CDECL||t==CT_THISCALL||t==CT_STDCALL)
+			{
 				ADVANCE;
+				root->children.push_back(new IRNode(t, CT_IGNORED));
+			}
 			root->children.push_back(nullptr);
 			if(!r_name(root->children.back()))
 				return free_tree(root);
@@ -4256,21 +3480,27 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		for(;;)
 		{
 			t=LOOK_AHEAD(0);
-			if(t==CT_LPR)//function
+			if(t==CT_LPR)//function arglist
 			{
 				ADVANCE;
 
 				bool is_args=true;
-				if(LOOK_AHEAD(0)==CT_RPR)
-				{
-					//f(void)
-				}
-				else
-				{
-					root->children.push_back(nullptr);
-					if(!r_arg_decllist_or_init(root->children.back(), is_args, is_statement)||LOOK_AHEAD(0)!=CT_RPR)
-						return free_tree(root);
-				}
+				//if(LOOK_AHEAD(0)==CT_RPR)
+				//{
+				//	//f(void)
+				//}
+				//else
+				//{
+				//	root->children.push_back(nullptr);
+				//	if(!r_arg_decllist_or_init(root->children.back(), is_args, is_statement)||LOOK_AHEAD(0)!=CT_RPR)
+				//		return free_tree(root);
+				//}
+				root->children.push_back(nullptr);
+				if(!r_arg_decllist_or_init(root->children.back(), is_args, is_statement))
+					return free_tree(root);
+				
+				if(LOOK_AHEAD(0)!=CT_RPR)
+					return free_tree(root);
 				ADVANCE;
 
 				int cv_flag=0;
@@ -4280,13 +3510,14 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 						return free_tree(root);
 				}
 				
-				root->children.push_back(nullptr);
-				if(!r_opt_throw_decl(root->children.back()))
-					return free_tree(root);
-				if(!root->children.back())
-					root->children.pop_back();
+				if(LOOK_AHEAD(0)==CT_THROW)
+				{
+					root->children.push_back(nullptr);
+					if(!r_opt_throw_decl(root->children.back()))
+						return free_tree(root);
+				}
 
-				if(LOOK_AHEAD(0)==CT_COLON)
+				if(LOOK_AHEAD(0)==CT_COLON)//constructor member initializers
 				{
 					root->children.push_back(nullptr);
 					if(!r_member_initializers(root->children.back()))
@@ -4298,7 +3529,9 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			else if(t==CT_LBRACKET)//array
 			{
 				ADVANCE;
-				root->children.push_back(new IRNode(CT_LBRACKET, CT_IGNORED));
+				auto child=root->children.back();
+				root->children.back()=new IRNode(PT_ARRAY_SUBSCRIPT, CT_IGNORED);
+				root->children.back()->children.push_back(child);
 
 				if(LOOK_AHEAD(0)!=CT_RBRACKET)
 				{
@@ -4323,7 +3556,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 			free_tree(root);
 		return true;
 	}
-	bool		r_declaratorwithinit(IRNode *&root, bool should_be_declarator, bool is_statement)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}		can be inlined
+	bool		r_declaratorwithinit(IRNode *&root, TypeInfo &type, bool should_be_declarator, bool is_statement)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}		can be inlined
 	{
 		if(LOOK_AHEAD(0)==CT_COLON)//bit field
 		{
@@ -4334,14 +3567,15 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		else
 		{
-			if(!r_declarator2(root, DECLKIND_NORMAL, false, should_be_declarator, is_statement))
+			if(!r_declarator2(root, type, DECLKIND_NORMAL, false, should_be_declarator, is_statement))
 				return false;
 			switch(LOOK_AHEAD(0))
 			{
 			case CT_ASSIGN:
 				ADVANCE;
-				root->children.push_back(nullptr);
-				if(!r_initialize_expr(root->children.back()))
+				root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
+				root->children.back()->children.push_back(nullptr);
+				if(!r_initialize_expr(root->children.back()->children.back()))
 					return false;
 				break;
 			case CT_COLON://bit field
@@ -4353,7 +3587,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		return true;
 	}
-	bool		r_declarators_nonnull(IRNode *&root, bool should_be_declarator, bool is_statement)//declarators := declarator.with.init (',' declarator.with.init)*
+	bool		r_declarators_nonnull(IRNode *&root, TypeInfo &type, bool should_be_declarator, bool is_statement)//declarators := declarator.with.init (',' declarator.with.init)*
 	{
 		//INSERT_LEAF(root, PT_DECLARATORS, nullptr);
 		for(;;)
@@ -4453,39 +3687,37 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //  : cv.qualify {'*'} Identifier '=' expression {',' declarators} ';'
 	bool		r_declaration(IRNode *&root)
 	{
-		INSERT_LEAF(root, PT_DECLARATION, nullptr);//children: {???}		TODO: organize structure
+		//INSERT_LEAF(root, PT_DECLARATION, nullptr);//children: {???}		TODO: organize structure
 		//root->children.assign(2, nullptr);
 		
-		StorageTypeSpecifier esmr_flag=STORAGE_EXTERN;//TODO: storage specifier
-		int fvi_flag=0;
-		if(!r_opt_member_spec(fvi_flag)||!r_opt_storage_spec(esmr_flag)||!r_opt_member_spec(fvi_flag))
-			return free_tree(root);
-
-		//if(!root->children[0])
-		//{
-		//	root->children.push_back(nullptr);
-		//	if(!r_opt_member_spec(root->children.back()))
-		//		return false;
-		//}
+		TypeInfo type;
+		StorageTypeSpecifier esmr_flag=STORAGE_EXTERN;//TODO: pass the type instead of additional int flags, to save stack
+		int fvi_flag=0, cv_flag=0;
+		if(!r_opt_member_spec(fvi_flag)||!r_opt_storage_spec(esmr_flag))
+			return false;
+		if(!fvi_flag)
+		{
+			if(!r_opt_member_spec(fvi_flag))
+				return false;
+		}
 		
-		int cv_flag=0;
 		if(!r_opt_cv_qualify(cv_flag))
-			return free_tree(root);
+			return false;
 
-		root->children.push_back(nullptr);
-		if(!r_opt_int_type_or_class_spec(root->children.back()))
-			return free_tree(root);
+		if(!r_opt_int_type_or_class_spec(root, type))
+			return false;
 
-		if(root->children.back())
+		if(root)
 		{
 			//root->children.push_back(nullptr);
 			//if(!r_int_declaration(root->children.back()))//got inlined
 			//	return free_tree(root);
 
 			//r_int_declaration() inlined
-			int cv_flag=0;
 			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
+			
+			type.set_flags(esmr_flag, fvi_flag, cv_flag);
 
 			switch(LOOK_AHEAD(0))
 			{
@@ -4494,28 +3726,58 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 				break;
 			case CT_COLON://bit field
 				ADVANCE;
+				root->children.push_back(new IRNode(CT_COLON, CT_IGNORED));
+
 				root->children.push_back(nullptr);
-				if(!r_assign_expr(root->children.back())||LOOK_AHEAD(0)!=CT_SEMICOLON)
+				if(!r_assign_expr(root->children.back()))
+					return free_tree(root);
+
+				if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 					return free_tree(root);
 				ADVANCE;
+				root->tdata=add_type(type);
 				break;
 			default:
-				if(!r_declarators_nonnull(root, true, false))
 				//root->children.push_back(nullptr);
 				//if(!r_declarators_nonnull(root->children.back(), true, false))
+				if(!r_declarators_nonnull(root, true, false))
 					return free_tree(root);
 				if(LOOK_AHEAD(0)==CT_SEMICOLON)
 					ADVANCE;
 				else
 				{
 					root->children.push_back(nullptr);
-					if(!r_compoundstatement(root->children.back()))
+					if(!r_compoundstatement(root->children.back()))//function body
 						return free_tree(root);
 				}
+				root->tdata=add_type(type);
 				break;
 			}
+
+		/*	//type traversal
+			auto type=root->tdata;
+			for(int kd=0;kd<root->children.size();++kd)
+			{
+				auto child=root->children[kd];
+				if(child->type!=PT_DECLARATOR)//internal error: expected a declarator
+					return free_tree(root);
+				for(int ke=0;ke<child->children.size();++ke)
+				{
+					auto c2=child->children[ke];
+					switch(c2->type)
+					{
+					case CT_ASTERIX:
+					case CT_AMPERSAND:
+					case PT_DECLARATOR_PARENS:
+					case CT_ASSIGN:
+						break;
+					}
+				}
+			}//*/
 			return true;
 		}
+		
+		INSERT_LEAF(root, PT_DECLARATION, nullptr);
 
 		auto t=LOOK_AHEAD(0);
 		root->children.push_back(nullptr);
@@ -4549,7 +3811,7 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		}
 		else
 		{
-			int cv_flag=0;
+			cv_flag=0;
 			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
 
@@ -4999,9 +4261,24 @@ namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 		return true;
 	}
 #undef			LOOK_AHEAD
-}
+//}
 void			parse_cplusplus(Expression &ex, IRNode *&root)//OpenC++
 {
+	Token nulltoken={CT_IGNORED};
+	ex.insert_pod(ex.size(), nulltoken, 16);
+	current_ex=&ex;
+	ntokens=ex.size()-16;
+	current_idx=0;
+	ir_size=0;
+
+	INSERT_LEAF(root, PT_PROGRAM, nullptr);//node at 0 is always CT_PROGRAM, everything stems from there
+	for(;current_idx<ntokens;)
+	{
+		root->children.push_back(nullptr);
+		for(;current_idx<ntokens&&!r_definition(root->children.back());)
+			skip_till_after(CT_SEMICOLON);
+	}
+#if 0
 	Token nulltoken={CT_IGNORED};
 	ex.insert_pod(ex.size(), nulltoken, 16);
 	parse::current_ex=&ex;
@@ -5018,6 +4295,7 @@ void			parse_cplusplus(Expression &ex, IRNode *&root)//OpenC++
 		for(;parse::current_idx<parse::ntokens&&!parse::r_definition(root->children.back());)
 			parse::skip_till_after(CT_SEMICOLON);
 	}
+#endif
 }
 
 void			dump_code(const char *filename){save_file(filename, true, code.data(), code.size());}
@@ -5155,7 +4433,7 @@ void			compile(LexFile &lf)
 
 	save_file("D:/C/ACC2/ast.txt", false, str.c_str(), str.size());
 
-	parse::free_tree(root);
+	free_tree(root);
 	prof.add("free tree");
 
 	prof.print();

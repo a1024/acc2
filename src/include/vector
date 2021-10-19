@@ -363,7 +363,7 @@ namespace	std
 				n+=deltasize;
 				realloc(n);
 			}
-			for(ptrdiff_t k=0;k<ins_count;++k)//copy objects
+			for(size_t k=0;k<ins_count;++k)//copy objects
 				this->p[position+k]=p[k];
 		}
 		void replace_pod(size_t position, size_t rem_count, T const *p, size_t ins_count)//non-standard
