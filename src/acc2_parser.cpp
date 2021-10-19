@@ -219,21 +219,29 @@ enum			DataType
 	TYPE_ELLIPSIS,
 	TYPE_NAMESPACE,
 };
+enum			CallType
+{
+	CALL_CDECL,
+	CALL_STDCALL,
+	CALL_THISCALL,
+};
 struct			IRNode;
-struct			TypeInfo
+struct			TypeInfo//32 bytes
 {
 	union
 	{
 		struct
 		{
-			unsigned short
+			unsigned short//0SSF RIVC AAAD DDDD
 				datatype:5,//master attribute
 			//	is_unsigned:1,//X  only for int types
 				logalign:3,//in bytes
 				is_const:1, is_volatile:1,
 				is_inline:1, is_virtual:1, is_friend:1,
 				storagetype:2;//one of: extern/static/mutable/register
-			//17 bits padding
+
+			unsigned short//0000 0000 0000 00CC
+				calltype:2;
 		};
 		int flags;
 	};
@@ -717,7 +725,7 @@ void			debugprint(IRNode *root)
 		}
 		return false;
 	}
-	void		free_tree_not_an_error(IRNode *&root)
+	void		free_tree_not_an_error(IRNode *&root)//TODO: use only free_tree, because it will be used withoout error anyway, at deeper calls
 	{
 		if(root)
 		{
@@ -791,7 +799,7 @@ void			debugprint(IRNode *root)
 		DECLKIND_ARG,
 		DECLKIND_CAST,
 	};
-	bool		r_declarator2(IRNode *&root, TypeInfo &type, int kind, bool recursive, bool should_be_declarator, bool is_statement);
+	bool		r_declarator2(IRNode *&root, TypeInfo type, int kind, bool recursive, bool should_be_declarator, bool is_statement);//initialized type is passed by value
 	bool		r_opt_cv_qualify(int &cv_flag);//{bit 1: volatile, bit 0: const}
 	bool		r_opt_int_type_or_class_spec(IRNode *&root, TypeInfo &type);
 	bool		r_cast(IRNode *&root);
@@ -826,7 +834,7 @@ void			debugprint(IRNode *root)
 	};
 	bool		r_template_decl2(IRNode *&root, TemplateDeclarationType &templatetype);
 	bool		r_template_decl(IRNode *&root);
-	bool		r_declarators_nonnull(IRNode *&root, bool should_be_declarator, bool is_statement);
+	bool		r_declarators_nonnull(IRNode *&root, TypeInfo &type, bool should_be_declarator, bool is_statement);
 	bool		r_using(IRNode *&root);
 	bool		r_metaclass_decl(IRNode *&root);
 	bool		r_definition(IRNode *&root);
@@ -914,9 +922,11 @@ void			debugprint(IRNode *root)
 				return false;
 			if(!r_opt_cv_qualify(cv_flag))
 				return false;
-			type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
-			root->tdata=add_type(type);
-			//TODO: combine cv_flag with id
+			//type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);//X  type is uninitialized
+			//root->tdata=add_type(type);
+
+			//TODO: combine cv_flag with id		requires name system
+
 			return true;
 		}
 		if(!r_opt_cv_qualify(cv_flag))
@@ -932,7 +942,7 @@ void			debugprint(IRNode *root)
 	{
 		if(!r_typespecifier(root, true))
 			return false;
-		if(!r_declarator2(root, DECLKIND_CAST, false, false, false))
+		if(!r_declarator2(root, *root->tdata, DECLKIND_CAST, false, false, false))
 			return false;
 		return true;
 	}
@@ -1223,11 +1233,12 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
+#if 0
 //new.declarator
 //  : empty
 //  | ptr.operator
 //  | {ptr.operator} ('[' comma.expression ']')+
-	bool		r_new_declarator(IRNode *&root)//can be inlined
+	bool		r_new_declarator(IRNode *&root)			//can be inlined
 	{
 		INSERT_LEAF(root, PT_NEW_DECLARATOR, nullptr);
 		//root->children.push_back(nullptr);
@@ -1247,18 +1258,71 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
+#endif
+#if 0
 //allocate.type
 //  : {'(' function.arguments ')'} type.specifier new.declarator {allocate.initializer}
 //  | {'(' function.arguments ')'} '(' type.name ')' {allocate.initializer}
-	bool		r_allocate_type(IRNode *&root)//can be inlined
+	bool		r_allocate_type(IRNode *&root)			//shouldn't be inlined: multiple returns will bring goto
 	{
-		IRNode *child=nullptr;
 		INSERT_LEAF(root, PT_ALLOCATE_TYPE, nullptr);
 		if(LOOK_AHEAD(0)==CT_LPR)
 		{
 			ADVANCE;
+			//either func_args (either empty or ass_expr*) or typename
+			root->children.push_back(nullptr);
+			if(r_typename(root->children.back()))
+			{
+				if(LOOK_AHEAD(0)!=CT_RPR)
+					return free_tree(root);
+				ADVANCE;
+			}
+			else
+			{
+				if(!r_func_args(root->children.back()))
+					return free_tree(root);
+				if(LOOK_AHEAD(0)!=CT_RPR)
+					return free_tree(root);
+				ADVANCE;
+
+				//either {typespecifier, new_declarator} or '('typename')'
+				if(LOOK_AHEAD(0)!=CT_LPR)
+					goto r_allocate_type_choice1;
+				ADVANCE;
+				
+				root->children.push_back(nullptr);
+				if(!r_typename(root->children.back()))
+					return free_tree(root);
+
+				if(LOOK_AHEAD(0)!=CT_RPR)
+					return free_tree(root);
+				ADVANCE;
+			}
+		}
+		else
+		{
+		r_allocate_type_choice1:
+			root->children.push_back(nullptr);
+			if(!r_typespecifier(root->children.back(), false))
+				return free_tree(root);
+
+			root->children.push_back(nullptr);
+			if(!r_new_declarator(root->children.back()))
+				return free_tree(root);
+		}
+		root->children.push_back(nullptr);
+		if(!r_allocate_initializer(root->children.back()))
+			return free_tree(root);
+		if(!root->children.back())
+			root->children.pop_back();
+#if 0
+		IRNode *child=nullptr;
+		//INSERT_LEAF(root, PT_ALLOCATE_TYPE, nullptr);
+		if(LOOK_AHEAD(0)==CT_LPR)
+		{
+			ADVANCE;
 			int idx=current_idx;//save
-			if(r_typename(root))
+			if(r_typename(root))			//<- what?
 			{
 				if(GET_TOKEN==CT_RPR)
 				{
@@ -1275,7 +1339,9 @@ void			debugprint(IRNode *root)
 					}
 				}
 			}
+			//if we reach here, we have to process '(' function.arguments ')'.
 			current_idx=idx;//restore
+			free_tree_not_an_error(root);
 			if(!r_func_args(child))
 				return free_tree(root);
 			root->children.push_back(child);
@@ -1298,8 +1364,31 @@ void			debugprint(IRNode *root)
 			if(!r_typespecifier(child, false))
 				return free_tree(root);
 			root->children.push_back(child);
-			if(!r_new_declarator(child))//can be inlined
+
+			//if(!r_new_declarator(child))//inlined
+			//	return free_tree(root);
+
+			//r_new_declarator() inlined
+//new.declarator
+//  : empty
+//  | ptr.operator
+//  | {ptr.operator} ('[' comma.expression ']')+
+			INSERT_LEAF(root, PT_NEW_DECLARATOR, nullptr);
+			if(!r_opt_ptr_operator_nonnull(root))
 				return free_tree(root);
+			while(LOOK_AHEAD(0)==CT_LBRACKET)
+			{
+				ADVANCE;//skip '['
+				IRNode *child=nullptr;
+				if(!r_comma_expr(child))
+					return free_tree(root);
+				root->children.push_back(child);
+				if(LOOK_AHEAD(0)!=CT_RBRACKET)
+					return free_tree(root);
+				ADVANCE;//skip ']'
+			}
+			//end of r_new_declarator() inlined
+
 			root->children.push_back(child);
 		}
 
@@ -1310,7 +1399,9 @@ void			debugprint(IRNode *root)
 			root->children.push_back(child);
 		}
 		return true;
+#endif
 	}
+#endif
 //allocate.expr
 //  : {Scope | userdef.keyword} NEW allocate.type
 //  | {Scope} DELETE {'[' ']'} cast.expr
@@ -1345,10 +1436,94 @@ void			debugprint(IRNode *root)
 		{
 			ADVANCE;
 			INSERT_LEAF(root, CT_NEW, nullptr);
+			//TypeInfo *ptype=nullptr;
+
+			//root->children.push_back(nullptr);
+			//if(!r_allocate_type(root->children[0]))//shouldn't be inlined: multiple returns will bring goto	X  rewritten with single success return
+			//	return free_tree(root);
+
+			//r_allocate_type() inlined
+//allocate.type
+//  : {'(' function.arguments ')'} type.specifier new.declarator {allocate.initializer}
+//  | {'(' function.arguments ')'} '(' type.name ')' {allocate.initializer}
+			if(LOOK_AHEAD(0)==CT_LPR)
+			{
+				ADVANCE;
+				//either func_args (either empty or ass_expr*) or typename
+				root->children.push_back(nullptr);
+				if(r_typename(root->children.back()))
+				{
+					if(LOOK_AHEAD(0)!=CT_RPR)
+						return free_tree(root);
+					ADVANCE;
+				}
+				else
+				{
+					if(!r_func_args(root->children.back()))
+						return free_tree(root);
+					if(LOOK_AHEAD(0)!=CT_RPR)
+						return free_tree(root);
+					ADVANCE;
+
+					//either {typespecifier, new_declarator} or '('typename')'
+					if(LOOK_AHEAD(0)!=CT_LPR)
+						goto r_allocate_type_choice1;
+					ADVANCE;
+				
+					root->children.push_back(nullptr);
+					if(!r_typename(root->children.back()))
+						return free_tree(root);
+
+					if(LOOK_AHEAD(0)!=CT_RPR)
+						return free_tree(root);
+					ADVANCE;
+				}
+
+				//ptype=root->children.back()->tdata;
+			}
+			else
+			{
+			r_allocate_type_choice1:
+				root->children.push_back(nullptr);
+				if(!r_typespecifier(root->children.back(), false))
+					return free_tree(root);
+				TypeInfo type=*root->tdata;
+
+				//root->children.push_back(nullptr);
+				//if(!r_new_declarator(root->children.back()))//inlined
+				//	return free_tree(root);
+
+				//r_new_declarator() inlined
+//new.declarator
+//  : empty
+//  | ptr.operator
+//  | {ptr.operator} ('[' comma.expression ']')+
+				root->children.push_back(new IRNode(PT_NEW_DECLARATOR, CT_IGNORED));
+				auto child=root->children.back();
+				//INSERT_LEAF(child, PT_NEW_DECLARATOR, nullptr);
+				if(!r_opt_ptr_operator_nonnull(child, type))
+					return free_tree(root);
+				while(LOOK_AHEAD(0)==CT_LBRACKET)
+				{
+					ADVANCE;//skip '['
+
+					child->children.push_back(new IRNode(CT_LBRACKET, CT_IGNORED));
+					child->children.back()->children.push_back(nullptr);
+					if(!r_comma_expr(child->children.back()->children.back()))
+						return free_tree(root);
+
+					if(LOOK_AHEAD(0)!=CT_RBRACKET)
+						return free_tree(root);
+					ADVANCE;//skip ']'
+				}
+				//end of r_new_declarator() inlined
+			}
 			root->children.push_back(nullptr);
-			if(!r_allocate_type(root->children[0]))//can be inlined
+			if(!r_allocate_initializer(root->children.back()))
 				return free_tree(root);
-			return true;
+			if(!root->children.back())
+				root->children.pop_back();
+			//end of r_allocate_type() inlined
 		}
 
 		return false;
@@ -1810,7 +1985,7 @@ void			debugprint(IRNode *root)
 				t=LOOK_AHEAD(0);
 			}
 			root->children.push_back(nullptr);
-			if(!r_name(root->children.back()))
+			if(!r_name(root->children.back()))//lookup
 				return free_tree(root);
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				break;
@@ -1820,10 +1995,13 @@ void			debugprint(IRNode *root)
 	}
 	bool		r_access_decl(IRNode *&root)//access.decl  :=  name ';'
 	{
-		if(!r_name(root))
+		if(!r_name(root))//probably lookup
 			return false;
+
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
+		ADVANCE;
+
 		return true;
 	}
 //class.member
@@ -1848,10 +2026,12 @@ void			debugprint(IRNode *root)
 			INSERT_LEAF(root, t, nullptr);
 			if(LOOK_AHEAD(0)!=CT_COLON)
 				return free_tree(root);
+			ADVANCE;
 			break;
 		//case UserKeyword4://user.access.spec
 		//	break;
 		case CT_SEMICOLON:
+			ADVANCE;
 			break;
 		case CT_TYPEDEF:
 			if(!r_typedef(root))
@@ -1865,13 +2045,13 @@ void			debugprint(IRNode *root)
 			if(!r_using(root))
 				return false;
 			break;
-		case CT_CLASS:
-		case CT_STRUCT:
-		case CT_UNION:
-		case CT_ENUM:
-			if(!r_metaclass_decl(root))
-				return false;
-			break;
+		//case CT_CLASS://X  not metaclass		ignore for now
+		//case CT_STRUCT:
+		//case CT_UNION:
+		//case CT_ENUM:
+		//	if(!r_metaclass_decl(root))
+		//		return false;
+		//	break;
 		default:
 			{
 				int idx=current_idx;
@@ -1908,14 +2088,14 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 //class.spec
-//  : {userdef.keyword} class.key class.body
-//  | {userdef.keyword} class.key name {class.body}
-//  | {userdef.keyword} class.key name ':' base.specifiers class.body
+//  : {userdef.keyword} class.key							 class.body
+//  | {userdef.keyword} class.key name						{class.body}
+//  | {userdef.keyword} class.key name ':' base.specifiers	 class.body
 //
 //class.key  :=  CLASS | STRUCT | UNION
 	bool		r_class_spec(IRNode *&root)
 	{
-		//TODO: understand UserKeyword
+		//TODO: understand UserKeyword		ignore userdef.keyword for now
 		auto t=LOOK_AHEAD(0);
 		switch(t)
 		{
@@ -2417,44 +2597,93 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 
-	bool		r_simple_declaration(IRNode *&root)//condition controlling expression of switch/while/if
+#if 0
+	bool		r_simple_declaration(IRNode *&root)//condition controlling expression of switch/while/if		inline needs goto		inlined
 	{
-		int cv_flag=0;
-		IRNode *ic=nullptr, *name=nullptr;
-		TypeInfo type;
-		if(!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(ic, type))
-			return free_tree(ic);
-		type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
-		if(!r_name(name))
-			return free_tree(ic), free_tree(name);
-
-		IRNode *decl=nullptr;
-		if(!r_declarator2(decl, DECLKIND_NORMAL, false, true, true))
-			return free_tree(ic), free_tree(name), free_tree(decl);
-		if(LOOK_AHEAD(0)!=CT_ASSIGN)//TODO: make sense of this
-			return free_tree(ic), free_tree(name), free_tree(decl);
-		ADVANCE;
-
-		IRNode *expr;
-		if(!r_assign_expr(expr))
-			return free_tree(ic), free_tree(name), free_tree(decl), free_tree(expr);
-
-		//join nodes
 		INSERT_LEAF(root, PT_SIMPLE_DECLARATION, nullptr);
+		TypeInfo type;
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
+			return free_tree(root);
+
+		root->children.push_back(nullptr);
+		if(!r_opt_int_type_or_class_spec(root->children.back(), type))
+			return free_tree(root);
+
+		type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
 		root->tdata=add_type(type);
-		root->children.push_back(ic);
-		root->children.push_back(name);
-		root->children.push_back(decl);
-		root->children.push_back(expr);
+
+		root->children.push_back(nullptr);
+		if(!r_name(root->children.back()))
+			return free_tree(root);
+		
+		root->children.push_back(nullptr);
+		if(!r_declarator2(root->children.back(), *root->tdata, DECLKIND_NORMAL, false, true, true))
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)!=CT_ASSIGN)
+			return free_tree(root);
+		ADVANCE;
+		root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
+
+		root->children.push_back(nullptr);
+		if(!r_assign_expr(root->children.back()))
+			return free_tree(root);
 
 		return true;
 	}
-	bool		r_condition(IRNode *&root)//condition  :=  simple.declaration  |  comma.expresion
+#endif
+//condition
+//  : {cv.qualify} (int.type.or.class.spec | name) declarator2 '=' assign.expr		//<- simple.declaration
+//  | comma.expresion
+	bool		r_condition(IRNode *&root)
 	{
 		int t_idx=current_idx;
-		if(!r_simple_declaration(root))
-			return false;//TODO: minimal required calls to free_tree()
+
+		//if(r_simple_declaration(root))//inline needs goto		inlined
+		//	return true;
+
+		//r_simple_declaration() inlined
+		INSERT_LEAF(root, PT_SIMPLE_DECLARATION, nullptr);
+		TypeInfo type;
+		int cv_flag=0;
+		if(!r_opt_cv_qualify(cv_flag))
+			goto r_condition_choice2;
+
+		root->children.push_back(nullptr);
+		if(!r_opt_int_type_or_class_spec(root->children.back(), type))
+			goto r_condition_choice2;
+
+		if(!root)
+		{
+			root->children.push_back(nullptr);
+			if(!r_name(root->children.back()))//lookup
+				goto r_condition_choice2;
+			//TODO: initialize the type with the name
+		}
+		type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
+		root->tdata=add_type(type);
+		
+		root->children.push_back(nullptr);
+		if(!r_declarator2(root->children.back(), *root->tdata, DECLKIND_NORMAL, false, true, true))
+			goto r_condition_choice2;
+
+		if(LOOK_AHEAD(0)!=CT_ASSIGN)
+			goto r_condition_choice2;
+		ADVANCE;
+		root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
+
+		root->children.push_back(nullptr);
+		if(!r_assign_expr(root->children.back()))
+			goto r_condition_choice2;
+
+		return true;
+		//end of r_simple_declaration() inlined
+
+	r_condition_choice2:
+		free_tree_not_an_error(root);
 		current_idx=t_idx;//restore state
+
 		return r_comma_expr(root);
 		//return r_comma_expr(root)||free_tree(root);//X  not required here
 	}
@@ -2471,13 +2700,16 @@ void			debugprint(IRNode *root)
 		if(!r_typespecifier(root->children.back(), false))
 			return free_tree(root);
 
-		if(!r_declarators_nonnull(root, true, false)||LOOK_AHEAD(0)!=CT_SEMICOLON)
+		if(!r_declarators_nonnull(root, *root->children.back()->tdata, true, false))
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
 		ADVANCE;
 
-#ifdef DEBUG_PARSER
-		debugprint(root);//
-#endif
+//#ifdef DEBUG_PARSER
+//		debugprint(root);//
+//#endif
 
 		//if(root->children[0]&&root->children[1])//type & declarations node
 		//{
@@ -2625,7 +2857,7 @@ void			debugprint(IRNode *root)
 	}
 	bool		r_arg_declaration(IRNode *&root)//arg.declaration  :=  {userdef.keyword | REGISTER} type.specifier arg.declarator {'=' initialize.expr}
 	{
-		INSERT_LEAF(root, PT_ARG_DECL, nullptr);//children: {type, argname [, default value]}
+		//INSERT_LEAF(root, PT_ARG_DECL, nullptr);//children: {type, argname [, default value]}
 
 		switch(LOOK_AHEAD(0))
 		{
@@ -2637,24 +2869,22 @@ void			debugprint(IRNode *root)
 		//case CT_THISCALL:
 		//case CT_STDCALL:
 		//	root->children.push_back(new IRNode(LOOK_AHEAD(0), CT_IGNORED));
+		//	ADVANCE;
 		//	break;
 		}
-		root->children.push_back(nullptr);
-		
-		if(!r_typespecifier(root->children.back(), true))
-			return free_tree(root);
+		if(!r_typespecifier(root, true))
+			return false;
 
 		root->children.push_back(nullptr);
-		if(!r_declarator2(root->children.back(), DECLKIND_ARG, false, true, false))
+		if(!r_declarator2(root->children.back(), *root->tdata, DECLKIND_ARG, false, true, false))
 			return free_tree(root);
-		if(!root->children.back())//TODO: differentiate between: no parens, and ()
-			root->children.pop_back();
 
 		if(LOOK_AHEAD(0)==CT_ASSIGN)
 		{
 			ADVANCE;
-			root->children.push_back(nullptr);
-			if(!r_initialize_expr(root->children.back()))
+			root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
+			root->children.back()->children.push_back(nullptr);
+			if(!r_initialize_expr(root->children.back()->children.back()))
 				return free_tree(root);
 		}
 
@@ -2813,19 +3043,23 @@ void			debugprint(IRNode *root)
 			return free_tree(root);
 		if(!root->children.back())
 		{
-			if(!r_name(root->children.back()))
+			if(!r_name(root->children.back()))//lookup
 				return free_tree(root);
+
+			//TODO: initialize the type based on this name		requires name system
 		}
 		root->children.push_back(nullptr);
 		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
+
+		type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
 		
 		//root->children.push_back(nullptr);
 		//if(!r_opt_ptr_operator(root->children.back()))
-		if(!r_opt_ptr_operator_nonnull(root))
+		if(!r_opt_ptr_operator_nonnull(root, type))//TODO: organize what gets inserted into the parse tree
 			return free_tree(root);
 
-		//TODO: complete type & join nodes
+		root->tdata=add_type(type);
 
 		return true;
 	}
@@ -2905,6 +3139,7 @@ void			debugprint(IRNode *root)
 //  : Identifier {template.args}
 //  | '~' Identifier
 //  | OPERATOR operator.name {template.args}
+//  | decltype '(' name ')'			//C++11
 	bool		r_name(IRNode *&root)//TODO: use the lookup system here (except argument-dependent lookup), and store the potentially referenced namespace/type/object/function/method(s)
 	{
 		INSERT_LEAF(root, PT_NAME, nullptr);//children: {::?, name(s)}
@@ -2918,14 +3153,14 @@ void			debugprint(IRNode *root)
 		else
 		{
 			//TODO: search all nested scopes upwards
-			if(t->type==CT_DECLTYPE)
+			if(t->type==CT_DECLTYPE)//C++11
 			{
 				ADVANCE;
 				if(LOOK_AHEAD(0)!=CT_LPR)
 					return free_tree(root);
 				root->children.push_back(new IRNode(CT_DECLTYPE, CT_IGNORED));
 				root->children.push_back(nullptr);
-				if(!r_name(root->children.back()))
+				if(!r_name(root->children.back()))//lookup
 					return free_tree(root);
 				if(LOOK_AHEAD(0)!=CT_RPR)
 					return free_tree(root);
@@ -2991,36 +3226,39 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
-	bool		r_int_decl_stmt(IRNode *&root)//integral.decl.statement  :=  decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'
+#if 0
+	bool		r_int_decl_stmt(IRNode *&root)//integral.decl.statement  :=  decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'		single call
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);//TODO: pass cv_q to r_int_decl_stmt()
 		int cv_flag=0;
 		if(!r_opt_cv_qualify(cv_flag))
 			return free_tree(root);
-		if(LOOK_AHEAD(0)==CT_SEMICOLON)
-		{
-			ADVANCE;
-			return true;
-		}
-		if(!r_declarators_nonnull(root, false, true))
-		//root->children.push_back(nullptr);
-		//if(!r_declarators(root->children.back(), false, true))
-			return free_tree(root);
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return free_tree(root);
+		{
+			//root->children.push_back(nullptr);
+			//if(!r_declarators(root->children.back(), false, true))
+			if(!r_declarators_nonnull(root, false, true))
+				return free_tree(root);
+			if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+				return free_tree(root);
+		}
 		ADVANCE;
 		return true;
 	}
-	bool		r_const_decl(IRNode *&root)
+#endif
+	bool		r_const_decl(IRNode *&root, TypeInfo &type)
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
-		if(!r_declarators_nonnull(root, false, false))//TODO: decl these variables as const
+
 		//root->children.push_back(nullptr);
 		//if(!r_declarators(root->children.back(), false, false))
-			return false;
+		if(!r_declarators_nonnull(root, type, false, false))//TODO: decl these variables as const
+			return free_tree(root);
+
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
 		ADVANCE;
+
 		return true;
 	}
 #if 0
@@ -3047,6 +3285,7 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 #endif
+#if 0
 	bool		r_other_decl_stmt(IRNode *&root)//other.decl.statement  :=  decl.head name {cv.qualify} declarators ';'
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
@@ -3070,16 +3309,14 @@ void			debugprint(IRNode *root)
 
 		return true;
 	}
+#endif
 //declaration.statement
-//  : decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'
-//  | decl.head name {cv.qualify} declarators ';'
-//  | const.declaration
+//  : {storage.spec} {cv.qualify} integral.type.or.class.spec {cv.qualify} {declarators} ';'	//<- integral.decl.statement
+//  | {storage.spec} {cv.qualify} name {cv.qualify} declarators ';'								//<- other.decl.statement
+//  | cv.qualify {'*'} Identifier '=' expression {',' declarators} ';'							//<- const.declaration
 //
 //decl.head
 //  : {storage.spec} {cv.qualify}
-//
-//const.declaration
-//  : cv.qualify {'*'} Identifier '=' expression {',' declarators} ';'
 	bool		r_decl_stmt(IRNode *&root)
 	{
 		//INSERT_LEAF(root, PT_VAR_DECL, nullptr);//children: {storage, cv, integral, int/const/other decl}		TODO: improve this
@@ -3087,25 +3324,36 @@ void			debugprint(IRNode *root)
 		TypeInfo type;
 		StorageTypeSpecifier esmr_flag=STORAGE_EXTERN;//TODO: storage specifier
 		int cv_flag=0;
-		if(!r_opt_storage_spec(esmr_flag)||!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(root, type))
+		if(!r_opt_storage_spec(esmr_flag)||!r_opt_cv_qualify(cv_flag)||!r_opt_int_type_or_class_spec(root, type)||!root)//not optional
 			return free_tree(root);
-		type.set_flags(esmr_flag, 0, cv_flag);
-		root->tdata=add_type(type);
-		//root->flags=0;
-		//if(esmr_flag==STORAGE_UNSPECIFIED)
-		//	root->flag_esmr=STORAGE_EXTERN;
-		//else
-		//	root->flag_esmr=esmr_flag;
-		//root->flag_const=cv_flag&1;
-		//root->flag_volatile=cv_flag>>1&1;
 
-		root->children.push_back(nullptr);
 		if(esmr_flag!=STORAGE_UNSPECIFIED)
 		{
-			if(!r_int_decl_stmt(root->children.back()))
+			//if(!r_int_decl_stmt(root->children.back()))//inlined
+			//	return free_tree(root);
+
+			//r_int_decl_stmt() inlined
+			//INSERT_LEAF(root, PT_VAR_DECL, nullptr);
+			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
+
+			type.set_flags(esmr_flag, 0, cv_flag);
+			root->tdata=add_type(type);
+
+			if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+			{
+				if(!r_declarators_nonnull(root, *root->tdata, false, true))
+					return free_tree(root);
+
+				if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+					return free_tree(root);
+			}
+			ADVANCE;
+			//end of r_int_decl_stmt() inlined
+
 			return true;
 		}
+		root->children.push_back(nullptr);
 
 		auto t=LOOK_AHEAD(0);
 		bool assign=false;
@@ -3121,12 +3369,36 @@ void			debugprint(IRNode *root)
 		}
 		if(cv_flag&&(t==CT_ID&&assign||t==CT_ASTERIX))
 		{
-			if(!r_const_decl(root->children.back()))
+			type.set_flags(esmr_flag, 0, cv_flag);
+			root->tdata=add_type(type);
+
+			if(!r_const_decl(root->children.back(), *root->tdata))
 				return free_tree(root);
 			return true;
 		}
-		if(!r_other_decl_stmt(root->children.back()))
+		//if(!r_other_decl_stmt(root->children.back()))//inlined
+		//	return free_tree(root);
+
+		//r_other_decl_stmt() inlined
+		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
+
+		root->children.push_back(nullptr);
+		if(!r_name(root->children.back()))//lookup
 			return free_tree(root);
+		
+		if(!r_opt_cv_qualify(cv_flag))
+			return free_tree(root);
+		
+		type.set_flags(esmr_flag, 0, cv_flag);
+		root->tdata=add_type(type);
+
+		if(!r_declarators_nonnull(root, type, false, false))
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+			return free_tree(root);
+		//end of r_other_decl_stmt() inlined
+
 		return true;
 	}
 //expr.statement
@@ -3358,7 +3630,7 @@ void			debugprint(IRNode *root)
 					break;
 
 				root->children.push_back(nullptr);
-				if(!r_name(root->children.back()))
+				if(!r_name(root->children.back()))//lookup
 					return free_tree(root);
 			}
 
@@ -3373,7 +3645,7 @@ void			debugprint(IRNode *root)
 		INSERT_LEAF(root, PR_MEMBER_INIT, nullptr);
 
 		root->children.push_back(nullptr);
-		if(!r_name(root->children.back()))
+		if(!r_name(root->children.back()))//lookup
 			return free_tree(root);
 
 		//TODO: qualified name lookup
@@ -3412,13 +3684,13 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 //declarator
-//  : (ptr.operator)* (name | '(' declarator ')') ('[' comma.expression ']')* {func.args.or.init}
+//  : (ptr.operator)* ('(' declarator ')' | name) ('[' comma.expression ']')* {func.args.or.init}
 //
 //func.args.or.init
 //  : '(' arg.decl.list.or.init ')' {cv.qualify} {throw.decl} {member.initializers}
 //
 //  Note: We assume that '(' declarator ')' is followed by '(' or '['.
-//	This is to avoid accepting a function call F(x) as a pair of a type F and a declarator x.
+//	This is to avoid accepting a function call F(x) as a type F and a declarator x.
 //	This assumption is ignored if should_be_declarator is true.
 //
 //  Note: An argument declaration list and a function-style initializer take a different Ptree structure.
@@ -3427,7 +3699,7 @@ void			debugprint(IRNode *root)
 //	    Point f(1)  ==> .. [f [( [1] )]]
 //
 //  Note: is_statement changes the behavior of rArgDeclListOrInit().
-	bool		r_declarator2(IRNode *&root, TypeInfo &type, int kind, bool recursive, bool should_be_declarator, bool is_statement)
+	bool		r_declarator2(IRNode *&root, TypeInfo type, int kind, bool recursive, bool should_be_declarator, bool is_statement)//type is already initialized
 	{
 		if(recursive)
 			INSERT_LEAF(root, PT_DECLARATOR_PARENS, nullptr);//children: {???}			TODO: no declaration if has nothing
@@ -3437,7 +3709,7 @@ void			debugprint(IRNode *root)
 		//root->children.push_back(nullptr);//TODO: don't push back to root optional stuff
 		//if(!r_opt_ptr_operator(root->children.back()))
 		//if(!r_opt_ptr_operator(root))
-		if(!r_opt_ptr_operator_nonnull(root))
+		if(!r_opt_ptr_operator_nonnull(root, type))
 			return free_tree(root);
 		//if(root)
 		//	root->children.push_back(nullptr);
@@ -3450,7 +3722,10 @@ void			debugprint(IRNode *root)
 		{
 			ADVANCE;
 			root->children.push_back(nullptr);
-			if(!r_declarator2(root->children.back(), kind, true, true, false)||LOOK_AHEAD(0)!=CT_RPR)
+			if(!r_declarator2(root->children.back(), type, kind, true, true, false))//recursive
+				return free_tree(root);
+
+			if(LOOK_AHEAD(0)!=CT_RPR)
 				return free_tree(root);
 			ADVANCE;
 
@@ -3472,9 +3747,16 @@ void			debugprint(IRNode *root)
 				ADVANCE;
 				root->children.push_back(new IRNode(t, CT_IGNORED));
 			}
-			root->children.push_back(nullptr);
-			if(!r_name(root->children.back()))
-				return free_tree(root);
+			if(LOOK_AHEAD(0)==CT_ID&&LOOK_AHEAD(1)!=CT_SCOPE)
+			{
+				//TODO: definition with simple identifier
+			}
+			else
+			{
+				root->children.push_back(nullptr);
+				if(!r_name(root->children.back()))//lookup for static variables like "int *ClassName::StaticVar=0;"
+					return free_tree(root);
+			}
 		}
 
 		for(;;)
@@ -3593,7 +3875,7 @@ void			debugprint(IRNode *root)
 		for(;;)
 		{
 			root->children.push_back(nullptr);
-			if(!r_declaratorwithinit(root->children.back(), should_be_declarator, is_statement))
+			if(!r_declaratorwithinit(root->children.back(), type, should_be_declarator, is_statement))
 				return false;
 				//return free_tree(root);
 
@@ -3671,12 +3953,9 @@ void			debugprint(IRNode *root)
 //  : {member.spec} {storage.spec} {member.spec} {cv.qualify}
 //
 //integral.declaration
-//  : integral.decl.head declarators (';' | function.body)
-//  | integral.decl.head ';'
-//  | integral.decl.head ':' expression ';'
-//
-//integral.decl.head
-//  : decl.head integral.type.or.class.spec {cv.qualify}
+//  : decl.head integral.type.or.class.spec {cv.qualify} declarators (';' | function.body)
+//  | decl.head integral.type.or.class.spec {cv.qualify} ';'
+//  | decl.head integral.type.or.class.spec {cv.qualify} ':' expression ';'
 //
 //other.declaration
 //  : decl.head name {cv.qualify} declarators (';' | function.body)
@@ -3718,6 +3997,7 @@ void			debugprint(IRNode *root)
 				return free_tree(root);
 			
 			type.set_flags(esmr_flag, fvi_flag, cv_flag);
+			root->tdata=add_type(type);
 
 			switch(LOOK_AHEAD(0))
 			{
@@ -3735,12 +4015,11 @@ void			debugprint(IRNode *root)
 				if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 					return free_tree(root);
 				ADVANCE;
-				root->tdata=add_type(type);
 				break;
 			default:
 				//root->children.push_back(nullptr);
 				//if(!r_declarators_nonnull(root->children.back(), true, false))
-				if(!r_declarators_nonnull(root, true, false))
+				if(!r_declarators_nonnull(root, *root->tdata, true, false))
 					return free_tree(root);
 				if(LOOK_AHEAD(0)==CT_SEMICOLON)
 					ADVANCE;
@@ -3750,7 +4029,6 @@ void			debugprint(IRNode *root)
 					if(!r_compoundstatement(root->children.back()))//function body
 						return free_tree(root);
 				}
-				root->tdata=add_type(type);
 				break;
 			}
 
@@ -3782,15 +4060,19 @@ void			debugprint(IRNode *root)
 		auto t=LOOK_AHEAD(0);
 		root->children.push_back(nullptr);
 		if(*(root->children.end()-3)&&(t==CT_ID&&LOOK_AHEAD(1)==CT_ASSIGN||t==CT_ASTERIX))
-			return r_const_decl(root->children.back());
+		{
+			type.set_flags(esmr_flag, fvi_flag, cv_flag);
+			root->tdata=add_type(type);
+
+			return r_const_decl(root->children.back(), *root->tdata);
+		}
 		//return r_other_decl(root->children.back());//inlined below
 
+		root->children.push_back(new IRNode(PT_VAR_DECL, CT_IGNORED));
 		auto r2=root->children.back();
 
-		INSERT_LEAF(r2, PT_VAR_DECL, nullptr);
-
 		r2->children.push_back(nullptr);
-		if(!r_name(r2->children.back()))
+		if(!r_name(r2->children.back()))//lookup
 			return free_tree(root);
 
 		if(!*(root->children.end()-3)&&is_constructor_or_decl())
@@ -3811,11 +4093,13 @@ void			debugprint(IRNode *root)
 		}
 		else
 		{
-			cv_flag=0;
 			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
 
-			if(!r_declarators_nonnull(r2, false, false))
+			type.set_flags(esmr_flag, fvi_flag, cv_flag);
+			root->tdata=add_type(type);
+
+			if(!r_declarators_nonnull(r2, *root->tdata, false, false))
 			//r2->children.push_back(nullptr);
 			//if(!r_declarators(r2->children.back(), false, false))
 				return free_tree(root);
@@ -3841,13 +4125,15 @@ void			debugprint(IRNode *root)
 		auto t=LOOK_AHEAD(0);
 		if(t==CT_CLASS&&LOOK_AHEAD(1)==CT_ID)
 		{
-			INSERT_LEAF(root, PT_TEMPLATE_ARG, LOOK_AHEAD_TOKEN(1).sdata);
+			INSERT_LEAF(root, CT_CLASS, LOOK_AHEAD_TOKEN(1).sdata);
+		//	INSERT_LEAF(root, PT_TEMPLATE_ARG, LOOK_AHEAD_TOKEN(1).sdata);
 			ADVANCE_BY(2);
 			if(LOOK_AHEAD(0)==CT_ASSIGN)
 			{
 				ADVANCE;
-				root->children.push_back(nullptr);
-				if(!r_typename(root->children.back()))
+				root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
+				root->children.back()->children.push_back(nullptr);
+				if(!r_typename(root->children.back()->children.back()))
 					return free_tree(root);
 			}
 		}
@@ -3874,7 +4160,7 @@ void			debugprint(IRNode *root)
 			if(!r_typespecifier(root, true))
 				return false;
 			root->children.push_back(nullptr);
-			if(!r_declarator2(root->children.back(), DECLKIND_ARG, false, true, false))
+			if(!r_declarator2(root->children.back(), *root->tdata, DECLKIND_ARG, false, true, false))
 				return free_tree(root);
 			if(LOOK_AHEAD(0)==CT_ASSIGN)
 			{
@@ -4086,16 +4372,23 @@ void			debugprint(IRNode *root)
 	{
 		if(LOOK_AHEAD(0)!=CT_USING)
 			return false;
+		ADVANCE;
 		INSERT_LEAF(root, CT_USING, nullptr);//children: {[namespace], name}
-		root->children.assign_pod(2, nullptr);
+
 		if(LOOK_AHEAD(0)==CT_NAMESPACE)
 		{
 			ADVANCE;
-			root->children[0]=new IRNode(CT_NAMESPACE, CT_IGNORED);
+			root->children.push_back(new IRNode(CT_NAMESPACE, CT_IGNORED));
 		}
-		if(!r_name(root->children[1])||LOOK_AHEAD(0)!=CT_SEMICOLON)
+
+		root->children.push_back(nullptr);
+		if(!r_name(root->children.back()))//lookup
+			return free_tree(root);
+
+		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
 			return free_tree(root);
 		ADVANCE;
+
 		return true;
 	}
 
@@ -4138,11 +4431,8 @@ void			debugprint(IRNode *root)
 			return false;
 		ADVANCE_BY(2);
 
-		INSERT_LEAF(root, PT_DECLARATION, nullptr);//children: {???}
-		root->children.assign_pod(2);
+		INSERT_LEAF(root, t, t2->sdata);//children: {???}
 
-		root->children[0]=new IRNode(t, CT_IGNORED);
-		root->children[1]=new IRNode(CT_ID, CT_IGNORED, t2->sdata);
 		t2=&LOOK_AHEAD_TOKEN(0);
 		switch(t2->type)
 		{
@@ -4181,11 +4471,11 @@ void			debugprint(IRNode *root)
 		case CT_TEMPLATE:
 			return r_template_decl(root);
 
-		case CT_ENUM:
-		case CT_STRUCT:
-		case CT_CLASS:
-		case CT_UNION:
-			return r_metaclass_decl(root);
+		//case CT_ENUM://X  not metaclass		ignore for now
+		//case CT_STRUCT:
+		//case CT_CLASS:
+		//case CT_UNION:
+		//	return r_metaclass_decl(root);
 
 		case CT_EXTERN:
 			switch(LOOK_AHEAD(1))
@@ -4206,6 +4496,7 @@ void			debugprint(IRNode *root)
 			case CT_CHAR:case CT_SHORT:case CT_INT:case CT_LONG:
 			case CT_FLOAT:case CT_DOUBLE:
 			case CT_WCHAR_T:case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
+			case CT_ENUM:case CT_STRUCT:case CT_CLASS:case CT_UNION:
 				return r_declaration(root);
 			default:
 				parse_error("Expected an extern declaration");
@@ -4222,37 +4513,18 @@ void			debugprint(IRNode *root)
 			return r_using(root);
 
 			//variable/function declaration
-		case CT_CONSTEXPR:
-		case CT_INLINE:
-		case CT_STATIC:
-		case CT_REGISTER:
-		case CT_VOLATILE:
-		case CT_CONST:
+		case CT_CONSTEXPR:case CT_INLINE:
+		case CT_STATIC:case CT_REGISTER:
+		case CT_VOLATILE:case CT_CONST:
 		case CT_AUTO:
-		case CT_SIGNED:
-		case CT_UNSIGNED:
+		case CT_SIGNED:case CT_UNSIGNED:
 		case CT_VOID:
 		case CT_BOOL:
-		case CT_CHAR:
-		case CT_SHORT:
-		case CT_INT:
-		case CT_LONG:
-		case CT_FLOAT:
-		case CT_DOUBLE:
-		case CT_WCHAR_T:
-		case CT_INT8:
-		case CT_INT16:
-		case CT_INT32:
-		case CT_INT64:
-#ifdef DEBUG_PARSER
-			{
-				bool res=r_declaration(root);
-				debugprint(root);//
-				return res;
-			}
-#else
+		case CT_CHAR:case CT_SHORT:case CT_INT:case CT_LONG:
+		case CT_FLOAT:case CT_DOUBLE:
+		case CT_WCHAR_T:case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
+		case CT_ENUM:case CT_STRUCT:case CT_CLASS:case CT_UNION:
 			return r_declaration(root);
-#endif
 
 		default:
 			parse_error("Expected a declaration");
@@ -4275,8 +4547,12 @@ void			parse_cplusplus(Expression &ex, IRNode *&root)//OpenC++
 	for(;current_idx<ntokens;)
 	{
 		root->children.push_back(nullptr);
-		for(;current_idx<ntokens&&!r_definition(root->children.back());)
+		auto &node=root->children.back();
+		for(;current_idx<ntokens&&!r_definition(node);)
 			skip_till_after(CT_SEMICOLON);
+#ifdef DEBUG_PARSER
+		debugprint(root->children.back());//
+#endif
 	}
 #if 0
 	Token nulltoken={CT_IGNORED};
