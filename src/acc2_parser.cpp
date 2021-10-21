@@ -226,7 +226,7 @@ enum			CallType
 	CALL_THISCALL,
 };
 struct			IRNode;
-struct			TypeInfo//32 bytes
+struct			TypeInfo//28 bytes
 {
 	union
 	{
@@ -245,11 +245,13 @@ struct			TypeInfo//32 bytes
 		};
 		int flags;
 	};
-	int size;//in bytes			what about bitfields?
+	size_t size;//in bytes			what about bitfields?
 
 	//char *name;				//X  primitive types only, a type can be aliased				//names must be qualified
 
-	std::vector<IRNode*> template_args, methods;//links
+	//links:
+	std::vector<IRNode*> template_args;
+	IRNode *body;//for class/struct/union, enum or function
 
 	//class/struct/union: args points at member types, can include padding as void of nonzero size
 	//array/pointers: only one element pointing at pointed type
@@ -333,26 +335,27 @@ TypeInfo*		add_type(TypeInfo &type)
 	return t3;
 }
 
-enum			NameType
-{
-	NAME_NAMESPACE,
-	NAME_STRUCT,//or class
-	NAME_UNION,
-	NAME_ENUM,
-	NAME_TEMPLATE_STRUCT,
-	NAME_TEMPLATE_UNION,
-	NAME_FUNCTION,
-	NAME_TEMPLATE_FUNCTION,
-	NAME_VARIABLE,
-};
-struct			NameInfo
-{
-	NameType type;
-	TypeInfo *tdata;
-	std::vector<CTokenType> *template_args;
-	//std::vector<CTokenType> template_args;
-};
-typedef std::maptree<NameInfo, char*> Name;
+typedef std::maptree<TypeInfo*, char*> Name;
+//enum			NameType
+//{
+//	NAME_NAMESPACE,
+//	NAME_STRUCT,//or class
+//	NAME_UNION,
+//	NAME_ENUM,
+//	NAME_TEMPLATE_STRUCT,
+//	NAME_TEMPLATE_UNION,
+//	NAME_FUNCTION,
+//	NAME_TEMPLATE_FUNCTION,
+//	NAME_VARIABLE,
+//};
+//struct		NameInfo
+//{
+//	NameType type;//already in TypeInfo
+//	TypeInfo *tdata;
+//	std::vector<CTokenType> *template_args;//already in TypeInfo
+//	//std::vector<CTokenType> template_args;
+//};
+//typedef std::maptree<NameInfo, char*> Name;
 Name			scope_global;
 char			*scope_id_lbrace=nullptr;
 void			scope_init()
@@ -376,9 +379,9 @@ void			scope_exit()
 	else
 		scope_global.close();
 }
-void			scope_declare_member(char *name, NameInfo const &s)
+void			scope_declare_member(char *name, TypeInfo *pt)
 {
-	scope_global.insert(name, s, true);
+	scope_global.insert(name, pt, true);
 }
 Name::Node*		scope_lookup(char *id, bool global)
 {
@@ -735,6 +738,12 @@ void			debugprint(IRNode *root)
 			root=nullptr;
 		}
 	}
+	bool		scope_error(IRNode *&root)
+	{
+		skip_till_after(CT_RBRACE);
+		scope_exit();
+		return free_tree(root);
+	}
 #define			INSERT_NONLEAF(ROOT, TEMP, TYPE)		TEMP=ROOT, ROOT=new IRNode(TYPE, CT_IGNORED), ROOT->children.push_back(TEMP);
 #define			INSERT_LEAF(ROOT, TYPE, DATA)			ROOT=new IRNode(TYPE, CT_IGNORED, DATA)
 #define			INSERT_CHILD(ROOT, CHILDNUM, NEXT)		ROOT->children.push_back(nullptr); if(!NEXT(ROOT->children[CHILDNUM]))return free_tree(ROOT);
@@ -791,7 +800,7 @@ void			debugprint(IRNode *root)
 	bool		is_ptr_to_member(int i);
 	bool		r_ptr_to_member(IRNode *&root);
 
-	bool		r_name(IRNode *&root);
+	bool		r_name_lookup(IRNode *&root);
 
 	enum		DeclaratorKind
 	{
@@ -918,7 +927,7 @@ void			debugprint(IRNode *root)
 		{
 			if(check&&!maybe_typename_or_classtemplate())
 				return false;
-			if(!r_name(root))
+			if(!r_name_lookup(root))
 				return false;
 			if(!r_opt_cv_qualify(cv_flag))
 				return false;
@@ -1985,7 +1994,7 @@ void			debugprint(IRNode *root)
 				t=LOOK_AHEAD(0);
 			}
 			root->children.push_back(nullptr);
-			if(!r_name(root->children.back()))//lookup
+			if(!r_name_lookup(root->children.back()))
 				return free_tree(root);
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				break;
@@ -1993,9 +2002,10 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
+#if 0
 	bool		r_access_decl(IRNode *&root)//access.decl  :=  name ';'
 	{
-		if(!r_name(root))//probably lookup
+		if(!r_name_lookup(root))//probably lookup
 			return false;
 
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
@@ -2004,6 +2014,8 @@ void			debugprint(IRNode *root)
 
 		return true;
 	}
+#endif
+#if 0
 //class.member
 //  : (PUBLIC | PROTECTED | PRIVATE) ':'
 //  | user.access.spec
@@ -2055,16 +2067,29 @@ void			debugprint(IRNode *root)
 		default:
 			{
 				int idx=current_idx;
-				if(r_declaration(root))
-					return true;
-				current_idx=idx;
-				return r_access_decl(root);
+				if(!r_declaration(root))
+				{
+					free_tree(root);//not an error
+					current_idx=idx;
+					//return r_access_decl(root);//inlined
+				
+					//r_access_decl() inlined			access.decl  :=  name ';'
+					if(!r_name_lookup(root))
+						return false;
+
+					if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+						return free_tree(root);
+					ADVANCE;
+					//end of r_access_decl() inlined
+				}
 			}
 			break;
 		}
 		return true;
 	}
-	bool		r_class_body(IRNode *&root)//class.body  :=  '{' (class.member)* '}'
+#endif
+#if 0
+	bool		r_class_body(IRNode *&root)//class.body  :=  '{' (class.member)* '}'		inlined
 	{
 		if(LOOK_AHEAD(0)!=CT_LBRACE)
 			return false;
@@ -2087,6 +2112,8 @@ void			debugprint(IRNode *root)
 		scope_exit();
 		return true;
 	}
+#endif
+#if 0
 //class.spec
 //  : {userdef.keyword} class.key							 class.body
 //  | {userdef.keyword} class.key name						{class.body}
@@ -2129,14 +2156,93 @@ void			debugprint(IRNode *root)
 
 		if(LOOK_AHEAD(0)==CT_LBRACE)
 		{
-			root->children.push_back(nullptr);
-			if(!r_class_body(root->children.back()))
-				return free_tree(root);
+			//root->children.push_back(nullptr);
+			//if(!r_class_body(root->children.back()))//inlined
+			//	return free_tree(root);
+			
+			//r_class_body() inlined			class.body  :=  '{' (class.member)* '}'
+			ADVANCE;
+			scope_enter(scope_id_lbrace);
+
+			while(LOOK_AHEAD(0)!=CT_RBRACE)
+			{
+				root->children.push_back(nullptr);
+				//if(!r_class_member(root->children.back()))//inlined
+				//{
+				//	skip_till_after(CT_RBRACE);
+				//	scope_exit();
+				//	return free_tree(root);
+				//}
+				
+				//r_class_member() inlined
+				t=LOOK_AHEAD(0);
+				switch(t)
+				{
+				case CT_PRIVATE:
+				case CT_PROTECTED:
+				case CT_PUBLIC:
+					ADVANCE;
+					INSERT_LEAF(root->children.back(), t, nullptr);
+					if(LOOK_AHEAD(0)!=CT_COLON)
+						return free_tree(root);
+					ADVANCE;
+					break;
+				//case UserKeyword4://user.access.spec
+				//	break;
+				case CT_SEMICOLON:
+					ADVANCE;
+					break;
+				case CT_TYPEDEF:
+					if(!r_typedef(root->children.back()))
+						return free_tree(root);
+					break;
+				case CT_TEMPLATE:
+					if(!r_template_decl(root->children.back()))
+						return free_tree(root);
+					break;
+				case CT_USING:
+					if(!r_using(root->children.back()))
+						return free_tree(root);
+					break;
+				//case CT_CLASS://X  not metaclass		ignore for now
+				//case CT_STRUCT:
+				//case CT_UNION:
+				//case CT_ENUM:
+				//	if(!r_metaclass_decl(root))
+				//		return false;
+				//	break;
+				default:
+					{
+						int idx=current_idx;
+						if(!r_declaration(root->children.back()))
+						{
+							free_tree(root->children.back());//not an error
+							current_idx=idx;
+							//return r_access_decl(root->children.back());//inlined
+				
+							//r_access_decl() inlined			access.decl  :=  name ';'
+							if(!r_name_lookup(root->children.back()))
+								return free_tree(root);
+
+							if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+								return free_tree(root);
+							ADVANCE;
+							//end of r_access_decl() inlined
+						}
+					}
+					break;
+				}
+				//end of r_class_member() inlined
+			}
+			ADVANCE;
+			scope_exit();
+			//end of r_class_body() inlined
 		}
 		else if(body_is_obligatory)
 			return free_tree(root);
 		return true;
 	}
+#endif
 
 	bool		r_enum_body(IRNode *&root)//enum.body  :=  Identifier {'=' expression} (',' Identifier {'=' expression})* {','}
 	{
@@ -2169,6 +2275,7 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
+#if 0
 //enum.spec
 //  : ENUM Identifier
 //  | ENUM {Identifier} '{' {enum.body} '}'
@@ -2191,7 +2298,7 @@ void			debugprint(IRNode *root)
 			if(t->type==CT_LBRACE)
 				ADVANCE;
 			else
-				return true;
+				goto r_enum_spec_finish;
 		}
 		if(t->type!=CT_LBRACE)
 			return free_tree(root);
@@ -2204,8 +2311,10 @@ void			debugprint(IRNode *root)
 			return free_tree(root);
 		ADVANCE;
 
+	r_enum_spec_finish:
 		return true;
 	}
+#endif
 
 	bool		r_opt_member_spec(int &fvi_flag)//member.spec := (friend|inline|virtual)+		bitfield: {bit2: friend, bit1: virtual, bit0: inline}
 	{
@@ -2551,7 +2660,7 @@ void			debugprint(IRNode *root)
 						//return free_tree(root);//error: unexpected identifier
 					}
 					ADVANCE;
-					switch(scope->data.tdata->datatype)
+					switch(scope->data->datatype)
 					{
 					case TYPE_ENUM:
 					case TYPE_CLASS:
@@ -2562,7 +2671,7 @@ void			debugprint(IRNode *root)
 							if(type.datatype!=TYPE_UNASSIGNED)
 								return free_tree(root);
 							//merge with type			//TODO: unroll the struct to typedb at declaration
-							auto typeinfo=scope->data.tdata;
+							auto typeinfo=scope->data;
 							type.datatype=typeinfo->datatype;
 							if(type.logalign<typeinfo->logalign)
 								type.logalign=typeinfo->logalign;
@@ -2582,13 +2691,240 @@ void			debugprint(IRNode *root)
 			case CT_CLASS:
 			case CT_STRUCT:
 			case CT_UNION://or UserKeyword
-				if(root)
-					return free_tree(root);
-				return r_class_spec(root);
+#if 1//region
+				{
+					if(root)
+						return free_tree(root);
+					//if(!r_class_spec(root))//inlined
+					//	return false;
+				
+					//r_class_spec() inlined
+	//class.spec
+	//  : {userdef.keyword} class.key							 class.body
+	//  | {userdef.keyword} class.key name						{class.body}
+	//  | {userdef.keyword} class.key name ':' base.specifiers	 class.body
+	//
+	//class.key  :=  CLASS | STRUCT | UNION
+					//TODO: understand UserKeyword		ignore userdef.keyword for now
+					auto t=LOOK_AHEAD(0);
+					//switch(t)
+					//{
+					//case CT_CLASS:
+					//case CT_STRUCT:
+					//case CT_UNION:
+					//	break;
+					//default:
+					//	return false;
+					//}
+					auto t2=&LOOK_AHEAD_TOKEN(1);
+					bool body_is_obligatory=true, named_spec=t2->type==CT_ID;
+					if(named_spec)
+					{
+						ADVANCE_BY(2);
+						INSERT_LEAF(root, t, t2->sdata);//children: {member*}
+
+						//incomplete type definition
+						type.datatype=TYPE_VOID;
+						scope_declare_member(root->sdata, add_type(type));
+
+						if(body_is_obligatory=LOOK_AHEAD(0)==CT_COLON)//inheritance
+						{
+							root->children.push_back(nullptr);
+							if(!r_base_specifiers(root->children.back()))
+								return free_tree(root);
+						}
+					}
+					else//anonymous class
+					{
+						ADVANCE;
+						INSERT_LEAF(root, t, nullptr);//TODO: encode class name as a number (impossible for an identifier), if necessary
+					}
+					switch(token->type)
+					{
+					case CT_CLASS:	type.datatype=TYPE_CLASS;	break;
+					case CT_STRUCT:	type.datatype=TYPE_STRUCT;	break;
+					case CT_UNION:	type.datatype=TYPE_UNION;	break;//or UserKeyword
+					}
+
+					if(LOOK_AHEAD(0)==CT_LBRACE)
+					{
+						//root->children.push_back(nullptr);
+						//if(!r_class_body(root->children.back()))//inlined
+						//	return free_tree(root);
+			
+						//r_class_body() inlined			class.body  :=  '{' (class.member)* '}'
+						ADVANCE;
+						scope_enter(scope_id_lbrace);
+
+						while(LOOK_AHEAD(0)!=CT_RBRACE)
+						{
+							root->children.push_back(nullptr);
+							//if(!r_class_member(root->children.back()))//inlined
+							//{
+							//	skip_till_after(CT_RBRACE);
+							//	scope_exit();
+							//	return free_tree(root);
+							//}
+				
+							//r_class_member() inlined
+							t=LOOK_AHEAD(0);
+							switch(t)
+							{
+							case CT_PRIVATE:
+							case CT_PROTECTED:
+							case CT_PUBLIC:
+								ADVANCE;
+								INSERT_LEAF(root->children.back(), t, nullptr);
+								if(LOOK_AHEAD(0)!=CT_COLON)
+									return scope_error(root);
+								ADVANCE;
+								break;
+							//case UserKeyword4://user.access.spec
+							//	break;
+							case CT_SEMICOLON:
+								ADVANCE;
+								break;
+							case CT_TYPEDEF:
+								if(!r_typedef(root->children.back()))
+									return scope_error(root);
+								break;
+							case CT_TEMPLATE:
+								if(!r_template_decl(root->children.back()))
+									return scope_error(root);
+								break;
+							case CT_USING:
+								if(!r_using(root->children.back()))
+									return scope_error(root);
+								break;
+							//case CT_CLASS://X  not metaclass		ignore for now
+							//case CT_STRUCT:
+							//case CT_UNION:
+							//case CT_ENUM:
+							//	if(!r_metaclass_decl(root))
+							//		return false;
+							//	break;
+							default:
+								{
+									int idx=current_idx;
+									if(!r_declaration(root->children.back()))
+									{
+										free_tree(root->children.back());//not an error
+										current_idx=idx;
+										//return r_access_decl(root->children.back());//inlined
+				
+										//r_access_decl() inlined			access.decl  :=  name ';'
+										if(!r_name_lookup(root->children.back()))
+											return scope_error(root);
+
+										if(LOOK_AHEAD(0)!=CT_SEMICOLON)
+											return scope_error(root);
+										ADVANCE;
+										//end of r_access_decl() inlined
+									}
+								}
+								break;
+							}
+							//end of r_class_member() inlined
+						}
+						ADVANCE;
+						scope_exit();
+						//end of r_class_body() inlined
+
+						type.body=root;
+						type.size=1;				//calculate size & logalign
+						IRNode *node=nullptr;
+						TypeInfo *ptype=nullptr;
+						if(type.datatype==TYPE_UNION)
+						{
+							for(int k=0;k<root->children.size();++k)
+							{
+								node=root->children[k];
+								if(node->type==PT_TYPE)
+								{
+									ptype=node->tdata;
+									if(type.size<ptype->size)
+										type.size=ptype->size;
+									if(type.logalign<ptype->logalign)
+										type.logalign=ptype->logalign;
+								}
+							}
+						}
+						else//class/struct
+						{
+							size_t mask=0;
+							for(int k=0;k<root->children.size();++k)
+							{
+								node=root->children[k];
+								if(node->type==PT_TYPE)
+								{
+									ptype=node->tdata;
+									mask=(1<<ptype->logalign)-1;
+									type.size+=mask;
+									type.size&=~mask;
+									type.size+=ptype->size;
+
+									if(type.logalign<ptype->logalign)
+										type.logalign=ptype->logalign;
+								}
+							}
+							mask=(1<<type.logalign)-1;
+							type.size+=mask;
+							type.size&=~mask;
+						}
+						scope_declare_member(root->sdata, add_type(type));//should overwrite the incomplete type
+					}
+					else if(body_is_obligatory)
+						return free_tree(root);
+					//end of r_class_spec() inlined
+				}
+#endif
+				break;
 			case CT_ENUM:
+#if 1//region
 				if(root)
 					return free_tree(root);
-				return r_enum_spec(root);
+				//if(!r_enum_spec(root))//inlined
+				//	return false;
+
+				//r_enum_spec() inlined
+//enum.spec
+//  : ENUM  Identifier
+//  | ENUM {Identifier} '{' {enum.body} '}'
+				ADVANCE;
+
+				INSERT_LEAF(root, CT_ENUM, nullptr);//children: {???}
+
+				auto t=&LOOK_AHEAD_TOKEN(0);
+				if(t->type==CT_ID)
+				{
+					ADVANCE;
+					root->sdata=t->sdata;
+					//TODO: add enum name for qualified lookup
+
+					t=&LOOK_AHEAD_TOKEN(0);
+					if(t->type==CT_LBRACE)
+						ADVANCE;
+					else
+						goto r_enum_spec_finish;
+				}
+				if(t->type!=CT_LBRACE)
+					return free_tree(root);
+
+				root->children.push_back(nullptr);
+				if(!r_enum_body(root->children.back()))
+					return free_tree(root);
+
+				if(LOOK_AHEAD(0)!=CT_RBRACE)
+					return free_tree(root);
+				ADVANCE;
+
+			r_enum_spec_finish:
+				//end of r_enum_spec() inlined
+
+				type.datatype=CT_ENUM;
+				type.body=root;
+#endif
+				break;
 			}
 			break;
 		}//end for
@@ -2657,7 +2993,7 @@ void			debugprint(IRNode *root)
 		if(!root)
 		{
 			root->children.push_back(nullptr);
-			if(!r_name(root->children.back()))//lookup
+			if(!r_name_lookup(root->children.back()))
 				goto r_condition_choice2;
 			//TODO: initialize the type with the name
 		}
@@ -3043,7 +3379,7 @@ void			debugprint(IRNode *root)
 			return free_tree(root);
 		if(!root->children.back())
 		{
-			if(!r_name(root->children.back()))//lookup
+			if(!r_name_lookup(root->children.back()))
 				return free_tree(root);
 
 			//TODO: initialize the type based on this name		requires name system
@@ -3140,7 +3476,7 @@ void			debugprint(IRNode *root)
 //  | '~' Identifier
 //  | OPERATOR operator.name {template.args}
 //  | decltype '(' name ')'			//C++11
-	bool		r_name(IRNode *&root)//TODO: use the lookup system here (except argument-dependent lookup), and store the potentially referenced namespace/type/object/function/method(s)
+	bool		r_name_lookup(IRNode *&root)//TODO: use the lookup system here (except argument-dependent lookup), and store the potentially referenced namespace/type/object/function/method(s)
 	{
 		INSERT_LEAF(root, PT_NAME, nullptr);//children: {::?, name(s)}
 		auto t=&LOOK_AHEAD_TOKEN(0);
@@ -3160,7 +3496,7 @@ void			debugprint(IRNode *root)
 					return free_tree(root);
 				root->children.push_back(new IRNode(CT_DECLTYPE, CT_IGNORED));
 				root->children.push_back(nullptr);
-				if(!r_name(root->children.back()))//lookup
+				if(!r_name_lookup(root->children.back()))//lookup
 					return free_tree(root);
 				if(LOOK_AHEAD(0)!=CT_RPR)
 					return free_tree(root);
@@ -3383,7 +3719,7 @@ void			debugprint(IRNode *root)
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
 
 		root->children.push_back(nullptr);
-		if(!r_name(root->children.back()))//lookup
+		if(!r_name_lookup(root->children.back()))
 			return free_tree(root);
 		
 		if(!r_opt_cv_qualify(cv_flag))
@@ -3630,7 +3966,7 @@ void			debugprint(IRNode *root)
 					break;
 
 				root->children.push_back(nullptr);
-				if(!r_name(root->children.back()))//lookup
+				if(!r_name_lookup(root->children.back()))
 					return free_tree(root);
 			}
 
@@ -3645,7 +3981,7 @@ void			debugprint(IRNode *root)
 		INSERT_LEAF(root, PR_MEMBER_INIT, nullptr);
 
 		root->children.push_back(nullptr);
-		if(!r_name(root->children.back()))//lookup
+		if(!r_name_lookup(root->children.back()))
 			return free_tree(root);
 
 		//TODO: qualified name lookup
@@ -3711,6 +4047,7 @@ void			debugprint(IRNode *root)
 		//if(!r_opt_ptr_operator(root))
 		if(!r_opt_ptr_operator_nonnull(root, type))
 			return free_tree(root);
+		auto ptype=add_type(type);
 		//if(root)
 		//	root->children.push_back(nullptr);
 		//auto &r2=root?root:root->children.back();
@@ -3722,7 +4059,7 @@ void			debugprint(IRNode *root)
 		{
 			ADVANCE;
 			root->children.push_back(nullptr);
-			if(!r_declarator2(root->children.back(), type, kind, true, true, false))//recursive
+			if(!r_declarator2(root->children.back(), *ptype, kind, true, true, false))//recursive
 				return free_tree(root);
 
 			if(LOOK_AHEAD(0)!=CT_RPR)
@@ -3749,12 +4086,15 @@ void			debugprint(IRNode *root)
 			}
 			if(LOOK_AHEAD(0)==CT_ID&&LOOK_AHEAD(1)!=CT_SCOPE)
 			{
-				//TODO: definition with simple identifier
+				//definition with simple identifier in current scope
+				root->children.push_back(new IRNode(CT_ID, CT_IGNORED, LOOK_AHEAD_TOKEN(0).sdata));
+				ADVANCE;
+				scope_declare_member(root->children.back()->sdata, ptype);
 			}
 			else
 			{
 				root->children.push_back(nullptr);
-				if(!r_name(root->children.back()))//lookup for static variables like "int *ClassName::StaticVar=0;"
+				if(!r_name_lookup(root->children.back()))//lookup for static variables like "int *ClassName::StaticVar=0;"
 					return free_tree(root);
 			}
 		}
@@ -3838,6 +4178,7 @@ void			debugprint(IRNode *root)
 			free_tree(root);
 		return true;
 	}
+#if 0
 	bool		r_declaratorwithinit(IRNode *&root, TypeInfo &type, bool should_be_declarator, bool is_statement)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}		can be inlined
 	{
 		if(LOOK_AHEAD(0)==CT_COLON)//bit field
@@ -3869,15 +4210,49 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
+#endif
 	bool		r_declarators_nonnull(IRNode *&root, TypeInfo &type, bool should_be_declarator, bool is_statement)//declarators := declarator.with.init (',' declarator.with.init)*
 	{
 		//INSERT_LEAF(root, PT_DECLARATORS, nullptr);
 		for(;;)
 		{
+			//root->children.push_back(nullptr);
+			//if(!r_declaratorwithinit(root->children.back(), type, should_be_declarator, is_statement))//inlined
+			//	return false;
+			//	//return free_tree(root);
+			
+			//r_declaratorwithinit() inlined		//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}
 			root->children.push_back(nullptr);
-			if(!r_declaratorwithinit(root->children.back(), type, should_be_declarator, is_statement))
-				return false;
-				//return free_tree(root);
+			if(LOOK_AHEAD(0)==CT_COLON)//bit field
+			{
+				ADVANCE;
+
+				if(!r_assign_expr(root->children.back()))
+					return free_tree(root);
+			}
+			else
+			{
+				if(!r_declarator2(root->children.back(), type, DECLKIND_NORMAL, false, should_be_declarator, is_statement))
+					return free_tree(root);
+				switch(LOOK_AHEAD(0))
+				{
+				case CT_ASSIGN://init
+					ADVANCE;
+					root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
+					root->children.back()->children.push_back(nullptr);
+					if(!r_initialize_expr(root->children.back()->children.back()))
+						return free_tree(root);
+					break;
+				case CT_COLON://bit field
+					ADVANCE;
+					root->children.push_back(new IRNode(CT_COLON, CT_IGNORED));
+					root->children.back()->children.push_back(nullptr);
+					if(!r_assign_expr(root->children.back()->children.back()))
+						return free_tree(root);
+					break;
+				}
+			}
+			//end of r_declaratorwithinit() inlined
 
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				break;
@@ -4072,7 +4447,7 @@ void			debugprint(IRNode *root)
 		auto r2=root->children.back();
 
 		r2->children.push_back(nullptr);
-		if(!r_name(r2->children.back()))//lookup
+		if(!r_name_lookup(r2->children.back()))
 			return free_tree(root);
 
 		if(!*(root->children.end()-3)&&is_constructor_or_decl())
@@ -4382,7 +4757,7 @@ void			debugprint(IRNode *root)
 		}
 
 		root->children.push_back(nullptr);
-		if(!r_name(root->children.back()))//lookup
+		if(!r_name_lookup(root->children.back()))
 			return free_tree(root);
 
 		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
