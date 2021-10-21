@@ -116,6 +116,28 @@ namespace	std
 		{
 			return children.erase(key);
 		}
+
+		template<typename F>void transform_depth_first(F functor, size_t depth)
+		{
+			++depth;
+			for(size_t k=0;k<children.size();++k)
+			{
+				auto &child=children.data()[k];
+				functor(child.first, child.second->data, depth);
+				child.second->transform_depth_first(functor, depth);
+			}
+		}
+		template<typename F>void transform_breadth_first(F functor, size_t depth)
+		{
+			++depth;
+			for(size_t k=0;k<children.size();++k)
+			{
+				auto &child=children.data()[k];
+				functor(child.first, child.second->data, depth);
+			}
+			for(size_t k=0;k<children.size();++k)
+				children.data()[k].second->transform_depth_first(functor, depth);
+		}
 	};
 	template<typename T, typename K, typename LessThan=less<K>>struct maptree
 	{
@@ -155,8 +177,8 @@ namespace	std
 				e=path.back().second->insert(key, data);
 			else
 				e=root.insert(key, data);
-			if(e)
-				path.push_back(PathElement(&e->first, e->second));
+			//if(e)//X  only open/close affects path
+			//	path.push_back(PathElement(&e->first, e->second));
 		}
 		Node* find_root(K const &key)
 		{
@@ -211,6 +233,23 @@ namespace	std
 				return path.back().first;
 			return nullptr;
 		}
+
+		template<typename F>void transform_depth_first(F functor)//F should have the method: [void] operator()(K const &key, T const &data, size_t depth);
+		{
+			//functor(K(), root.data, 0);
+			root.transform_depth_first(functor, 0);
+		}
+		template<typename F>void transform_breadth_first(F functor)
+		{
+			//functor(K(), root.data, 0);
+			root.transform_breadth_first(functor, 0);
+		}
 	};
+	//template<typename F, typename T, typename K, typename LessThan=less<K>>void transform_depth_first(mapnode<T, K, LessThan> const &node, F functor)
+	//{
+	//	functor(node.data);
+	//	for(size_t k=0;k<node.children.size();++k)
+	//		transform_depth_first(*node.children.data()[k].second, functor);
+	//}
 }
 #endif

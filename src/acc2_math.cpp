@@ -44,6 +44,19 @@ int					floor_log2(unsigned long long n)//idx of MSB
 		sh= n>=1	<< 1;		logn+=sh;
 	return logn;
 }
+int					ceil_log2(unsigned long long n)
+{
+	int fl=floor_log2(n);
+	for(int k=0;k<fl;++k)//redundant O(n) loop
+	{
+		if(n>>k&1)
+		{
+			++fl;
+			break;
+		}
+	}
+	return fl;
+}
 int					floor_log10(double x)
 {
 	static const double pmask[]=//positive powers

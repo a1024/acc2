@@ -167,6 +167,7 @@
 	//...
 
 	//parser state 2
+	TOKEN(0, PT_ENUM_CONST, 0)
 	TOKEN(0, CT_VARIABLE, 0)
 
 	TOKEN(0, CT_NTOKENS, 0)

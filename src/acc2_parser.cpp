@@ -199,7 +199,7 @@ enum			StorageTypeSpecifier
 enum			DataType
 {
 	TYPE_UNASSIGNED,
-	TYPE_AUTO,
+	TYPE_AUTO,//TODO: process auto & remove this flag
 	TYPE_VOID,
 	TYPE_BOOL,
 	TYPE_CHAR,
@@ -208,6 +208,7 @@ enum			DataType
 	TYPE_INT_UNSIGNED,
 	TYPE_FLOAT,
 	TYPE_ENUM,
+	TYPE_ENUM_CONST,
 	TYPE_CLASS,
 	TYPE_STRUCT,
 	TYPE_UNION,
@@ -225,8 +226,14 @@ enum			CallType
 	CALL_STDCALL,
 	CALL_THISCALL,
 };
+enum			AccessType
+{
+	ACCESS_PUBLIC,
+	ACCESS_PRIVATE,
+	ACCESS_PROTECTED,
+};
 struct			IRNode;
-struct			TypeInfo//28 bytes
+struct			TypeInfo//28 bytes		TODO: bitfields
 {
 	union
 	{
@@ -240,8 +247,9 @@ struct			TypeInfo//28 bytes
 				is_inline:1, is_virtual:1, is_friend:1,
 				storagetype:2;//one of: extern/static/mutable/register
 
-			unsigned short//0000 0000 0000 00CC
-				calltype:2;
+			unsigned short//0000 0000 0000 AACC
+				calltype:2,
+				accesstype:2;
 		};
 		int flags;
 	};
@@ -250,7 +258,6 @@ struct			TypeInfo//28 bytes
 	//char *name;				//X  primitive types only, a type can be aliased				//names must be qualified
 
 	//links:
-	std::vector<IRNode*> template_args;
 	IRNode *body;//for class/struct/union, enum or function
 
 	//class/struct/union: args points at member types, can include padding as void of nonzero size
@@ -259,16 +266,25 @@ struct			TypeInfo//28 bytes
 	//functions: 1st element is points at return type
 	std::vector<TypeInfo*> args;
 
-	TypeInfo():flags(0), size(0){}
-	TypeInfo(TypeInfo const &other):flags(other.flags), size(other.size), args(other.args){}
-	TypeInfo(TypeInfo &&other):flags(other.flags), size(other.size), args((std::vector<TypeInfo*>&&)other.args){}
+	std::vector<IRNode*> template_args;
+
+	TypeInfo():flags(0), size(0), body(nullptr){}
+	TypeInfo(TypeInfo const &other):flags(other.flags), size(other.size), body(other.body), args(other.args), template_args(other.template_args){}
+	TypeInfo(TypeInfo &&other):flags(other.flags), size(other.size), body(other.body), args((std::vector<TypeInfo*>&&)other.args), template_args((std::vector<IRNode*>&&)other.template_args)
+	{
+		other.flags=0;
+		other.size=0;
+		other.body=nullptr;
+	}
 	TypeInfo& operator=(TypeInfo const &other)
 	{
 		if(this!=&other)
 		{
 			flags=other.flags;
 			size=other.size;
+			body=other.body;
 			args=other.args;
+			template_args=other.template_args;
 		}
 		return *this;
 	}
@@ -278,21 +294,28 @@ struct			TypeInfo//28 bytes
 		{
 			flags=other.flags, other.flags=0;
 			size=other.size, other.size=0;
+			body=other.body, other.body=nullptr;
 			args=(std::vector<TypeInfo*>&&)other.args;
+			template_args=(std::vector<IRNode*>&&)other.template_args;
 		}
 		return *this;
 	}
-	TypeInfo(char datatype, char logalign, char is_const, char is_volatile, char storagetype, int size):flags(0), size(size)
+	TypeInfo(char datatype, char logalign, char cv_flag, char fvi_flag, char storagetype, char calltype, char accesstype, int size, IRNode *body=nullptr):flags(0), size(size)
 	{
 		this->datatype=datatype;
-		//this->is_unsigned=is_unsigned;
 		this->logalign=logalign;
-		this->is_const=is_const;
-		this->is_volatile=is_volatile;
+		this->is_const=cv_flag&1, this->is_volatile=cv_flag>>1&1;
+		this->is_inline=fvi_flag&1, this->is_virtual=fvi_flag>>1&1, this->is_friend=fvi_flag>>2&1;
 		this->storagetype=storagetype;
-		//this->name=name;
+
+		this->calltype=calltype;
+		this->accesstype=accesstype;
+
+		this->size=size;
+
+		this->body=body;
 	}
-	void set_flags(byte esmr_flag, byte fvi_flag, byte cv_flag)
+	void set_flags(byte esmr_flag, byte fvi_flag, byte cv_flag)//missing on purpose: datatype, logalign, calltype, accesstype		set them yourself
 	{
 		if(esmr_flag!=STORAGE_UNSPECIFIED)
 			storagetype=esmr_flag;
@@ -335,27 +358,13 @@ TypeInfo*		add_type(TypeInfo &type)
 	return t3;
 }
 
-typedef std::maptree<TypeInfo*, char*> Name;
-//enum			NameType
-//{
-//	NAME_NAMESPACE,
-//	NAME_STRUCT,//or class
-//	NAME_UNION,
-//	NAME_ENUM,
-//	NAME_TEMPLATE_STRUCT,
-//	NAME_TEMPLATE_UNION,
-//	NAME_FUNCTION,
-//	NAME_TEMPLATE_FUNCTION,
-//	NAME_VARIABLE,
-//};
-//struct		NameInfo
-//{
-//	NameType type;//already in TypeInfo
-//	TypeInfo *tdata;
-//	std::vector<CTokenType> *template_args;//already in TypeInfo
-//	//std::vector<CTokenType> template_args;
-//};
-//typedef std::maptree<NameInfo, char*> Name;
+struct			NameInfo
+{
+	TypeInfo *tdata;
+	size_t value;//for enum const
+};
+typedef std::maptree<NameInfo, char*> Name;
+//typedef std::maptree<TypeInfo*, char*> Name;
 Name			scope_global;
 char			*scope_id_lbrace=nullptr;
 void			scope_init()
@@ -379,15 +388,96 @@ void			scope_exit()
 	else
 		scope_global.close();
 }
-void			scope_declare_member(char *name, TypeInfo *pt)
+void			scope_declare_member(char *name, TypeInfo *pt, size_t enum_const=0)
 {
-	scope_global.insert(name, pt, true);
+	NameInfo info={pt, enum_const};
+	scope_global.insert(name, info, true);
 }
 Name::Node*		scope_lookup(char *id, bool global)
 {
 	if(global)
 		return scope_global.find_root(id);
 	return scope_global.find(id);
+}
+
+void			print_type(TypeInfo const &type)
+{
+	int printed=0;
+	switch(type.datatype)
+	{
+#define CASE(TYPE)	case TYPE:printed+=sprintf_s(g_buf+printed, g_buf_size-printed, #TYPE);break;
+	CASE(TYPE_UNASSIGNED)
+	CASE(TYPE_AUTO)
+	CASE(TYPE_VOID)
+	CASE(TYPE_BOOL)
+	CASE(TYPE_CHAR)
+	CASE(TYPE_INT)
+	CASE(TYPE_INT_SIGNED)
+	CASE(TYPE_INT_UNSIGNED)
+	CASE(TYPE_FLOAT)
+	CASE(TYPE_ENUM)
+	CASE(TYPE_ENUM_CONST)
+	CASE(TYPE_CLASS)
+	CASE(TYPE_STRUCT)
+	CASE(TYPE_UNION)
+	CASE(TYPE_SIMD)//special struct
+	CASE(TYPE_ARRAY)
+	CASE(TYPE_POINTER)
+	CASE(TYPE_REFERENCE)
+	CASE(TYPE_FUNC)
+	CASE(TYPE_ELLIPSIS)
+	CASE(TYPE_NAMESPACE)
+#undef	CASE
+	}
+	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "\t S%d A%d %c%c%c%c%c ", type.size, 1<<type.logalign, type.is_const?'C':'-', type.is_volatile?'O':'-', type.is_inline?'I':'-', type.is_virtual?'V':'-', type.is_friend?'F':'-');
+	switch(type.storagetype)
+	{
+	case STORAGE_EXTERN:	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "extern");	break;
+	case STORAGE_STATIC:	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "static");	break;
+	case STORAGE_MUTABLE:	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "mutable");	break;
+	case STORAGE_REGISTER:	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "register");	break;
+	}
+	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, " ");
+	switch(type.calltype)
+	{
+	case CALL_CDECL:		printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "cdecl");		break;
+	case CALL_STDCALL:		printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "stdcall");	break;
+	case CALL_THISCALL:		printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "thiscall");	break;
+	}
+	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, " ");
+	switch(type.accesstype)
+	{
+	case ACCESS_PUBLIC:		printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "public");	break;
+	case ACCESS_PRIVATE:	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "private");	break;
+	case ACCESS_PROTECTED:	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "protected");	break;
+	}
+}
+struct			PrintName
+{
+	void operator()(char *key, NameInfo const &data, size_t depth)
+	{
+		printf("%4d ", depth);
+		for(size_t k=0;k<depth;++k)
+			printf("|");
+		printf(" ");
+		if(data.tdata)
+		{
+			print_type(*data.tdata);
+			printf("%s", g_buf);
+		}
+		if(key)
+			printf(" %s", key);
+		else
+			printf(" <nullptr>");
+		if(data.tdata&&data.tdata->datatype==TYPE_ENUM_CONST)
+			printf(" %d", data.value);
+		printf("\n");
+	}
+};
+void			print_names()
+{
+	scope_global.transform_depth_first(PrintName());
+	printf("\n");
 }
 #if 0
 std::vector<Name::Container::EType> scope_path;
@@ -561,7 +651,8 @@ struct			IRNode
 	{
 		struct
 		{
-			unsigned int
+			unsigned int//0000 0000 0000 0000  0000 000V IFVC SSAA
+				flag_accesstype:2,//ACCESS_PUBLIC/PRIVATE/PROTECTED
 				flag_esmr:2,//storage specifier := extern|static|mutable|register
 				flag_const:1, flag_volatile:1,//cv qualifier
 				flag_friend:1, flag_inline:1, flag_virtual:1;//member specifier
@@ -583,24 +674,18 @@ struct			IRNode
 		//long long *idata;
 		//double *fdata;
 	};
-	IRNode():type(CT_IGNORED), opsign(CT_IGNORED), tdata(nullptr){}
-	IRNode(CTokenType type, CTokenType opsign, void *data=nullptr):type(type), opsign(opsign), tdata((TypeInfo*)data){}
-	IRNode(CTokenType type, int opsign, void *data=nullptr):type(type), opsign((CTokenType)opsign), tdata((TypeInfo*)data){}
-	//IRNode(CTokenType type, IRNode *c1, IRNode *c2):type(type), opsign(CT_IGNORED), tdata(nullptr)
-	//{
-	//	children.push_back(c1);
-	//	children.push_back(c2);
-	//}
+	IRNode():type(CT_IGNORED), opsign(CT_IGNORED), idata(0){}
+	IRNode(CTokenType type, CTokenType opsign, void *data=nullptr):type(type), opsign(opsign), idata((size_t&)data){}
+	IRNode(CTokenType type, int opsign, void *data=nullptr):type(type), opsign((CTokenType)opsign), idata((size_t&)data){}
 	void set(CTokenType type, CTokenType opsign, void *data=nullptr)
 	{
 		this->type=type;
 		this->opsign=opsign;
-		tdata=(TypeInfo*)data;
+		idata=(size_t&)data;
 	}
 	void set(void *data)
 	{
-		idata=0;
-		sdata=(char*)data;
+		idata=(size_t&)data;
 	}
 };
 inline void		token2str(CTokenType t, std::string &str)
@@ -626,11 +711,11 @@ void			AST2str(IRNode *root, std::string &str, int depth=0)
 		return;
 	}
 	token2str(root->type, str);
-	if(root->opsign!=CT_IGNORED)
-	{
-		str+='\t';
-		token2str(root->opsign, str);
-	}
+	//if(root->opsign!=CT_IGNORED)
+	//{
+	//	str+='\t';
+	//	token2str(root->opsign, str);
+	//}
 	switch(root->type)
 	{
 	case CT_ID:
@@ -649,17 +734,23 @@ void			AST2str(IRNode *root, std::string &str, int depth=0)
 		break;
 	case CT_VAL_CHAR_LITERAL:
 	case CT_VAL_INTEGER:
-		str+='\t';
-		sprintf_s(g_buf, g_buf_size, "%d", root->idata);
+		sprintf_s(g_buf, g_buf_size, "\t%d", root->idata);
 		str+=g_buf;
 		break;
 	case CT_VAL_FLOAT:
-		str+='\t';
-		sprintf_s(g_buf, g_buf_size, "%g", root->fdata);
+		sprintf_s(g_buf, g_buf_size, "\t%g", root->fdata);
 		str+=g_buf;
 		break;
 	case PT_TYPE:
+		str+='\t';
+		if(root->tdata)
 		{
+			print_type(*root->tdata);
+			str+=g_buf;
+		}
+		else
+			str+="NULL_TYPE";
+		/*{
 			auto type=root->tdata;
 			str+='\t';
 			switch(type->datatype)
@@ -685,7 +776,24 @@ void			AST2str(IRNode *root, std::string &str, int depth=0)
 			case TYPE_NAMESPACE:	str+="namespace";break;
 				break;
 			}
-		}
+		}//*/
+		break;
+	case PT_MUL:
+	case PT_ADD:
+	case PT_SHIFT:
+	case PT_RELATIONAL:
+	case PT_EQUALITY:
+	case PT_BITAND:
+	case PT_BITXOR:
+	case PT_BITOR:
+	case PT_LOGICAND:
+	case PT_LOGICOR:
+		str+='\t';
+		token2str(root->opsign, str);
+		break;
+	case PT_ENUM_CONST:
+		sprintf_s(g_buf, g_buf_size, "\t%s\t%d", root->sdata, root->flags);
+		str+=g_buf;
 		break;
 	}
 	str+='\n';
@@ -696,7 +804,7 @@ void			debugprint(IRNode *root)
 {
 	std::string str;
 	AST2str(root, str);
-	printf("%s\n\n", str.c_str());
+	printf("%s\n", str.c_str());
 }
 //namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //{
@@ -1958,6 +2066,7 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 
+#if 0
 //base.specifiers  :=  ':' base.specifier (',' base.specifier)*
 //
 //base.specifier  :=  {{VIRTUAL} (PUBLIC | PROTECTED | PRIVATE) {VIRTUAL}} name
@@ -2002,6 +2111,7 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
+#endif
 #if 0
 	bool		r_access_decl(IRNode *&root)//access.decl  :=  name ';'
 	{
@@ -2244,6 +2354,7 @@ void			debugprint(IRNode *root)
 	}
 #endif
 
+#if 0
 	bool		r_enum_body(IRNode *&root)//enum.body  :=  Identifier {'=' expression} (',' Identifier {'=' expression})* {','}
 	{
 		INSERT_LEAF(root, PT_ENUM_BODY, nullptr);//children: {CT_ID*}
@@ -2275,6 +2386,7 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
+#endif
 #if 0
 //enum.spec
 //  : ENUM Identifier
@@ -2660,7 +2772,7 @@ void			debugprint(IRNode *root)
 						//return free_tree(root);//error: unexpected identifier
 					}
 					ADVANCE;
-					switch(scope->data->datatype)
+					switch(scope->data.tdata->datatype)
 					{
 					case TYPE_ENUM:
 					case TYPE_CLASS:
@@ -2671,7 +2783,7 @@ void			debugprint(IRNode *root)
 							if(type.datatype!=TYPE_UNASSIGNED)
 								return free_tree(root);
 							//merge with type			//TODO: unroll the struct to typedb at declaration
-							auto typeinfo=scope->data;
+							auto typeinfo=scope->data.tdata;
 							type.datatype=typeinfo->datatype;
 							if(type.logalign<typeinfo->logalign)
 								type.logalign=typeinfo->logalign;
@@ -2729,9 +2841,49 @@ void			debugprint(IRNode *root)
 
 						if(body_is_obligatory=LOOK_AHEAD(0)==CT_COLON)//inheritance
 						{
-							root->children.push_back(nullptr);
-							if(!r_base_specifiers(root->children.back()))
-								return free_tree(root);
+							//root->children.push_back(nullptr);
+							//if(!r_base_specifiers(root->children.back()))//inlined
+							//	return free_tree(root);
+							
+							//r_base_specifiers() inlined
+//base.specifiers  :=  ':' base.specifier (',' base.specifier)*
+//
+//base.specifier  :=  {{VIRTUAL} (PUBLIC | PROTECTED | PRIVATE) {VIRTUAL}} name
+							ADVANCE;
+							root->children.push_back(new IRNode(PT_BASE_SPECIFIER, CT_IGNORED));
+							auto node=root->children.back();
+							for(;;)
+							{
+								auto t=LOOK_AHEAD(0);
+								if(t==CT_VIRTUAL)
+								{
+									ADVANCE;
+									node->children.push_back(new IRNode(CT_VIRTUAL, CT_IGNORED));
+									t=LOOK_AHEAD(0);
+								}
+								switch(t)
+								{
+								case CT_PUBLIC:
+								case CT_PROTECTED:
+								case CT_PRIVATE:
+									ADVANCE;
+									node->children.push_back(new IRNode(t, CT_IGNORED));
+									break;
+								}
+								if(t==CT_VIRTUAL)
+								{
+									ADVANCE;
+									node->children.push_back(new IRNode(CT_VIRTUAL, CT_IGNORED));
+									t=LOOK_AHEAD(0);
+								}
+								node->children.push_back(nullptr);
+								if(!r_name_lookup(node->children.back()))
+									return free_tree(root);
+								if(LOOK_AHEAD(0)!=CT_COMMA)
+									break;
+								ADVANCE;
+							}
+							//end of r_base_specifiers() inlined
 						}
 					}
 					else//anonymous class
@@ -2746,7 +2898,12 @@ void			debugprint(IRNode *root)
 					case CT_UNION:	type.datatype=TYPE_UNION;	break;//or UserKeyword
 					}
 
-					if(LOOK_AHEAD(0)==CT_LBRACE)
+					if(LOOK_AHEAD(0)!=CT_LBRACE)
+					{
+						if(body_is_obligatory)
+							return free_tree(root);
+					}
+					else
 					{
 						//root->children.push_back(nullptr);
 						//if(!r_class_body(root->children.back()))//inlined
@@ -2756,9 +2913,8 @@ void			debugprint(IRNode *root)
 						ADVANCE;
 						scope_enter(scope_id_lbrace);
 
-						while(LOOK_AHEAD(0)!=CT_RBRACE)
+						for(char accesstype=type.datatype==TYPE_CLASS?ACCESS_PRIVATE:ACCESS_PUBLIC;LOOK_AHEAD(0)!=CT_RBRACE;)
 						{
-							root->children.push_back(nullptr);
 							//if(!r_class_member(root->children.back()))//inlined
 							//{
 							//	skip_till_after(CT_RBRACE);
@@ -2774,7 +2930,13 @@ void			debugprint(IRNode *root)
 							case CT_PROTECTED:
 							case CT_PUBLIC:
 								ADVANCE;
-								INSERT_LEAF(root->children.back(), t, nullptr);
+								switch(t)
+								{
+								case CT_PRIVATE:	accesstype=ACCESS_PRIVATE;	break;
+								case CT_PROTECTED:	accesstype=ACCESS_PROTECTED;break;
+								case CT_PUBLIC:		accesstype=ACCESS_PUBLIC;	break;
+								}
+								//INSERT_LEAF(root->children.back(), t, nullptr);
 								if(LOOK_AHEAD(0)!=CT_COLON)
 									return scope_error(root);
 								ADVANCE;
@@ -2785,16 +2947,22 @@ void			debugprint(IRNode *root)
 								ADVANCE;
 								break;
 							case CT_TYPEDEF:
+								root->children.push_back(nullptr);
 								if(!r_typedef(root->children.back()))
 									return scope_error(root);
+								root->children.back()->flag_accesstype=accesstype;
 								break;
 							case CT_TEMPLATE:
+								root->children.push_back(nullptr);
 								if(!r_template_decl(root->children.back()))
 									return scope_error(root);
+								root->children.back()->flag_accesstype=accesstype;
 								break;
 							case CT_USING:
+								root->children.push_back(nullptr);
 								if(!r_using(root->children.back()))
 									return scope_error(root);
+								root->children.back()->flag_accesstype=accesstype;
 								break;
 							//case CT_CLASS://X  not metaclass		ignore for now
 							//case CT_STRUCT:
@@ -2805,6 +2973,7 @@ void			debugprint(IRNode *root)
 							//	break;
 							default:
 								{
+									root->children.push_back(nullptr);
 									int idx=current_idx;
 									if(!r_declaration(root->children.back()))
 									{
@@ -2821,6 +2990,7 @@ void			debugprint(IRNode *root)
 										ADVANCE;
 										//end of r_access_decl() inlined
 									}
+									root->children.back()->flag_accesstype=accesstype;
 								}
 								break;
 							}
@@ -2836,7 +3006,7 @@ void			debugprint(IRNode *root)
 						TypeInfo *ptype=nullptr;
 						if(type.datatype==TYPE_UNION)
 						{
-							for(int k=0;k<root->children.size();++k)
+							for(size_t k=0;k<root->children.size();++k)
 							{
 								node=root->children[k];
 								if(node->type==PT_TYPE)
@@ -2852,7 +3022,7 @@ void			debugprint(IRNode *root)
 						else//class/struct
 						{
 							size_t mask=0;
-							for(int k=0;k<root->children.size();++k)
+							for(size_t k=0;k<root->children.size();++k)
 							{
 								node=root->children[k];
 								if(node->type==PT_TYPE)
@@ -2871,58 +3041,105 @@ void			debugprint(IRNode *root)
 							type.size+=mask;
 							type.size&=~mask;
 						}
-						scope_declare_member(root->sdata, add_type(type));//should overwrite the incomplete type
+						ptype=add_type(type);
+						if(named_spec)
+							scope_declare_member(root->sdata, ptype);//should overwrite the incomplete type
 					}
-					else if(body_is_obligatory)
-						return free_tree(root);
 					//end of r_class_spec() inlined
 				}
 #endif
 				break;
 			case CT_ENUM:
 #if 1//region
-				if(root)
-					return free_tree(root);
-				//if(!r_enum_spec(root))//inlined
-				//	return false;
+				{
+					if(root)
+						return free_tree(root);
+					//if(!r_enum_spec(root))//inlined
+					//	return false;
 
-				//r_enum_spec() inlined
+					//r_enum_spec() inlined
 //enum.spec
 //  : ENUM  Identifier
 //  | ENUM {Identifier} '{' {enum.body} '}'
-				ADVANCE;
-
-				INSERT_LEAF(root, CT_ENUM, nullptr);//children: {???}
-
-				auto t=&LOOK_AHEAD_TOKEN(0);
-				if(t->type==CT_ID)
-				{
 					ADVANCE;
-					root->sdata=t->sdata;
-					//TODO: add enum name for qualified lookup
 
-					t=&LOOK_AHEAD_TOKEN(0);
-					if(t->type==CT_LBRACE)
+					INSERT_LEAF(root, CT_ENUM, nullptr);//children: {???}
+
+					auto t=&LOOK_AHEAD_TOKEN(0);
+					if(t->type==CT_ID)
+					{
 						ADVANCE;
+						root->sdata=t->sdata;
+
+						t=&LOOK_AHEAD_TOKEN(0);
+						if(t->type!=CT_LBRACE)
+							goto r_enum_spec_finish;
+					}
+
+					if(t->type!=CT_LBRACE)
+						return free_tree(root);
+					ADVANCE;
+					//no enter/exit scope in enum
+
+					//root->children.push_back(nullptr);
+					//if(!r_enum_body(root->children.back()))//inlined
+					//	return free_tree(root);
+
+					//r_enum_body() inlined				//enum.body  :=  Identifier {'=' expression} (',' Identifier {'=' expression})* {','}
+					type.datatype=TYPE_ENUM_CONST;
+					auto ptype=add_type(type);
+					for(int k=0;;++k)
+					{
+						auto t=&LOOK_AHEAD_TOKEN(0);
+						if(t->type==CT_RBRACE)
+							break;
+						if(t->type!=CT_ID)
+							return free_tree(root);
+						ADVANCE;
+
+						if(LOOK_AHEAD(0)==CT_ASSIGN)
+						{
+							ADVANCE;
+							auto label=root->children.back();
+							label->children.push_back(nullptr);
+							if(!r_assign_expr(label->children.back()))
+							{
+								skip_till_after(CT_RBRACE);
+								return free_tree(root);
+							}
+							//TODO: evaluate const integral assign_expr
+							//k=...;
+						}
+						root->children.push_back(new IRNode(PT_ENUM_CONST, k, t->sdata));
+						scope_declare_member(t->sdata, ptype, k);
+
+						if(LOOK_AHEAD(0)!=CT_COMMA)
+							break;
+						ADVANCE;
+					}
+					//end of r_enum_body() inlined
+
+					if(LOOK_AHEAD(0)!=CT_RBRACE)
+						return free_tree(root);
+					ADVANCE;
+
+				r_enum_spec_finish:
+					//end of r_enum_spec() inlined
+
+					type.datatype=TYPE_ENUM;
+
+					type.logalign=ceil_log2(root->children.size());
+					if(type.logalign>3)
+						type.logalign-=3;
 					else
-						goto r_enum_spec_finish;
+						type.logalign=0;
+					type.size=1<<type.logalign;//non-standard: enum has minimum size to contain all declared constants
+
+					type.body=root;
+					ptype=add_type(type);
+					if(root->sdata)//add enum name for qualified lookup
+						scope_declare_member(root->sdata, ptype);
 				}
-				if(t->type!=CT_LBRACE)
-					return free_tree(root);
-
-				root->children.push_back(nullptr);
-				if(!r_enum_body(root->children.back()))
-					return free_tree(root);
-
-				if(LOOK_AHEAD(0)!=CT_RBRACE)
-					return free_tree(root);
-				ADVANCE;
-
-			r_enum_spec_finish:
-				//end of r_enum_spec() inlined
-
-				type.datatype=CT_ENUM;
-				type.body=root;
 #endif
 				break;
 			}
@@ -4872,6 +5089,7 @@ void			debugprint(IRNode *root)
 			case CT_FLOAT:case CT_DOUBLE:
 			case CT_WCHAR_T:case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
 			case CT_ENUM:case CT_STRUCT:case CT_CLASS:case CT_UNION:
+			case CT_ID:
 				return r_declaration(root);
 			default:
 				parse_error("Expected an extern declaration");
@@ -4899,6 +5117,7 @@ void			debugprint(IRNode *root)
 		case CT_FLOAT:case CT_DOUBLE:
 		case CT_WCHAR_T:case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
 		case CT_ENUM:case CT_STRUCT:case CT_CLASS:case CT_UNION:
+		case CT_ID:
 			return r_declaration(root);
 
 		default:
@@ -4927,6 +5146,7 @@ void			parse_cplusplus(Expression &ex, IRNode *&root)//OpenC++
 			skip_till_after(CT_SEMICOLON);
 #ifdef DEBUG_PARSER
 		debugprint(root->children.back());//
+		print_names();
 #endif
 	}
 #if 0
