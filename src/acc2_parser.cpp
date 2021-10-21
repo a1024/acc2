@@ -3,6 +3,8 @@
 #include		"acc2_codegen_x86_64.h"
 #include		"include/intrin.h"
 
+//parser forked from OpenC++		http://opencxx.sourceforge.net/
+
 	#define		DEBUG_PARSER
 
 const char*		token2str(CTokenType tokentype)
@@ -358,13 +360,36 @@ TypeInfo*		add_type(TypeInfo &type)
 	return t3;
 }
 
+//enum			NameType
+//{
+//	NAMEOF_DATATYPE,
+//	NAMEOF_VARIABLE,
+//};
+typedef unsigned long long u64;
+union			VarData
+{
+	long long idata;
+	double fdata;
+	float f32data;
+	char *data;
+	VarData():idata(0){}
+	VarData(u64 idata):idata(idata){}
+};
 struct			NameInfo
 {
 	TypeInfo *tdata;
-	size_t value;//for enum const
+	//NameType nametype;
+	bool is_var;
+	VarData vdata;
+	//union//integral types are stored in idata, enything else in separate buffer
+	//{
+	//	long long idata;
+	//	double fdata;
+	//	float f32data;
+	//	char *data;
+	//};
 };
 typedef std::maptree<NameInfo, char*> Name;
-//typedef std::maptree<TypeInfo*, char*> Name;
 Name			scope_global;
 char			*scope_id_lbrace=nullptr;
 void			scope_init()
@@ -388,9 +413,14 @@ void			scope_exit()
 	else
 		scope_global.close();
 }
-void			scope_declare_member(char *name, TypeInfo *pt, size_t enum_const=0)
+void			scope_declare_type(char *name, TypeInfo *ptype)//types, functions
 {
-	NameInfo info={pt, enum_const};
+	NameInfo info={ptype, false, 0};
+	scope_global.insert(name, info, true);
+}
+void			scope_declare_var(char *name, TypeInfo *ptype, long long data)//variables
+{
+	NameInfo info={ptype, true, data};
 	scope_global.insert(name, info, true);
 }
 Name::Node*		scope_lookup(char *id, bool global)
@@ -452,10 +482,85 @@ void			print_type(TypeInfo const &type)
 	case ACCESS_PROTECTED:	printed+=sprintf_s(g_buf+printed, g_buf_size-printed, "protected");	break;
 	}
 }
+void			print_var(TypeInfo *ptype, VarData vdata)
+{
+	if(!ptype)
+		printf(" %d", vdata.idata);
+	else
+	{
+		switch(ptype->datatype)
+		{
+		case TYPE_UNASSIGNED:
+		case TYPE_AUTO:
+		case TYPE_VOID:
+			break;
+		case TYPE_BOOL:
+			if(vdata.idata)
+				printf(" true");
+			else
+				printf(" false");
+			break;
+		case TYPE_CHAR:
+			if(ptype->size==1)
+				printf(" \'%c\'", (char)vdata.idata);
+			else
+				printf(" \'\\u%02X\'", (wchar_t)vdata.idata);
+			break;
+		case TYPE_INT:
+		case TYPE_INT_SIGNED:
+		case TYPE_INT_UNSIGNED:
+			printf(" %d", vdata.idata);
+			break;
+		case TYPE_FLOAT:
+			if(ptype->size==8)
+				printf(" %g", vdata.fdata);
+			else
+				printf(" %g", (double)vdata.f32data);
+			break;
+		case TYPE_ENUM:
+		case TYPE_ENUM_CONST:
+			printf(" %d", vdata.idata);
+			break;
+		case TYPE_CLASS:
+		case TYPE_STRUCT:
+		case TYPE_UNION:
+			if(vdata.data)
+			{
+				for(size_t k=0;k<ptype->size;++k)
+				{
+					printf(k?"-":" ");
+					printf("%02X", vdata.data[k]);
+				}
+			}
+			else
+				printf(" <nullptr>");
+			break;
+		case TYPE_SIMD://special struct
+			//TODO
+			break;
+		case TYPE_ARRAY:
+			for(int k=0, offset=0;k<ptype->size;++k, offset+=ptype->args[0]->size)
+				print_var(ptype->args[0], VarData((u64)(vdata.data+offset)));
+			break;
+		case TYPE_POINTER:
+			printf(" 0x%p", vdata.data);
+			break;
+		case TYPE_REFERENCE:
+			print_var(ptype->args[0], vdata);
+			break;
+		case TYPE_FUNC://unreachable
+		case TYPE_ELLIPSIS:
+		case TYPE_NAMESPACE:
+			printf(" <UNREACHABLE>");
+			break;
+		}
+	}
+}
 struct			PrintName
 {
-	void operator()(char *key, NameInfo const &data, size_t depth)
+	void operator()(char *name, NameInfo const &data, size_t depth)
 	{
+		//printf("%4d %*c ", depth, depth, '|');//X  padded with spaces
 		printf("%4d ", depth);
 		for(size_t k=0;k<depth;++k)
 			printf("|");
@@ -465,17 +570,20 @@ struct			PrintName
 			print_type(*data.tdata);
 			printf("%s", g_buf);
 		}
-		if(key)
-			printf(" %s", key);
+		if(name)
+			printf(" %s", name);
 		else
 			printf(" <nullptr>");
-		if(data.tdata&&data.tdata->datatype==TYPE_ENUM_CONST)
-			printf(" %d", data.value);
+		if(data.is_var)
+			print_var(data.tdata, data.vdata);
+		//if(data.tdata&&data.tdata->datatype==TYPE_ENUM_CONST)
+		//	printf(" %d", data.idata);
 		printf("\n");
 	}
 };
 void			print_names()
 {
+	printf("names:\n");
 	scope_global.transform_depth_first(PrintName());
 	printf("\n");
 }
@@ -699,6 +807,8 @@ inline void		token2str(CTokenType t, std::string &str)
 }
 void			AST2str(IRNode *root, std::string &str, int depth=0)
 {
+	//sprintf_s(g_buf, g_buf_size, "%5d %*c ", depth, depth, '|');
+	//str+=g_buf;
 	sprintf_s(g_buf, g_buf_size, "%5d", depth);
 	str+=g_buf;
 	str+=' ';
@@ -804,7 +914,7 @@ void			debugprint(IRNode *root)
 {
 	std::string str;
 	AST2str(root, str);
-	printf("%s\n", str.c_str());
+	printf("tree:\n%s\n", str.c_str());
 }
 //namespace		parse//OpenC++		http://opencxx.sourceforge.net/
 //{
@@ -814,7 +924,7 @@ void			debugprint(IRNode *root)
 #define			LOOK_AHEAD_TOKEN(K)	current_ex->operator[](current_idx+(K))
 #define			ADVANCE				++current_idx
 #define			ADVANCE_BY(K)		current_idx+=K
-#define			GET_TOKEN			current_ex->operator[](current_idx++).type
+//#define		GET_TOKEN			current_ex->operator[](current_idx++).type
 	inline void	skip_till_after(CTokenType tokentype)
 	{
 		for(;current_idx<ntokens&&LOOK_AHEAD(0)!=tokentype;++current_idx);
@@ -854,55 +964,11 @@ void			debugprint(IRNode *root)
 	}
 #define			INSERT_NONLEAF(ROOT, TEMP, TYPE)		TEMP=ROOT, ROOT=new IRNode(TYPE, CT_IGNORED), ROOT->children.push_back(TEMP);
 #define			INSERT_LEAF(ROOT, TYPE, DATA)			ROOT=new IRNode(TYPE, CT_IGNORED, DATA)
-#define			INSERT_CHILD(ROOT, CHILDNUM, NEXT)		ROOT->children.push_back(nullptr); if(!NEXT(ROOT->children[CHILDNUM]))return free_tree(ROOT);
-	//inline void	insert_nonleaf(IRNode *&root, IRNode *&temp, CTokenType type)
-	//{
-	//	temp=root;
-	//	root=new IRNode(type, CT_IGNORED);
-	//	root->children.push_back(temp);
-	//}
-	//inline int	append_node(IRNode const &node)
-	//{
-	//	if(ir_size<(int)current_ir->size())
-	//		current_ir->growby(1024);
-	//	current_ir->operator[](ir_size)=node;
-	//	int ret=ir_size;
-	//	++ir_size;
-	//	return ret;
-	//}
-	//inline int	append_node(CTokenType type, int parent, IRNode *&node)
-	//{
-	//	if(ir_size>=(int)current_ir->size())
-	//		parse::current_ir->growby(1024);
-	//	int ret=ir_size;
-	//	++ir_size;
-	//	node=&NODE(ret);
-	//	node->set(type, parent);
-	//	NODE(parent).children.push_back(ret);
-	//	return ret;
-	//}
-	//inline int	insert_node(CTokenType type, int parent, int child, IRNode *&node)
-	//{
-	//	int root=append_node(type, parent, node);
-	//	
-	//	NODE(parent).children.back()=root;//turn child node into grand-child
-	//	NODE(child).parent=root;
-	//	node->children.push_back(child);
-	//	return root;
-	//}
-	//inline void	link_nodes(int parent, int child)
-	//{
-	//	NODE(parent).children.push_back(child);
-	//	NODE(child).parent=parent;
-	//}
+//#define		INSERT_CHILD(ROOT, CHILDNUM, NEXT)		ROOT->children.push_back(nullptr); if(!NEXT(ROOT->children[CHILDNUM]))return free_tree(ROOT);
 
 	//TODO: CHECK FOR BOUNDS
 
 	//TODO: only top-level functions can call free_tree()
-
-	//void		t_extract_func_args_type(IRNode *root)
-	//{
-	//}
 
 	//recursive parser declarations
 	bool		is_ptr_to_member(int i);
@@ -1432,91 +1498,6 @@ void			debugprint(IRNode *root)
 			return free_tree(root);
 		if(!root->children.back())
 			root->children.pop_back();
-#if 0
-		IRNode *child=nullptr;
-		//INSERT_LEAF(root, PT_ALLOCATE_TYPE, nullptr);
-		if(LOOK_AHEAD(0)==CT_LPR)
-		{
-			ADVANCE;
-			int idx=current_idx;//save
-			if(r_typename(root))			//<- what?
-			{
-				if(GET_TOKEN==CT_RPR)
-				{
-					if(LOOK_AHEAD(0)!=CT_LPR)
-					{
-						if(!is_type_specifier())
-							return true;
-					}
-					else if(r_allocate_initializer(child))
-					{
-						root->children.push_back(child);
-						if(LOOK_AHEAD(0)!=CT_LPR)
-							return true;
-					}
-				}
-			}
-			//if we reach here, we have to process '(' function.arguments ')'.
-			current_idx=idx;//restore
-			free_tree_not_an_error(root);
-			if(!r_func_args(child))
-				return free_tree(root);
-			root->children.push_back(child);
-			if(LOOK_AHEAD(0)!=CT_RPR)
-				return free_tree(root);
-			ADVANCE;
-		}
-
-		if(LOOK_AHEAD(0)==CT_LPR)
-		{
-			ADVANCE;
-			if(!r_typename(child))
-				return free_tree(root);
-			root->children.push_back(child);
-			if(LOOK_AHEAD(0)!=CT_RPR)
-				return free_tree(root);
-		}
-		else
-		{
-			if(!r_typespecifier(child, false))
-				return free_tree(root);
-			root->children.push_back(child);
-
-			//if(!r_new_declarator(child))//inlined
-			//	return free_tree(root);
-
-			//r_new_declarator() inlined
-//new.declarator
-//  : empty
-//  | ptr.operator
-//  | {ptr.operator} ('[' comma.expression ']')+
-			INSERT_LEAF(root, PT_NEW_DECLARATOR, nullptr);
-			if(!r_opt_ptr_operator_nonnull(root))
-				return free_tree(root);
-			while(LOOK_AHEAD(0)==CT_LBRACKET)
-			{
-				ADVANCE;//skip '['
-				IRNode *child=nullptr;
-				if(!r_comma_expr(child))
-					return free_tree(root);
-				root->children.push_back(child);
-				if(LOOK_AHEAD(0)!=CT_RBRACKET)
-					return free_tree(root);
-				ADVANCE;//skip ']'
-			}
-			//end of r_new_declarator() inlined
-
-			root->children.push_back(child);
-		}
-
-		if(LOOK_AHEAD(0)==CT_LPR)
-		{
-			if(!r_allocate_initializer(child))
-				return free_tree(root);
-			root->children.push_back(child);
-		}
-		return true;
-#endif
 	}
 #endif
 //allocate.expr
@@ -2581,6 +2562,7 @@ void			debugprint(IRNode *root)
 					else
 					{
 						//TODO: error: invalid type spec combination
+						return free_tree(root);
 					}
 					break;
 				case CT_SIGNED:
@@ -2588,11 +2570,12 @@ void			debugprint(IRNode *root)
 					if(type.datatype==TYPE_UNASSIGNED||type.datatype==TYPE_INT)
 					{
 						type.datatype=TYPE_INT_SIGNED;
-						type.size=4;
+						type.size=4, type.logalign=2;
 					}
 					else
 					{
 						//TODO: error: invalid type spec combination
+						return free_tree(root);
 					}
 					break;
 				case CT_UNSIGNED:
@@ -2600,20 +2583,22 @@ void			debugprint(IRNode *root)
 					if(type.datatype==TYPE_UNASSIGNED||type.datatype==TYPE_INT)
 					{
 						type.datatype=TYPE_INT_UNSIGNED;
-						type.size=4;
+						type.size=4, type.logalign=2;
 					}
 					else
 					{
 						//TODO: error: invalid type spec combination
+						return free_tree(root);
 					}
 					break;
 				case CT_VOID:
 					ADVANCE;
 					if(type.datatype==TYPE_UNASSIGNED)
-						type.datatype=TYPE_VOID;
+						type.datatype=TYPE_VOID, type.logalign=0;
 					else
 					{
 						//TODO: error: invalid type spec combination
+						return free_tree(root);
 					}
 					break;
 				case CT_BOOL:
@@ -2621,7 +2606,7 @@ void			debugprint(IRNode *root)
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_BOOL;
-						type.size=1;
+						type.size=1, type.logalign=0;
 					}
 					break;
 				case CT_CHAR:
@@ -2633,11 +2618,11 @@ void			debugprint(IRNode *root)
 					case TYPE_INT_SIGNED:
 					case TYPE_INT_UNSIGNED:
 						type.datatype=TYPE_CHAR;//TODO: reject 'unsigned int char'
-						type.size=1;
+						type.size=1, type.logalign=0;
 						break;
 					default:
 						//TODO: error: invalid type spec combination
-						break;
+						return free_tree(root);
 					}
 					break;
 				case CT_SHORT:
@@ -2649,11 +2634,11 @@ void			debugprint(IRNode *root)
 					case TYPE_INT:
 					case TYPE_INT_SIGNED:
 					case TYPE_INT_UNSIGNED:
-						type.size=2;
+						type.size=2, type.logalign=1;
 						break;
 					default:
 						//TODO: error: invalid type spec combination
-						break;
+						return free_tree(root);
 					}
 					break;
 				case CT_INT:
@@ -2666,11 +2651,11 @@ void			debugprint(IRNode *root)
 					case TYPE_INT:
 					case TYPE_INT_SIGNED:
 					case TYPE_INT_UNSIGNED:
-						type.size=4;
+						type.size=4, type.logalign=2;
 						break;
 					default:
 						//TODO: error: invalid type spec combination
-						break;
+						return free_tree(root);
 					}
 					break;
 				case CT_LONG:
@@ -2686,27 +2671,28 @@ void			debugprint(IRNode *root)
 						switch(type.size)
 						{
 						case 0:
-							type.size=4;
+							type.size=4, type.logalign=2;
 							break;
 						case 4:
-							type.size=8;
+							type.size=8, type.logalign=3;
 							break;
 						case 8:
 							//TODO: error: invalid type spec combination
-							break;
+							return free_tree(root);
 						}
 						break;
 					case TYPE_FLOAT:
 						if(type.size==8)
-							type.size=16;
+							type.size=16, type.logalign=4;
 						else
 						{
 							//TODO: error: invalid type spec combination
+							return free_tree(root);
 						}
 						break;
 					default:
 						//TODO: error: invalid type spec combination
-						break;
+						return free_tree(root);
 					}
 					break;
 				case CT_FLOAT:
@@ -2714,11 +2700,12 @@ void			debugprint(IRNode *root)
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_FLOAT;
-						type.size=4;
+						type.size=4, type.logalign=2;
 					}
 					else
 					{
 						//TODO: error: invalid type spec combination
+						return free_tree(root);
 					}
 					break;
 				case CT_DOUBLE://TODO: differentiate long double (ok) & int double (error)
@@ -2726,16 +2713,17 @@ void			debugprint(IRNode *root)
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_FLOAT;
-						type.size=8;
+						type.size=8, type.logalign=3;
 					}
 					else if(type.datatype==TYPE_INT&&long_count==1&&!int_count)
 					{
 						type.datatype=TYPE_FLOAT;
-						type.size=16;
+						type.size=16, type.logalign=4;
 					}
 					else
 					{
 						//TODO: error: invalid type spec combination
+						return free_tree(root);
 					}
 					break;
 				case CT_WCHAR_T:
@@ -2743,7 +2731,7 @@ void			debugprint(IRNode *root)
 					if(type.datatype==TYPE_UNASSIGNED)
 					{
 						type.datatype=TYPE_CHAR;
-						type.size=4;
+						type.size=4, type.logalign=2;
 					}
 					break;
 				case CT_INT8:case CT_INT16:case CT_INT32:case CT_INT64:
@@ -2753,10 +2741,10 @@ void			debugprint(IRNode *root)
 						type.datatype=TYPE_CHAR;
 						switch(token->type)
 						{
-						case CT_INT8: type.size=1;break;
-						case CT_INT16:type.size=2;break;
-						case CT_INT32:type.size=4;break;
-						case CT_INT64:type.size=8;break;
+						case CT_INT8: type.size=1, type.logalign=0;break;
+						case CT_INT16:type.size=2, type.logalign=1;break;
+						case CT_INT32:type.size=4, type.logalign=2;break;
+						case CT_INT64:type.size=8, type.logalign=3;break;
 						}
 					}
 					break;
@@ -2837,7 +2825,7 @@ void			debugprint(IRNode *root)
 
 						//incomplete type definition
 						type.datatype=TYPE_VOID;
-						scope_declare_member(root->sdata, add_type(type));
+						scope_declare_type(root->sdata, add_type(type));
 
 						if(body_is_obligatory=LOOK_AHEAD(0)==CT_COLON)//inheritance
 						{
@@ -2889,7 +2877,9 @@ void			debugprint(IRNode *root)
 					else//anonymous class
 					{
 						ADVANCE;
-						INSERT_LEAF(root, t, nullptr);//TODO: encode class name as a number (impossible for an identifier), if necessary
+						INSERT_LEAF(root, t, nullptr);
+						
+						//TODO: encode class name as a number (impossible for an identifier), if necessary
 					}
 					switch(token->type)
 					{
@@ -2911,7 +2901,7 @@ void			debugprint(IRNode *root)
 			
 						//r_class_body() inlined			class.body  :=  '{' (class.member)* '}'
 						ADVANCE;
-						scope_enter(scope_id_lbrace);
+						scope_enter(root->sdata);
 
 						for(char accesstype=type.datatype==TYPE_CLASS?ACCESS_PRIVATE:ACCESS_PUBLIC;LOOK_AHEAD(0)!=CT_RBRACE;)
 						{
@@ -3043,7 +3033,7 @@ void			debugprint(IRNode *root)
 						}
 						ptype=add_type(type);
 						if(named_spec)
-							scope_declare_member(root->sdata, ptype);//should overwrite the incomplete type
+							scope_declare_type(root->sdata, ptype);//should overwrite the incomplete type
 					}
 					//end of r_class_spec() inlined
 				}
@@ -3111,7 +3101,7 @@ void			debugprint(IRNode *root)
 							//k=...;
 						}
 						root->children.push_back(new IRNode(PT_ENUM_CONST, k, t->sdata));
-						scope_declare_member(t->sdata, ptype, k);
+						scope_declare_var(t->sdata, ptype, k);
 
 						if(LOOK_AHEAD(0)!=CT_COMMA)
 							break;
@@ -3138,7 +3128,7 @@ void			debugprint(IRNode *root)
 					type.body=root;
 					ptype=add_type(type);
 					if(root->sdata)//add enum name for qualified lookup
-						scope_declare_member(root->sdata, ptype);
+						scope_declare_type(root->sdata, ptype);
 				}
 #endif
 				break;
@@ -4306,7 +4296,7 @@ void			debugprint(IRNode *root)
 				//definition with simple identifier in current scope
 				root->children.push_back(new IRNode(CT_ID, CT_IGNORED, LOOK_AHEAD_TOKEN(0).sdata));
 				ADVANCE;
-				scope_declare_member(root->children.back()->sdata, ptype);
+				scope_declare_var(root->children.back()->sdata, ptype, 0);
 			}
 			else
 			{
@@ -5137,7 +5127,7 @@ void			parse_cplusplus(Expression &ex, IRNode *&root)//OpenC++
 	current_idx=0;
 	ir_size=0;
 
-	INSERT_LEAF(root, PT_PROGRAM, nullptr);//node at 0 is always CT_PROGRAM, everything stems from there
+	INSERT_LEAF(root, PT_PROGRAM, nullptr);//node at 0 is always PT_PROGRAM, everything stems from there
 	for(;current_idx<ntokens;)
 	{
 		root->children.push_back(nullptr);
