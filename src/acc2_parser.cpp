@@ -72,6 +72,8 @@ static OpLibrary operators;
 static std::vector<const char*> currentnamespace;//works like a stack
 #endif
 
+//CODEGEN
+
 struct			MzHeader
 {
 	char e_magic[2];	//"MZ"
@@ -187,6 +189,7 @@ struct			Pe32OptionalHeader// 1 byte aligned
 		mLoaderFlags,
 		mNumberOfRvaAndSizes;
 };
+
 
 //PARSER
 
@@ -360,11 +363,6 @@ TypeInfo*		add_type(TypeInfo &type)
 	return t3;
 }
 
-//enum			NameType
-//{
-//	NAMEOF_DATATYPE,
-//	NAMEOF_VARIABLE,
-//};
 typedef unsigned long long u64;
 union			VarData
 {
@@ -378,16 +376,8 @@ union			VarData
 struct			NameInfo
 {
 	TypeInfo *tdata;
-	//NameType nametype;
 	bool is_var;
 	VarData vdata;
-	//union//integral types are stored in idata, enything else in separate buffer
-	//{
-	//	long long idata;
-	//	double fdata;
-	//	float f32data;
-	//	char *data;
-	//};
 };
 typedef std::maptree<NameInfo, char*> Name;
 Name			scope_global;
@@ -587,171 +577,7 @@ void			print_names()
 	scope_global.transform_depth_first(PrintName());
 	printf("\n");
 }
-#if 0
-std::vector<Name::Container::EType> scope_path;
-//const int LOL_1=sizeof(Name);
-//typedef std::map<char*, Name> GlobalScope;
-//GlobalScope global_scope;
-//struct			Name
-//{
-//	NameType type;
-//	std::map<char*, Name*> decl;
-//};
-char			*scope_id_lbrace=nullptr;
-void			scope_init()
-{
-	scope_id_lbrace=add_string("{");
-	scope_path.push_back(Name::Container::EType(scope_id_lbrace, &scope_global));
-}
-Name::Container::EType scope_enter(char *name, bool *old=nullptr)
-{
-	assert(scope_path.size()>0);
-	auto &current=scope_path.back();
-	bool oldflag=false;
-	auto ret=current.second->insert_no_overwrite(name, &oldflag);
-	//scope_path.push_back(ret
-	if(old)
-		*old=oldflag;
-	return ret;
-}
-void			scope_exit()
-{
-	if(scope_path.size()<=1)
-	{
-		Token t={};//TODO: more detail
-		error_pp(t, "Extra closing brace(s)");
-		return;
-	}
-	auto current=scope_path.back();
-	if(current.first==scope_id_lbrace)
-	{
-	}
-	scope_path.pop_back();
-	current=scope_path.back();
-	current=
-}
-void			scope_declare_member(char *name, NameInfo const &s)
-{
-}
-Name*			scope_lookup(char *id, bool global)
-{
-	return nullptr;//
-}
-#endif
-#if 0
-//typedef std::vector<char*> QName;//qualified name
-//struct			QNameCmp
-//{
-//	bool operator()(QName const &a, QName const &b)
-//	{
-//		int k=0;
-//		for(;k<(int)a.size()&&k<(int)b.size();++k)
-//			if(a[k]!=b[k])
-//				return a[k]<b[k];
-//		return a.size()>b.size();
-//	}
-//};
-//std::set<QName*, QNameCmp> namedb;
-struct			VarInfo
-{
-	TypeInfo *type;
-	std::vector<char*> name;//[namespace::class::]name
-	union
-	{
-		char *sdata;
-		long long *idata;
-		double *fdata;
-	};
-};
-struct			VarInfoCmp
-{
-	bool operator()(VarInfo const &a, VarInfo const &b)
-	{
-		for(int k=0;k<(int)a.name.size()&&k<(int)b.name.size();++k)
-			if(a.name[k]!=b.name[k])
-				return a.name[k]<b.name[k];
-		return a.name.size()>b.name.size();
-	}
-};
-std::set<VarInfo*, VarInfoCmp> vardb;//scope?
 
-enum			NameType
-{
-	NAME_NAMESPACE,
-	NAME_DATATYPE,
-	NAME_VARIABLE,
-	NAME_FUNCTION,
-};
-struct			Name;
-typedef std::set<Name*> NameSet;//memory leak fix
-typedef std::map<char*, Name*> DeclLib;
-struct			Name
-{
-	unsigned short type, level;
-	union
-	{
-		TypeInfo *tdata;
-		VarInfo *vdata;
-	};
-	DeclLib declarations;
-};
-NameSet nameset;
-//vector of declaration trees
-//each element contains all immediately visible identifiers at corresponding scope
-//first element is the global scope
-std::vector<DeclLib> declstack;
-void			scope_enter()
-{
-	declstack.push_back(declstack.back());//duplicate symbol table
-}
-void			scope_exit()
-{
-	if(!declstack.size())
-	{
-		//TODO: error: end of global scope???
-		return;
-	}
-	declstack.pop_back();
-}
-void			scope_declare_member(char *name, Name *s)
-{
-	nameset.insert(s);
-	declstack.back().insert(DeclLib::EType(name, s));
-}
-Name*			decl_lookup_global(char *id)
-{
-	auto it=declstack[0].find(id);
-	if(it)
-		return it->second;
-	return nullptr;
-}
-Name*			decl_lookup_local(char *id)
-{
-	for(int k=declstack.size()-1;k>=0;--k)
-	{
-		auto &declarations=declstack[k];
-		auto it=declarations.find(id);
-		if(it)
-			return it->second;
-	}
-	return nullptr;
-}
-Name*			scope_lookup(char *id, bool global)
-{
-	if(global)
-		return decl_lookup_global(id);
-	return decl_lookup_local(id);
-}
-#endif
-
-//struct		IRNode;
-//union			IRLink
-//{
-//	IRNode *p;
-//	int i;
-//	IRLink(IRNode *p):p(p){}
-//	IRLink(int i):i(i){}
-//};
 struct			IRNode
 {
 	CTokenType type;
@@ -768,7 +594,6 @@ struct			IRNode
 		int flags;
 		CTokenType opsign;
 	};
-	//std::vector<IRLink> children;//X  makes free_tree() more complicated
 	std::vector<IRNode*> children;
 	union
 	{
@@ -779,8 +604,6 @@ struct			IRNode
 		char *sdata;
 		long long idata;
 		double fdata;
-		//long long *idata;
-		//double *fdata;
 	};
 	IRNode():type(CT_IGNORED), opsign(CT_IGNORED), idata(0){}
 	IRNode(CTokenType type, CTokenType opsign, void *data=nullptr):type(type), opsign(opsign), idata((size_t&)data){}
@@ -860,33 +683,6 @@ void			AST2str(IRNode *root, std::string &str, int depth=0)
 		}
 		else
 			str+="NULL_TYPE";
-		/*{
-			auto type=root->tdata;
-			str+='\t';
-			switch(type->datatype)
-			{
-			case TYPE_UNASSIGNED:	str+="<unassigned>";break;//TODO: elaborate
-			case TYPE_AUTO:			str+="auto";break;
-			case TYPE_VOID:			str+="void";break;
-			case TYPE_BOOL:			str+="bool";break;
-			case TYPE_CHAR:			str+="char";break;
-			case TYPE_INT:			str+="int";break;
-			case TYPE_INT_SIGNED:	str+="signed int";break;
-			case TYPE_INT_UNSIGNED:	str+="unsigned";break;
-			case TYPE_FLOAT:		str+="float";break;
-			case TYPE_ENUM:			str+="enum";break;
-			case TYPE_CLASS:		str+="class";break;
-			case TYPE_STRUCT:		str+="struct";break;
-			case TYPE_UNION:		str+="union";break;
-			case TYPE_SIMD:			str+="simd";break;
-			case TYPE_ARRAY:		str+="array";break;
-			case TYPE_POINTER:		str+="pointer";break;
-			case TYPE_FUNC:			str+="func";break;
-			case TYPE_ELLIPSIS:		str+="...";break;
-			case TYPE_NAMESPACE:	str+="namespace";break;
-				break;
-			}
-		}//*/
 		break;
 	case PT_MUL:
 	case PT_ADD:
@@ -924,7 +720,6 @@ void			debugprint(IRNode *root)
 #define			LOOK_AHEAD_TOKEN(K)	current_ex->operator[](current_idx+(K))
 #define			ADVANCE				++current_idx
 #define			ADVANCE_BY(K)		current_idx+=K
-//#define		GET_TOKEN			current_ex->operator[](current_idx++).type
 	inline void	skip_till_after(CTokenType tokentype)
 	{
 		for(;current_idx<ntokens&&LOOK_AHEAD(0)!=tokentype;++current_idx);
@@ -964,7 +759,6 @@ void			debugprint(IRNode *root)
 	}
 #define			INSERT_NONLEAF(ROOT, TEMP, TYPE)		TEMP=ROOT, ROOT=new IRNode(TYPE, CT_IGNORED), ROOT->children.push_back(TEMP);
 #define			INSERT_LEAF(ROOT, TYPE, DATA)			ROOT=new IRNode(TYPE, CT_IGNORED, DATA)
-//#define		INSERT_CHILD(ROOT, CHILDNUM, NEXT)		ROOT->children.push_back(nullptr); if(!NEXT(ROOT->children[CHILDNUM]))return free_tree(ROOT);
 
 	//TODO: CHECK FOR BOUNDS
 
@@ -972,7 +766,6 @@ void			debugprint(IRNode *root)
 
 	//recursive parser declarations
 	bool		is_ptr_to_member(int i);
-	bool		r_ptr_to_member(IRNode *&root);
 
 	bool		r_name_lookup(IRNode *&root);
 
@@ -1351,6 +1144,84 @@ void			debugprint(IRNode *root)
 		}
 		return false;
 	}
+	bool		r_opt_ptr_operator_nonnull(IRNode *&root, TypeInfo &type)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+		TODO: encode as lookup & remove root arg
+	{
+		for(;;)
+		{
+			auto t=LOOK_AHEAD(0);
+			if(t!=CT_ASTERIX&&t!=CT_AMPERSAND&&!is_ptr_to_member(0))
+				break;
+
+			auto pt=add_type(type);
+			type=TypeInfo();
+			type.args.push_back(pt);
+
+			if(t==CT_ASTERIX||t==CT_AMPERSAND)
+			{
+				ADVANCE;
+				root->children.push_back(new IRNode(t, CT_IGNORED));
+				if(t==CT_ASTERIX)
+					type.datatype=TYPE_POINTER;
+				else
+				{
+					if(type.args[0]->datatype==TYPE_REFERENCE)
+						return false;
+						//return free_tree(root);
+					type.datatype=TYPE_REFERENCE;//TODO: or address?
+				}
+			}
+			else
+			{
+				//TODO: support "*classname::member_pointer"
+
+				//r_ptr_to_member() inlined				//ptr.to.member  :=  {'::'} (identifier {template.args} '::')+ '*'
+				if(LOOK_AHEAD(0)==CT_SCOPE)
+				{
+					ADVANCE;
+					//TODO: search only global scope		really?
+				}
+				for(;;)
+				{
+					auto t=&LOOK_AHEAD_TOKEN(0);
+					if(t->type!=CT_ID)
+						return false;
+					ADVANCE;
+					root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));//
+
+					t=&LOOK_AHEAD_TOKEN(0);
+					if(t->type==CT_LESS)
+					{
+						root->children.push_back(nullptr);
+						if(!r_template_arglist(root->children.back()))//
+							return false;
+						//TODO: template call lookup
+					}
+					else
+					{
+						//TODO: simple name lookup
+					}
+					t=&LOOK_AHEAD_TOKEN(0);
+					if(t->type!=CT_SCOPE)
+						return false;
+					ADVANCE;
+					t=&LOOK_AHEAD_TOKEN(0);
+					if(t->type==CT_ASTERIX)
+					{
+						ADVANCE;
+						break;
+					}
+				}
+				//end of r_ptr_to_member() inlined
+			}
+			int cv_flag=0;
+			if(!r_opt_cv_qualify(cv_flag))
+				return false;
+				//return free_tree(root);
+			type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
+			(int&)root->children.back()->opsign=cv_flag;//TODO: encode the pointer operator
+		}
+		return true;
+	}
 	bool		r_allocate_initializer(IRNode *&root)//allocate.initializer  :=  '(' {initialize.expr (',' initialize.expr)* } ')'
 	{
 		if(LOOK_AHEAD(0)!=CT_LPR)
@@ -1377,129 +1248,6 @@ void			debugprint(IRNode *root)
 		ADVANCE;
 		return true;
 	}
-	bool		r_opt_ptr_operator_nonnull(IRNode *&root, TypeInfo &type)//ptr.operator  :=  (('*' | '&' | ptr.to.member) {cv.qualify})+
-	{
-		for(;;)
-		{
-			auto t=LOOK_AHEAD(0);
-			if(t!=CT_ASTERIX&&t!=CT_AMPERSAND&&!is_ptr_to_member(0))
-				break;
-
-			auto pt=add_type(type);
-			type=TypeInfo();
-			type.args.push_back(pt);
-
-			if(t==CT_ASTERIX||t==CT_AMPERSAND)
-			{
-				ADVANCE;
-				root->children.push_back(new IRNode(t, CT_IGNORED));
-				if(t==CT_ASTERIX)
-					type.datatype=TYPE_POINTER;
-				else
-				{
-					if(type.args[0]->datatype==TYPE_REFERENCE)
-						return free_tree(root);
-					type.datatype=TYPE_REFERENCE;
-				}
-			}
-			else
-			{
-				root->children.push_back(nullptr);//TODO: support "*classname::member_pointer"
-				if(!r_ptr_to_member(root->children.back()))
-					return free_tree(root);
-			}
-			int cv_flag=0;
-			if(!r_opt_cv_qualify(cv_flag))
-				return free_tree(root);
-			type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
-			(int&)root->children.back()->opsign=cv_flag;//TODO: encode the pointer operator
-		}
-		return true;
-	}
-#if 0
-//new.declarator
-//  : empty
-//  | ptr.operator
-//  | {ptr.operator} ('[' comma.expression ']')+
-	bool		r_new_declarator(IRNode *&root)			//can be inlined
-	{
-		INSERT_LEAF(root, PT_NEW_DECLARATOR, nullptr);
-		//root->children.push_back(nullptr);
-		//if(!r_opt_ptr_operator(root->children[0]))
-		if(!r_opt_ptr_operator_nonnull(root))
-			return free_tree(root);
-		while(LOOK_AHEAD(0)==CT_LBRACKET)
-		{
-			ADVANCE;//skip '['
-			IRNode *child=nullptr;
-			if(!r_comma_expr(child))
-				return free_tree(root);
-			root->children.push_back(child);
-			if(LOOK_AHEAD(0)!=CT_RBRACKET)
-				return free_tree(root);
-			ADVANCE;//skip ']'
-		}
-		return true;
-	}
-#endif
-#if 0
-//allocate.type
-//  : {'(' function.arguments ')'} type.specifier new.declarator {allocate.initializer}
-//  | {'(' function.arguments ')'} '(' type.name ')' {allocate.initializer}
-	bool		r_allocate_type(IRNode *&root)			//shouldn't be inlined: multiple returns will bring goto
-	{
-		INSERT_LEAF(root, PT_ALLOCATE_TYPE, nullptr);
-		if(LOOK_AHEAD(0)==CT_LPR)
-		{
-			ADVANCE;
-			//either func_args (either empty or ass_expr*) or typename
-			root->children.push_back(nullptr);
-			if(r_typename(root->children.back()))
-			{
-				if(LOOK_AHEAD(0)!=CT_RPR)
-					return free_tree(root);
-				ADVANCE;
-			}
-			else
-			{
-				if(!r_func_args(root->children.back()))
-					return free_tree(root);
-				if(LOOK_AHEAD(0)!=CT_RPR)
-					return free_tree(root);
-				ADVANCE;
-
-				//either {typespecifier, new_declarator} or '('typename')'
-				if(LOOK_AHEAD(0)!=CT_LPR)
-					goto r_allocate_type_choice1;
-				ADVANCE;
-				
-				root->children.push_back(nullptr);
-				if(!r_typename(root->children.back()))
-					return free_tree(root);
-
-				if(LOOK_AHEAD(0)!=CT_RPR)
-					return free_tree(root);
-				ADVANCE;
-			}
-		}
-		else
-		{
-		r_allocate_type_choice1:
-			root->children.push_back(nullptr);
-			if(!r_typespecifier(root->children.back(), false))
-				return free_tree(root);
-
-			root->children.push_back(nullptr);
-			if(!r_new_declarator(root->children.back()))
-				return free_tree(root);
-		}
-		root->children.push_back(nullptr);
-		if(!r_allocate_initializer(root->children.back()))
-			return free_tree(root);
-		if(!root->children.back())
-			root->children.pop_back();
-	}
-#endif
 //allocate.expr
 //  : {Scope | userdef.keyword} NEW allocate.type
 //  | {Scope} DELETE {'[' ']'} cast.expr
@@ -1537,7 +1285,7 @@ void			debugprint(IRNode *root)
 			//TypeInfo *ptype=nullptr;
 
 			//root->children.push_back(nullptr);
-			//if(!r_allocate_type(root->children[0]))//shouldn't be inlined: multiple returns will bring goto	X  rewritten with single success return
+			//if(!r_allocate_type(root->children[0]))
 			//	return free_tree(root);
 
 			//r_allocate_type() inlined
@@ -2047,368 +1795,6 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 
-#if 0
-//base.specifiers  :=  ':' base.specifier (',' base.specifier)*
-//
-//base.specifier  :=  {{VIRTUAL} (PUBLIC | PROTECTED | PRIVATE) {VIRTUAL}} name
-	bool		r_base_specifiers(IRNode *&root)
-	{
-		if(LOOK_AHEAD(0)!=CT_COLON)
-			return false;
-		ADVANCE;
-
-		INSERT_LEAF(root, PT_BASE_SPECIFIER, nullptr);
-
-		for(;;)
-		{
-			auto t=LOOK_AHEAD(0);
-			if(t==CT_VIRTUAL)
-			{
-				ADVANCE;
-				root->children.push_back(new IRNode(CT_VIRTUAL, CT_IGNORED));
-				t=LOOK_AHEAD(0);
-			}
-			switch(t)
-			{
-			case CT_PUBLIC:
-			case CT_PROTECTED:
-			case CT_PRIVATE:
-				ADVANCE;
-				root->children.push_back(new IRNode(t, CT_IGNORED));
-				break;
-			}
-			if(t==CT_VIRTUAL)
-			{
-				ADVANCE;
-				root->children.push_back(new IRNode(CT_VIRTUAL, CT_IGNORED));
-				t=LOOK_AHEAD(0);
-			}
-			root->children.push_back(nullptr);
-			if(!r_name_lookup(root->children.back()))
-				return free_tree(root);
-			if(LOOK_AHEAD(0)!=CT_COMMA)
-				break;
-			ADVANCE;
-		}
-		return true;
-	}
-#endif
-#if 0
-	bool		r_access_decl(IRNode *&root)//access.decl  :=  name ';'
-	{
-		if(!r_name_lookup(root))//probably lookup
-			return false;
-
-		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return free_tree(root);
-		ADVANCE;
-
-		return true;
-	}
-#endif
-#if 0
-//class.member
-//  : (PUBLIC | PROTECTED | PRIVATE) ':'
-//  | user.access.spec
-//  | ';'
-//  | typedef.stmt
-//  | template.decl
-//  | using.declaration
-//  | metaclass.decl
-//  | declaration
-//  | access.decl
-	bool		r_class_member(IRNode *&root)
-	{
-		auto t=LOOK_AHEAD(0);
-		switch(t)
-		{
-		case CT_PRIVATE:
-		case CT_PROTECTED:
-		case CT_PUBLIC:
-			ADVANCE;
-			INSERT_LEAF(root, t, nullptr);
-			if(LOOK_AHEAD(0)!=CT_COLON)
-				return free_tree(root);
-			ADVANCE;
-			break;
-		//case UserKeyword4://user.access.spec
-		//	break;
-		case CT_SEMICOLON:
-			ADVANCE;
-			break;
-		case CT_TYPEDEF:
-			if(!r_typedef(root))
-				return false;
-			break;
-		case CT_TEMPLATE:
-			if(!r_template_decl(root))
-				return false;
-			break;
-		case CT_USING:
-			if(!r_using(root))
-				return false;
-			break;
-		//case CT_CLASS://X  not metaclass		ignore for now
-		//case CT_STRUCT:
-		//case CT_UNION:
-		//case CT_ENUM:
-		//	if(!r_metaclass_decl(root))
-		//		return false;
-		//	break;
-		default:
-			{
-				int idx=current_idx;
-				if(!r_declaration(root))
-				{
-					free_tree(root);//not an error
-					current_idx=idx;
-					//return r_access_decl(root);//inlined
-				
-					//r_access_decl() inlined			access.decl  :=  name ';'
-					if(!r_name_lookup(root))
-						return false;
-
-					if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-						return free_tree(root);
-					ADVANCE;
-					//end of r_access_decl() inlined
-				}
-			}
-			break;
-		}
-		return true;
-	}
-#endif
-#if 0
-	bool		r_class_body(IRNode *&root)//class.body  :=  '{' (class.member)* '}'		inlined
-	{
-		if(LOOK_AHEAD(0)!=CT_LBRACE)
-			return false;
-		ADVANCE;
-		scope_enter(scope_id_lbrace);
-
-		INSERT_LEAF(root, PT_CLASS_BODY, nullptr);
-
-		while(LOOK_AHEAD(0)!=CT_RBRACE)
-		{
-			root->children.push_back(nullptr);
-			if(!r_class_member(root->children.back()))
-			{
-				skip_till_after(CT_RBRACE);
-				scope_exit();
-				return free_tree(root);
-			}
-		}
-		ADVANCE;
-		scope_exit();
-		return true;
-	}
-#endif
-#if 0
-//class.spec
-//  : {userdef.keyword} class.key							 class.body
-//  | {userdef.keyword} class.key name						{class.body}
-//  | {userdef.keyword} class.key name ':' base.specifiers	 class.body
-//
-//class.key  :=  CLASS | STRUCT | UNION
-	bool		r_class_spec(IRNode *&root)
-	{
-		//TODO: understand UserKeyword		ignore userdef.keyword for now
-		auto t=LOOK_AHEAD(0);
-		switch(t)
-		{
-		case CT_CLASS:
-		case CT_STRUCT:
-		case CT_UNION:
-			break;
-		default:
-			return false;
-		}
-		bool body_is_obligatory=true;
-		auto t2=&LOOK_AHEAD_TOKEN(1);
-		if(t2->type==CT_ID)
-		{
-			ADVANCE_BY(2);
-			INSERT_LEAF(root, t, t2->sdata);//children: {???}
-			//TODO: record the class name in current scope for lookup
-
-			if(body_is_obligatory=LOOK_AHEAD(0)==CT_COLON)//inheritance
-			{
-				root->children.push_back(nullptr);
-				if(!r_base_specifiers(root->children.back()))
-					return free_tree(root);
-			}
-		}
-		else//anonymous class
-		{
-			ADVANCE;
-			INSERT_LEAF(root, t, nullptr);//TODO: encode class name as a number (impossible for an identifier), if necessary
-		}
-
-		if(LOOK_AHEAD(0)==CT_LBRACE)
-		{
-			//root->children.push_back(nullptr);
-			//if(!r_class_body(root->children.back()))//inlined
-			//	return free_tree(root);
-			
-			//r_class_body() inlined			class.body  :=  '{' (class.member)* '}'
-			ADVANCE;
-			scope_enter(scope_id_lbrace);
-
-			while(LOOK_AHEAD(0)!=CT_RBRACE)
-			{
-				root->children.push_back(nullptr);
-				//if(!r_class_member(root->children.back()))//inlined
-				//{
-				//	skip_till_after(CT_RBRACE);
-				//	scope_exit();
-				//	return free_tree(root);
-				//}
-				
-				//r_class_member() inlined
-				t=LOOK_AHEAD(0);
-				switch(t)
-				{
-				case CT_PRIVATE:
-				case CT_PROTECTED:
-				case CT_PUBLIC:
-					ADVANCE;
-					INSERT_LEAF(root->children.back(), t, nullptr);
-					if(LOOK_AHEAD(0)!=CT_COLON)
-						return free_tree(root);
-					ADVANCE;
-					break;
-				//case UserKeyword4://user.access.spec
-				//	break;
-				case CT_SEMICOLON:
-					ADVANCE;
-					break;
-				case CT_TYPEDEF:
-					if(!r_typedef(root->children.back()))
-						return free_tree(root);
-					break;
-				case CT_TEMPLATE:
-					if(!r_template_decl(root->children.back()))
-						return free_tree(root);
-					break;
-				case CT_USING:
-					if(!r_using(root->children.back()))
-						return free_tree(root);
-					break;
-				//case CT_CLASS://X  not metaclass		ignore for now
-				//case CT_STRUCT:
-				//case CT_UNION:
-				//case CT_ENUM:
-				//	if(!r_metaclass_decl(root))
-				//		return false;
-				//	break;
-				default:
-					{
-						int idx=current_idx;
-						if(!r_declaration(root->children.back()))
-						{
-							free_tree(root->children.back());//not an error
-							current_idx=idx;
-							//return r_access_decl(root->children.back());//inlined
-				
-							//r_access_decl() inlined			access.decl  :=  name ';'
-							if(!r_name_lookup(root->children.back()))
-								return free_tree(root);
-
-							if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-								return free_tree(root);
-							ADVANCE;
-							//end of r_access_decl() inlined
-						}
-					}
-					break;
-				}
-				//end of r_class_member() inlined
-			}
-			ADVANCE;
-			scope_exit();
-			//end of r_class_body() inlined
-		}
-		else if(body_is_obligatory)
-			return free_tree(root);
-		return true;
-	}
-#endif
-
-#if 0
-	bool		r_enum_body(IRNode *&root)//enum.body  :=  Identifier {'=' expression} (',' Identifier {'=' expression})* {','}
-	{
-		INSERT_LEAF(root, PT_ENUM_BODY, nullptr);//children: {CT_ID*}
-		for(;;)
-		{
-			auto t=&LOOK_AHEAD_TOKEN(0);
-			if(t->type==CT_RBRACE)
-				break;
-			if(t->type!=CT_ID)
-				return free_tree(root);
-			ADVANCE;
-			root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
-
-			if(LOOK_AHEAD(0)==CT_ASSIGN)
-			{
-				ADVANCE;
-				auto label=root->children.back();
-				label->children.push_back(nullptr);
-				if(!r_assign_expr(label->children.back()))
-				{
-					skip_till_after(CT_RBRACE);
-					return free_tree(root);
-				}
-			}
-
-			if(LOOK_AHEAD(0)!=CT_COMMA)
-				break;
-			ADVANCE;
-		}
-		return true;
-	}
-#endif
-#if 0
-//enum.spec
-//  : ENUM Identifier
-//  | ENUM {Identifier} '{' {enum.body} '}'
-	bool		r_enum_spec(IRNode *&root)
-	{
-		if(LOOK_AHEAD(0)!=CT_ENUM)
-			return false;
-		ADVANCE;
-
-		INSERT_LEAF(root, CT_ENUM, nullptr);//children: {???}
-
-		auto t=&LOOK_AHEAD_TOKEN(0);
-		if(t->type==CT_ID)
-		{
-			ADVANCE;
-			root->sdata=t->sdata;
-			//TODO: add enum name for qualified lookup
-
-			t=&LOOK_AHEAD_TOKEN(0);
-			if(t->type==CT_LBRACE)
-				ADVANCE;
-			else
-				goto r_enum_spec_finish;
-		}
-		if(t->type!=CT_LBRACE)
-			return free_tree(root);
-
-		root->children.push_back(nullptr);
-		if(!r_enum_body(root->children.back()))
-			return free_tree(root);
-
-		if(LOOK_AHEAD(0)!=CT_RBRACE)
-			return free_tree(root);
-		ADVANCE;
-
-	r_enum_spec_finish:
-		return true;
-	}
-#endif
-
 	bool		r_opt_member_spec(int &fvi_flag)//member.spec := (friend|inline|virtual)+		bitfield: {bit2: friend, bit1: virtual, bit0: inline}
 	{
 		for(auto t=LOOK_AHEAD(0);t==CT_INLINE||t==CT_VIRTUAL||t==CT_FRIEND;)
@@ -2752,7 +2138,6 @@ void			debugprint(IRNode *root)
 					scope=scope_lookup(token->sdata, false);//check if identifier==class/struct/union in this/global scope		TODO: support global lookup
 					if(!scope)
 					{
-						//ADVANCE_BY(-1);
 						//if(root)
 						//	root->set(add_type(type));
 						return true;//not declared yet
@@ -2795,9 +2180,7 @@ void			debugprint(IRNode *root)
 				{
 					if(root)
 						return free_tree(root);
-					//if(!r_class_spec(root))//inlined
-					//	return false;
-				
+
 					//r_class_spec() inlined
 	//class.spec
 	//  : {userdef.keyword} class.key							 class.body
@@ -2805,17 +2188,10 @@ void			debugprint(IRNode *root)
 	//  | {userdef.keyword} class.key name ':' base.specifiers	 class.body
 	//
 	//class.key  :=  CLASS | STRUCT | UNION
+
 					//TODO: understand UserKeyword		ignore userdef.keyword for now
+				
 					auto t=LOOK_AHEAD(0);
-					//switch(t)
-					//{
-					//case CT_CLASS:
-					//case CT_STRUCT:
-					//case CT_UNION:
-					//	break;
-					//default:
-					//	return false;
-					//}
 					auto t2=&LOOK_AHEAD_TOKEN(1);
 					bool body_is_obligatory=true, named_spec=t2->type==CT_ID;
 					if(named_spec)
@@ -2829,10 +2205,6 @@ void			debugprint(IRNode *root)
 
 						if(body_is_obligatory=LOOK_AHEAD(0)==CT_COLON)//inheritance
 						{
-							//root->children.push_back(nullptr);
-							//if(!r_base_specifiers(root->children.back()))//inlined
-							//	return free_tree(root);
-							
 							//r_base_specifiers() inlined
 //base.specifiers  :=  ':' base.specifier (',' base.specifier)*
 //
@@ -2895,24 +2267,23 @@ void			debugprint(IRNode *root)
 					}
 					else
 					{
-						//root->children.push_back(nullptr);
-						//if(!r_class_body(root->children.back()))//inlined
-						//	return free_tree(root);
-			
 						//r_class_body() inlined			class.body  :=  '{' (class.member)* '}'
 						ADVANCE;
 						scope_enter(root->sdata);
 
 						for(char accesstype=type.datatype==TYPE_CLASS?ACCESS_PRIVATE:ACCESS_PUBLIC;LOOK_AHEAD(0)!=CT_RBRACE;)
 						{
-							//if(!r_class_member(root->children.back()))//inlined
-							//{
-							//	skip_till_after(CT_RBRACE);
-							//	scope_exit();
-							//	return free_tree(root);
-							//}
-				
 							//r_class_member() inlined
+//class.member
+//  : (PUBLIC | PROTECTED | PRIVATE) ':'
+//  | user.access.spec
+//  | ';'
+//  | typedef.stmt
+//  | template.decl
+//  | using.declaration
+//  | metaclass.decl
+//  | declaration
+//  | access.decl
 							t=LOOK_AHEAD(0);
 							switch(t)
 							{
@@ -3044,8 +2415,6 @@ void			debugprint(IRNode *root)
 				{
 					if(root)
 						return free_tree(root);
-					//if(!r_enum_spec(root))//inlined
-					//	return false;
 
 					//r_enum_spec() inlined
 //enum.spec
@@ -3070,10 +2439,6 @@ void			debugprint(IRNode *root)
 						return free_tree(root);
 					ADVANCE;
 					//no enter/exit scope in enum
-
-					//root->children.push_back(nullptr);
-					//if(!r_enum_body(root->children.back()))//inlined
-					//	return free_tree(root);
 
 					//r_enum_body() inlined				//enum.body  :=  Identifier {'=' expression} (',' Identifier {'=' expression})* {','}
 					type.datatype=TYPE_ENUM_CONST;
@@ -3140,42 +2505,6 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 
-#if 0
-	bool		r_simple_declaration(IRNode *&root)//condition controlling expression of switch/while/if		inline needs goto		inlined
-	{
-		INSERT_LEAF(root, PT_SIMPLE_DECLARATION, nullptr);
-		TypeInfo type;
-		int cv_flag=0;
-		if(!r_opt_cv_qualify(cv_flag))
-			return free_tree(root);
-
-		root->children.push_back(nullptr);
-		if(!r_opt_int_type_or_class_spec(root->children.back(), type))
-			return free_tree(root);
-
-		type.set_flags(STORAGE_UNSPECIFIED, 0, cv_flag);
-		root->tdata=add_type(type);
-
-		root->children.push_back(nullptr);
-		if(!r_name(root->children.back()))
-			return free_tree(root);
-		
-		root->children.push_back(nullptr);
-		if(!r_declarator2(root->children.back(), *root->tdata, DECLKIND_NORMAL, false, true, true))
-			return free_tree(root);
-
-		if(LOOK_AHEAD(0)!=CT_ASSIGN)
-			return free_tree(root);
-		ADVANCE;
-		root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
-
-		root->children.push_back(nullptr);
-		if(!r_assign_expr(root->children.back()))
-			return free_tree(root);
-
-		return true;
-	}
-#endif
 //condition
 //  : {cv.qualify} (int.type.or.class.spec | name) declarator2 '=' assign.expr		//<- simple.declaration
 //  | comma.expresion
@@ -3183,10 +2512,7 @@ void			debugprint(IRNode *root)
 	{
 		int t_idx=current_idx;
 
-		//if(r_simple_declaration(root))//inline needs goto		inlined
-		//	return true;
-
-		//r_simple_declaration() inlined
+		//r_simple_declaration() inlined			//condition controlling expression of switch/while/if
 		INSERT_LEAF(root, PT_SIMPLE_DECLARATION, nullptr);
 		TypeInfo type;
 		int cv_flag=0;
@@ -3477,44 +2803,6 @@ void			debugprint(IRNode *root)
 		return true;
 	}
 
-	bool		r_ptr_to_member(IRNode *&root)//ptr.to.member  :=  {'::'} (identifier {template.args} '::')+ '*'
-	{
-		if(LOOK_AHEAD(0)==CT_SCOPE)
-		{
-			ADVANCE;
-			//TODO: search only global scope
-		}
-		for(;;)
-		{
-			auto t=&LOOK_AHEAD_TOKEN(0);
-			if(t->type!=CT_ID)
-				return free_tree(root);
-			ADVANCE;
-
-			t=&LOOK_AHEAD_TOKEN(0);
-			if(t->type==CT_LESS)
-			{
-				if(!r_template_arglist(root))//
-					return free_tree(root);
-				//TODO: template call lookup
-			}
-			else
-			{
-				//TODO: simple name lookup
-			}
-			t=&LOOK_AHEAD_TOKEN(0);
-			if(t->type!=CT_SCOPE)
-				return free_tree(root);
-			ADVANCE;
-			t=&LOOK_AHEAD_TOKEN(0);
-			if(t->type==CT_ASTERIX)
-			{
-				ADVANCE;
-				break;
-			}
-		}
-		return true;
-	}
 	bool		is_ptr_to_member(int i)//ptr.to.member  :=  {'::'} (identifier {'<' any* '>'} '::')+ '*'
 	{
 		auto t0=LOOK_AHEAD(i++);
@@ -3793,8 +3081,6 @@ void			debugprint(IRNode *root)
 	{
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
 
-		//root->children.push_back(nullptr);
-		//if(!r_declarators(root->children.back(), false, false))
 		if(!r_declarators_nonnull(root, type, false, false))//TODO: decl these variables as const
 			return free_tree(root);
 
@@ -3804,55 +3090,6 @@ void			debugprint(IRNode *root)
 
 		return true;
 	}
-#if 0
-	bool		r_other_decl(IRNode *&root)//inlined
-	{
-		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
-
-		root->children.push_back(nullptr);
-		if(!r_name(root->children.back()))
-			return free_tree(root);
-		
-		root->children.push_back(nullptr);
-		if(!r_opt_cv_qualify(root->children.back()))
-			return free_tree(root);
-
-		if(root->children.back()!=nullptr)
-			root->children.push_back(nullptr);
-		if(!r_declarators(root->children.back(), false, false))
-			return free_tree(root);
-
-		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return free_tree(root);
-
-		return true;
-	}
-#endif
-#if 0
-	bool		r_other_decl_stmt(IRNode *&root)//other.decl.statement  :=  decl.head name {cv.qualify} declarators ';'
-	{
-		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
-
-		root->children.push_back(nullptr);
-		if(!r_name(root->children.back()))
-			return free_tree(root);
-		
-		int cv_flag=0;
-		if(!r_opt_cv_qualify(cv_flag))
-			return free_tree(root);
-
-		//if(root->children.back()!=nullptr)
-		//	root->children.push_back(nullptr);
-		//if(!r_declarators(root->children.back(), false, false))
-		if(!r_declarators_nonnull(root, false, false))
-			return free_tree(root);
-
-		if(LOOK_AHEAD(0)!=CT_SEMICOLON)
-			return free_tree(root);
-
-		return true;
-	}
-#endif
 //declaration.statement
 //  : {storage.spec} {cv.qualify} integral.type.or.class.spec {cv.qualify} {declarators} ';'	//<- integral.decl.statement
 //  | {storage.spec} {cv.qualify} name {cv.qualify} declarators ';'								//<- other.decl.statement
@@ -3875,7 +3112,7 @@ void			debugprint(IRNode *root)
 			//if(!r_int_decl_stmt(root->children.back()))//inlined
 			//	return free_tree(root);
 
-			//r_int_decl_stmt() inlined
+			//r_int_decl_stmt() inlined				//integral.decl.statement  :=  decl.head integral.type.or.class.spec {cv.qualify} {declarators} ';'
 			//INSERT_LEAF(root, PT_VAR_DECL, nullptr);
 			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
@@ -3922,7 +3159,7 @@ void			debugprint(IRNode *root)
 		//if(!r_other_decl_stmt(root->children.back()))//inlined
 		//	return free_tree(root);
 
-		//r_other_decl_stmt() inlined
+		//r_other_decl_stmt() inlined			//other.decl.statement  :=  decl.head name {cv.qualify} declarators ';'
 		INSERT_LEAF(root, PT_VAR_DECL, nullptr);
 
 		root->children.push_back(nullptr);
@@ -4265,6 +3502,7 @@ void			debugprint(IRNode *root)
 		if(t==CT_LPR)
 		{
 			ADVANCE;
+
 			root->children.push_back(nullptr);
 			if(!r_declarator2(root->children.back(), *ptype, kind, true, true, false))//recursive
 				return free_tree(root);
@@ -4306,11 +3544,13 @@ void			debugprint(IRNode *root)
 			}
 		}
 
-		for(;;)
+		for(bool brackets=false;;)
 		{
 			t=LOOK_AHEAD(0);
 			if(t==CT_LPR)//function arglist
 			{
+				if(brackets)
+					return free_tree(root);//T t[2](int) is invalid
 				ADVANCE;
 
 				bool is_args=true;
@@ -4357,6 +3597,7 @@ void			debugprint(IRNode *root)
 			}
 			else if(t==CT_LBRACKET)//array
 			{
+				brackets=true;
 				ADVANCE;
 				auto child=root->children.back();
 				root->children.back()=new IRNode(PT_ARRAY_SUBSCRIPT, CT_IGNORED);
@@ -4385,49 +3626,10 @@ void			debugprint(IRNode *root)
 			free_tree(root);
 		return true;
 	}
-#if 0
-	bool		r_declaratorwithinit(IRNode *&root, TypeInfo &type, bool should_be_declarator, bool is_statement)//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}		can be inlined
-	{
-		if(LOOK_AHEAD(0)==CT_COLON)//bit field
-		{
-			ADVANCE;
-
-			if(!r_assign_expr(root))
-				return false;
-		}
-		else
-		{
-			if(!r_declarator2(root, type, DECLKIND_NORMAL, false, should_be_declarator, is_statement))
-				return false;
-			switch(LOOK_AHEAD(0))
-			{
-			case CT_ASSIGN:
-				ADVANCE;
-				root->children.push_back(new IRNode(CT_ASSIGN, CT_IGNORED));
-				root->children.back()->children.push_back(nullptr);
-				if(!r_initialize_expr(root->children.back()->children.back()))
-					return false;
-				break;
-			case CT_COLON://bit field
-				ADVANCE;
-				break;
-			default:
-				break;
-			}
-		}
-		return true;
-	}
-#endif
 	bool		r_declarators_nonnull(IRNode *&root, TypeInfo &type, bool should_be_declarator, bool is_statement)//declarators := declarator.with.init (',' declarator.with.init)*
 	{
-		//INSERT_LEAF(root, PT_DECLARATORS, nullptr);
 		for(;;)
 		{
-			//root->children.push_back(nullptr);
-			//if(!r_declaratorwithinit(root->children.back(), type, should_be_declarator, is_statement))//inlined
-			//	return false;
-			//	//return free_tree(root);
-			
 			//r_declaratorwithinit() inlined		//declarator.with.init  :=  ':' expression  |  declarator {'=' initialize.expr | ':' expression}
 			root->children.push_back(nullptr);
 			if(LOOK_AHEAD(0)==CT_COLON)//bit field
@@ -4574,7 +3776,7 @@ void			debugprint(IRNode *root)
 			//if(!r_int_declaration(root->children.back()))//got inlined
 			//	return free_tree(root);
 
-			//r_int_declaration() inlined
+			//r_int_declaration() inlined			no CFG here
 			if(!r_opt_cv_qualify(cv_flag))
 				return free_tree(root);
 			
@@ -4648,8 +3850,9 @@ void			debugprint(IRNode *root)
 
 			return r_const_decl(root->children.back(), *root->tdata);
 		}
-		//return r_other_decl(root->children.back());//inlined below
+		//return r_other_decl(root->children.back());//inlined
 
+		//r_other_decl() inlined			no CFG here
 		root->children.push_back(new IRNode(PT_VAR_DECL, CT_IGNORED));
 		auto r2=root->children.back();
 
@@ -4695,6 +3898,7 @@ void			debugprint(IRNode *root)
 			if(!r_compoundstatement(r2->children.back()))
 				return free_tree(root);
 		}
+		//end of r_other_decl() inlined
 		return true;
 	}
 
