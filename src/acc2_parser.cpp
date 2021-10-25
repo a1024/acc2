@@ -1005,8 +1005,7 @@ void			debugprint(IRNode *root)
 //  : Identifier {template.args}
 //  | '~' Identifier
 //  | OPERATOR operator.name {template.args}
-//  | decltype '(' name ')'			//C++11
-//  | decltype '(' ass_expr ')'		//C++11
+//  | decltype '(' assign_expr ')'			//C++11
 	bool		r_name_lookup(IRNode *&root)//TODO: use the lookup system here, and store the referenced namespace/type/object/function/method(s)
 	{
 		INSERT_LEAF(root, PT_NAME, nullptr);//children: {::?, name(s)}
@@ -1022,15 +1021,20 @@ void			debugprint(IRNode *root)
 			//TODO: search all nested scopes upwards
 			if(t->type==CT_DECLTYPE)//C++11
 			{
-				ADVANCE;
-				if(LOOK_AHEAD(0)!=CT_LPR)
+				if(LOOK_AHEAD(1)!=CT_LPR)
 					return free_tree(root);
+				ADVANCE_BY(2);
+
 				root->children.push_back(new IRNode(CT_DECLTYPE, CT_IGNORED));
+
 				root->children.push_back(nullptr);
-				if(!r_name_lookup(root->children.back()))//lookup
+				if(!r_assign_expr(root->children.back()))//TODO: deduce type
 					return free_tree(root);
+
 				if(LOOK_AHEAD(0)!=CT_RPR)
 					return free_tree(root);
+				ADVANCE;
+
 				return true;
 			}
 		}
@@ -1071,22 +1075,19 @@ void			debugprint(IRNode *root)
 				root->children.push_back(new IRNode(CT_ID, CT_IGNORED, t->sdata));
 				return true;
 			case CT_OPERATOR:
+				ADVANCE;
+				root->children.push_back(new IRNode(CT_OPERATOR, CT_IGNORED));
+				root->children.push_back(nullptr);
+				if(!r_operator_name(root->children.back()))
+					return free_tree(root);
+				t=&LOOK_AHEAD_TOKEN(0);
+				if(t->type==CT_LESS)
 				{
-					ADVANCE;
-					root->children.push_back(new IRNode(CT_OPERATOR, CT_IGNORED));
 					root->children.push_back(nullptr);
-					if(!r_operator_name(root->children.back()))
+					if(!r_template_arglist(root->children.back()))
 						return free_tree(root);
-					t=&LOOK_AHEAD_TOKEN(0);
-					if(t->type==CT_LESS)
-					{
-						root->children.push_back(nullptr);
-						if(!r_template_arglist(root->children.back()))
-							return free_tree(root);
-					}
-					return true;
 				}
-				break;
+				return true;
 			default:
 				return free_tree(root);
 			}
@@ -2890,7 +2891,7 @@ void			debugprint(IRNode *root)
 //
 //decl.head
 //  : {storage.spec} {cv.qualify}
-	bool		r_decl_stmt(IRNode *&root)
+	bool		r_decl_stmt(IRNode *&root)//1 call
 	{
 		//INSERT_LEAF(root, PT_VAR_DECL, nullptr);//children: {storage, cv, integral, int/const/other decl}		TODO: improve this
 
@@ -2989,7 +2990,7 @@ void			debugprint(IRNode *root)
 		}
 
 		int t_idx=current_idx;//save state
-		if(r_decl_stmt(root))
+		if(r_decl_stmt(root))//the only call
 			return true;
 
 		current_idx=t_idx;//restore state
@@ -3347,7 +3348,7 @@ void			debugprint(IRNode *root)
 //
 //  This rule accepts function.arguments to parse declarations like: Point p(1, 3);
 //  "(1, 3)" is arg.decl.list.or.init.
-	bool		r_arg_decllist_or_init(IRNode *&root, bool &is_args, bool maybe_init)
+	bool		r_arg_decllist_or_init(IRNode *&root, bool &is_args, bool maybe_init)//1 call
 	{
 		int idx=current_idx;//save state
 		if(maybe_init)
@@ -3368,7 +3369,7 @@ void			debugprint(IRNode *root)
 		current_idx=idx;//restore state
 		return r_func_args(root);
 	}
-	bool		r_opt_throw_decl(IRNode *&root)//throw.decl  :=  THROW '(' (name {','})* {name} ')'
+	bool		r_opt_throw_decl(IRNode *&root)//throw.decl  :=  THROW '(' (name {','})* {name} ')'			1 call
 	{
 		if(LOOK_AHEAD(0)==CT_THROW)
 		{
@@ -3399,30 +3400,6 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
-	bool		r_member_init(IRNode *&root)//member.init  :=  name '(' function.arguments ')'
-	{
-		INSERT_LEAF(root, PR_MEMBER_INIT, nullptr);
-
-		root->children.push_back(nullptr);
-		if(!r_name_lookup(root->children.back()))
-			return free_tree(root);
-
-		//TODO: qualified name lookup
-
-		if(LOOK_AHEAD(0)!=CT_LPR)
-			return free_tree(root);
-		ADVANCE;
-
-		root->children.push_back(nullptr);
-		if(!r_func_args(root->children.back()))
-			return free_tree(root);
-		
-		if(LOOK_AHEAD(0)!=CT_RPR)
-			return free_tree(root);
-		ADVANCE;
-
-		return true;
-	}
 	bool		r_member_initializers(IRNode *&root)//member.initializers  :=  ':' member.init (',' member.init)*
 	{
 		if(LOOK_AHEAD(0)!=CT_COLON)
@@ -3432,9 +3409,29 @@ void			debugprint(IRNode *root)
 
 		for(;;)
 		{
+			//r_member_init() inlined			//member.init  :=  name '(' function.arguments ')'
 			root->children.push_back(nullptr);
-			if(!r_member_init(root->children.back()))
+			auto child=root->children.back();
+			INSERT_LEAF(child, PR_MEMBER_INIT, nullptr);//TODO: root==name, children==function.arguments
+
+			child->children.push_back(nullptr);
+			if(!r_name_lookup(child->children.back()))
 				return free_tree(root);
+
+			//TODO: qualified name lookup
+
+			if(LOOK_AHEAD(0)!=CT_LPR)
+				return free_tree(root);
+			ADVANCE;
+
+			child->children.push_back(nullptr);
+			if(!r_func_args(child->children.back()))
+				return free_tree(root);
+		
+			if(LOOK_AHEAD(0)!=CT_RPR)
+				return free_tree(root);
+			ADVANCE;
+			//end of r_member_init() inlined
 
 			if(LOOK_AHEAD(0)!=CT_COMMA)
 				break;
@@ -3531,7 +3528,7 @@ void			debugprint(IRNode *root)
 
 				bool is_args=true;
 				root->children.push_back(nullptr);
-				if(!r_arg_decllist_or_init(root->children.back(), is_args, is_statement))
+				if(!r_arg_decllist_or_init(root->children.back(), is_args, is_statement))//the only call
 					return free_tree(root);
 				
 				if(LOOK_AHEAD(0)!=CT_RPR)
@@ -3548,7 +3545,7 @@ void			debugprint(IRNode *root)
 				if(LOOK_AHEAD(0)==CT_THROW)
 				{
 					root->children.push_back(nullptr);
-					if(!r_opt_throw_decl(root->children.back()))
+					if(!r_opt_throw_decl(root->children.back()))//the only call
 						return free_tree(root);
 				}
 
@@ -3635,22 +3632,6 @@ void			debugprint(IRNode *root)
 		}
 		return true;
 	}
-	bool		is_constructor_or_decl()//returns true for an declaration like: T (a);
-	{
-		if(LOOK_AHEAD(0)!=CT_LPR)
-			return false;
-		switch(LOOK_AHEAD(1))
-		{
-		case CT_ASTERIX:
-		case CT_AMPERSAND:
-		case CT_LPR:
-			return false;
-		case CT_CONST:
-		case CT_VOLATILE:
-			return true;
-		}
-		return !is_ptr_to_member(1);
-	}
 	bool		r_constructor_decl(IRNode *&root)//constructor.decl  :=  '(' {arg.decl.list} ')' {cv.qualify} {throw.decl} {member.initializers} {'=' Constant}
 	{
 		if(LOOK_AHEAD(0)!=CT_LPR)
@@ -3693,6 +3674,22 @@ void			debugprint(IRNode *root)
 			}
 		}
 		return true;
+	}
+	bool		is_constructor_or_decl()//returns true for an declaration like: T (a);
+	{
+		if(LOOK_AHEAD(0)!=CT_LPR)
+			return false;
+		switch(LOOK_AHEAD(1))
+		{
+		case CT_ASTERIX:
+		case CT_AMPERSAND:
+		case CT_LPR:
+			return false;
+		case CT_CONST:
+		case CT_VOLATILE:
+			return true;
+		}
+		return !is_ptr_to_member(1);
 	}
 //declaration
 //  : integral.declaration
@@ -4057,7 +4054,7 @@ void			debugprint(IRNode *root)
 //namespace.spec
 //  :  NAMESPACE Identifier definition
 //  |  NAMESPACE { Identifier } linkage.body
-	bool		r_namespace_spec(IRNode *&root)
+	bool		r_namespace_spec(IRNode *&root)//1 call
 	{
 		if(LOOK_AHEAD(0)!=CT_NAMESPACE)
 			return false;
@@ -4083,7 +4080,7 @@ void			debugprint(IRNode *root)
 		root->children.push_back(nullptr);
 		return r_linkage_body(root->children.back(), root->sdata);
 	}
-	bool		r_namespace_alias(IRNode *&root)//namespace.alias  :=  NAMESPACE Identifier '=' Identifier ';'
+	bool		r_namespace_alias(IRNode *&root)//namespace.alias  :=  NAMESPACE Identifier '=' Identifier ';'		1 call
 	{
 		auto t=&LOOK_AHEAD_TOKEN(1);
 		if(LOOK_AHEAD(0)!=CT_NAMESPACE||t->type!=CT_ID||LOOK_AHEAD(2)!=CT_ASSIGN)
@@ -4221,7 +4218,7 @@ void			debugprint(IRNode *root)
 					if(!r_linkage_body(root->children.back(), nullptr))
 						return free_tree(root);
 				}
-				else if(r_definition(root->children.back()))
+				else if(!r_definition(root->children.back()))
 					return free_tree(root);
 				//end of r_linkage_spec() inlined
 				break;
@@ -4261,8 +4258,8 @@ void			debugprint(IRNode *root)
 
 		case CT_NAMESPACE:
 			if(LOOK_AHEAD(1)==CT_ASSIGN)
-				return r_namespace_alias(root);
-			return r_namespace_spec(root);
+				return r_namespace_alias(root);//the only call
+			return r_namespace_spec(root);//the only call
 
 		case CT_USING:
 			return r_using(root);
