@@ -977,10 +977,10 @@ static int		skip_block(MacroLibrary const &macros, std::vector<Token> const &tok
 				++level;
 				break;
 			case CT_ELIF:
-				if(lastblock)
-					error_pp(*token, "#else already appeared. Expected #endif.");
-				else if(level==1)
+				if(level==1)
 				{
+					if(lastblock)
+						error_pp(*token, "#else already appeared. Expected #endif.");
 					int start=k;
 					skip_till_newline(tokens, k);
 					auto result=eval_expr(tokens, start, k, &macros);
@@ -990,10 +990,10 @@ static int		skip_block(MacroLibrary const &macros, std::vector<Token> const &tok
 				}
 				break;
 			case CT_ELSE:
-				if(lastblock)
-					error_pp(*token, "#else already appeared. Expected #endif.");
-				else if(level==1)
+				if(level==1)
 				{
+					if(lastblock)
+						error_pp(*token, "#else already appeared. Expected #endif.");
 					int start=k;
 					skip_till_newline(tokens, k);
 					if(start<k)
@@ -1396,7 +1396,16 @@ void			expr2text(Expression const &ex, std::string &text)
 				{
 					text+='\'';
 					std::string processed;
-					str2esc(token.sdata, token.len, processed);
+					
+					const auto LOL_1='\0a';
+					char str[9]={};
+					memcpy(str, &token.idata, 8);
+					int len=strlen(str);
+					if(len>1)
+						std::reverse(str, str+len);
+					//if((size_t&)token.sdata<0xFFFF)
+					//	int LOL_1=0;
+					str2esc(str, len, processed);
 					text+=processed;
 					text+='\'';
 				}

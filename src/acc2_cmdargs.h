@@ -9,6 +9,8 @@
 	CMDARG("--lib", CA_LIB),
 	CMDARG("--project", CA_PROJECT),
 	CMDARG("--in", CA_INPUT),
+	CMDARG("--32bit", CA_32BIT),
+
 	CMDARG("--prof", CA_PROFILER),
 
 	CMDARG("--preprocess", CA_PREPROCESS),//mutually exclusive, ordered

@@ -11,7 +11,7 @@
 	TOKEN(0, CT_ID, 0)//identifier
 	TOKEN(0, CT_VAL_STRING_LITERAL, 0)
 	TOKEN(0, CT_VAL_WSTRING_LITERAL, 0)//identical utf-8 like CT_VAL_STRING_LITERAL, just a type for compiler
-	TOKEN(0, CT_VAL_CHAR_LITERAL, 0)//TODO: ival, stores up to 8 characters (MSVC: 4)
+	TOKEN(0, CT_VAL_CHAR_LITERAL, 0)//ival, stores up to 8 characters (MSVC: 4)
 //	TOKEN(0, CT_VAL_WCHAR_LITERAL, 0)
 	TOKEN(0, CT_INCLUDENAME_STD, 0)
 	TOKEN(0, CT_INCLUDENAME_CUSTOM, 0)//deprecated
@@ -107,7 +107,7 @@
 
 	//predefined macros
 	TOKEN("__FILE__", CT_FILE, 1) TOKEN("__LINE__", CT_LINE, 1) TOKEN("__DATE__", CT_DATE, 1) TOKEN("__TIME__", CT_TIME, 1) TOKEN("__TIMESTAMP__", CT_TIMESTAMP, 1) TOKEN("__func__", CT_FUNC, 1)
-	TOKEN("__ACC2__", CT_ACC2, 1)
+	//TOKEN("__ACC2__", CT_ACC2, 1)
 
 	//lexer
 	TOKEN("\'", CT_QUOTE, 0) TOKEN("\"", CT_DOUBLEQUOTE, 0) TOKEN("L\"", CT_DQUOTE_WIDE, 0) TOKEN("R\"", CT_DQUOTE_RAW, 0)

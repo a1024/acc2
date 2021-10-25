@@ -6,6 +6,18 @@
 
 namespace	std
 {
+	template<typename T>inline void swap(T &v1, T &v2)
+	{
+		T temp=(T&&)v1;
+		v1=(T&&)v2;
+		v2=(T&&)temp;
+	}
+
+	template<typename It>inline void reverse(It first, It last)
+	{
+		while(first<last)
+			std::swap(*first++, *last--);
+	}
 	template<typename It, typename T>inline It find(It first, It last, T const &val)
 	{
 		while(first!=last)
@@ -63,13 +75,6 @@ namespace	std
 	template<typename T>inline typename remove_reference<T>::type&& move(T &&v)
 	{
 		return (typename remove_reference<T>::type&&)v;
-	}
-
-	template<typename T>inline void swap(T &v1, T &v2)
-	{
-		T temp=(T&&)v1;
-		v1=(T&&)v2;
-		v2=(T&&)temp;
 	}
 
 	template<typename T1, typename T2>struct pair

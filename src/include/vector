@@ -184,18 +184,18 @@ namespace	std
 			assert2(k>=0&&k<(size_t)n, "Vector subscript out of range: index=%d, size=%d", k, n);
 			return p[k];
 		}
-		//T& at(size_t k)
-		//{
-		//	if(k<0&&k>=n)
-		//		throw "Out of range";
-		//	return p[k];
-		//}
-		//T const& at(size_t k)const
-		//{
-		//	if(k<0&&k>=n)
-		//		throw "Out of range";
-		//	return p[k];
-		//}
+		T& at(size_t k)
+		{
+			if((ptrdiff_t)k<0&&(ptrdiff_t)k>=n)
+				throw "Out of range";
+			return p[k];
+		}
+		T const& at(size_t k)const
+		{
+			if((ptrdiff_t)k<0&&(ptrdiff_t)k>=n)
+				throw "Out of range";
+			return p[k];
+		}
 		T& front(){return p[0];}
 		T const& front()const{return p[0];}
 		T& back(){return p[n-1];}

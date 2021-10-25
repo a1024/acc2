@@ -19,6 +19,7 @@ const char		*keywords[]=//order corresponds to enum CTokenType
 };
 
 
+bool			x86_64=true;
 StringLibrary	strings;
 std::vector<char*> includepaths, libpaths;
 char			*projectfolder=nullptr;
@@ -165,6 +166,10 @@ void			parse_args(std::vector<std::string> const &args)
 		{
 			switch(arg[2])
 			{
+			case '3':
+				if(!strcmp(arg.data()+3, cmdargs[CA_32BIT]+3))
+					x86_64=false;
+				break;
 			case 'a':
 				if(!strcmp(arg.data()+3, cmdargs[CA_ASSEMBLE]+3))
 				{
@@ -368,6 +373,7 @@ int				main(int argc, const char **argv)
 
 		MacroLibrary macros;
 		macro_define(macros, "__ACC2__", 1, CT_VAL_INTEGER);//pre-defined macros
+		macro_define(macros, x86_64?"_M_AMD64":"_M_IX86", 1, CT_VAL_INTEGER);
 		macro_define(macros, "__cplusplus", 199711, CT_VAL_INTEGER);
 		
 		const char *weekdays[]={"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
