@@ -4,6 +4,34 @@
 #include		"include/sys/stat.h"
 #include		"include/algorithm"
 #include		"include/time.h"
+#ifdef _MSC_VER
+#if 0
+#include		<Windows.h>//conflicts with local headers
+#else
+extern "C"
+{
+#define			STD_OUTPUT_HANDLE   ((unsigned long)-11)
+void*			__stdcall GetStdHandle(unsigned long nStdHandle);
+typedef struct _COORD
+{
+    short X;
+    short Y;
+} COORD, *PCOORD;
+int				__stdcall SetConsoleScreenBufferSize(void *hConsoleOutput, COORD dwSize);
+unsigned long	__stdcall GetLastError();
+}
+#endif
+void			set_console_buffer_size(short w, short h)
+{
+	COORD coords={w, h};
+	void *handle=GetStdHandle(STD_OUTPUT_HANDLE);
+	int success=SetConsoleScreenBufferSize(handle, coords);
+	if(!success)
+		printf("Failed to resize console buffer: %d\n\n", GetLastError());
+}
+#else
+#define			set_console_buffer_size(...)
+#endif
 
 int				compile_status=CS_SUCCESS;
 
@@ -311,10 +339,18 @@ void			parse_args(std::vector<std::string> const &args)
 int				main(int argc, const char **argv)
 {
 	prof.start();
+	set_console_buffer_size(80, 9001);
 
 	//benchmark();//
 
-	printf("ACC2 built on %s, %s\n\n", __DATE__, __TIME__);//started on 2021-07-09
+	printf(
+		"ACC2 version %s, %s "
+#ifdef _DEBUG
+		"Debug"
+#else
+		"Release"
+#endif
+		"\n\n", __DATE__, __TIME__);//started on 2021-07-09
 	if(argc==1)
 	{
 #if defined _MSC_VER || defined __ACC2__
@@ -388,10 +424,10 @@ int				main(int argc, const char **argv)
 		prof.add("preparations");
 
 		preprocess(macros, lf);
-
+		
+#if 1
 		compile(lf);//
-
-#if 0
+#else
 		switch(action)
 		{
 		case CA_PREPROCESS:	//c/c++ -> preprocessed c/c++

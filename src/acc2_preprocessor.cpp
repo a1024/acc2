@@ -657,7 +657,7 @@ static i64		eval_unary()
 		result=~eval_unary();
 		break;
 	default:
-		error_pp(*eval_token, "Unexpected token: %d: %s", eval_token->type, token2str(eval_token->type));
+		error_pp(*eval_token, "Unexpected token: %d: %s", eval_token->type, tokentype2str(eval_token->type));
 		break;
 	}
 	return result;
@@ -1397,7 +1397,6 @@ void			expr2text(Expression const &ex, std::string &text)
 					text+='\'';
 					std::string processed;
 					
-					const auto LOL_1='\0a';
 					char str[9]={};
 					memcpy(str, &token.idata, 8);
 					int len=strlen(str);
@@ -1405,7 +1404,7 @@ void			expr2text(Expression const &ex, std::string &text)
 						std::reverse(str, str+len);
 					//if((size_t&)token.sdata<0xFFFF)
 					//	int LOL_1=0;
-					str2esc(str, len, processed);
+					str2esc(str, len?len:1, processed);
 					text+=processed;
 					text+='\'';
 				}
@@ -1422,11 +1421,11 @@ void			expr2text(Expression const &ex, std::string &text)
 					text+='\"';
 				}
 				break;
-			case CT_INCLUDENAME_CUSTOM:
-				text+='\"';
-				text+=token.sdata;
-				text+='\"';
-				break;
+			//case CT_INCLUDENAME_CUSTOM:
+			//	text+='\"';
+			//	text+=token.sdata;
+			//	text+='\"';
+			//	break;
 			case CT_INCLUDENAME_STD:
 				text+='<';
 				text+=token.sdata;

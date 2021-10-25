@@ -12,9 +12,9 @@
 	TOKEN(0, CT_VAL_STRING_LITERAL, 0)
 	TOKEN(0, CT_VAL_WSTRING_LITERAL, 0)//identical utf-8 like CT_VAL_STRING_LITERAL, just a type for compiler
 	TOKEN(0, CT_VAL_CHAR_LITERAL, 0)//ival, stores up to 8 characters (MSVC: 4)
-//	TOKEN(0, CT_VAL_WCHAR_LITERAL, 0)
+//	TOKEN(0, CT_VAL_WCHAR_LITERAL, 0)//TODO
 	TOKEN(0, CT_INCLUDENAME_STD, 0)
-	TOKEN(0, CT_INCLUDENAME_CUSTOM, 0)//deprecated
+//	TOKEN(0, CT_INCLUDENAME_CUSTOM, 0)//deprecated
 
 	//type keywords
 	TOKEN("typedef", CT_TYPEDEF, 1) TOKEN("enum", CT_ENUM, 1)

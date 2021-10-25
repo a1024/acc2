@@ -602,6 +602,7 @@ typedef std::map<const char*, MacroDefinition> MacroLibrary;
 
 
 //compiler
+extern bool		x86_64;
 struct			StringLessThan
 {
 	bool operator()(const char *left, const char *right)
@@ -629,7 +630,16 @@ inline char*	add_string(const char *static_array)
 	std::string str=static_array;
 	return add_string(str);
 }
-const char*		token2str(CTokenType tokentype);
+inline char*	find_string(const char *static_array)
+{
+	std::string str=static_array;
+	auto p=&str[0];
+	auto p2=strings.find(p);
+	if(!p2)
+		return nullptr;
+	return *p2;
+}
+const char*		tokentype2str(CTokenType tokentype);
 long long		eval_expr(std::vector<Token> const &tokens, int start, int end, MacroLibrary const *macros=nullptr);
 
 
