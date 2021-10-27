@@ -30,6 +30,10 @@ typedef unsigned char byte;
 #elif defined _MSC_VER || defined __ACC2__
 
 
+#if _MSC_VER>=1900
+#pragma comment(lib, "legacy_stdio_definitions.lib")
+#endif
+
 #define _CRT_ALIGN(x)	__declspec(align(x))
 #define	_CRT_INTRIN		__declspec(intrin_type)
 
@@ -45,9 +49,6 @@ typedef unsigned char byte;
 	#error Unknown processor
 #endif
 typedef char*		va_list;
-
-
-#elif defined __ACC2__
 
 
 #endif//compiler

@@ -460,7 +460,7 @@ void			scope_declare_type(char *name, TypeInfo *ptype)//types, functions
 }
 void			scope_declare_var(char *name, TypeInfo *ptype, long long data)//variables
 {
-	NameInfo info={ptype, true, data};
+	NameInfo info={ptype, true, VarData(data)};
 	scope_global.insert(name, info, true);
 }
 Name::Node*		scope_lookup(char *id, bool global)
@@ -536,7 +536,7 @@ void			print_type(TypeInfo const &type)
 void			print_var(TypeInfo *ptype, VarData vdata)
 {
 	if(!ptype)
-		printf(" %d", vdata.idata);
+		printf(" %lld", vdata.idata);
 	else
 	{
 		switch(ptype->datatype)
@@ -560,7 +560,7 @@ void			print_var(TypeInfo *ptype, VarData vdata)
 		case TYPE_INT:
 		case TYPE_INT_SIGNED:
 		case TYPE_INT_UNSIGNED:
-			printf(" %d", vdata.idata);
+			printf(" %lld", vdata.idata);
 			break;
 		case TYPE_FLOAT:
 			if(ptype->size==8)
@@ -570,7 +570,7 @@ void			print_var(TypeInfo *ptype, VarData vdata)
 			break;
 		case TYPE_ENUM:
 		case TYPE_ENUM_CONST:
-			printf(" %d", vdata.idata);
+			printf(" %lld", vdata.idata);
 			break;
 		case TYPE_CLASS:
 		case TYPE_STRUCT:
@@ -728,7 +728,7 @@ void			AST2str(IRNode *root, std::string &str, int depth=0)
 		break;
 	case CT_VAL_CHAR_LITERAL:
 	case CT_VAL_INTEGER:
-		sprintf_s(g_buf, g_buf_size, "\t%d", root->idata);
+		sprintf_s(g_buf, g_buf_size, "\t%lld", root->idata);
 		str+=g_buf;
 		break;
 	case CT_VAL_FLOAT:

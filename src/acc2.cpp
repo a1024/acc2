@@ -203,7 +203,7 @@ void			parse_args(std::vector<std::string> const &args)
 				{
 					if(action)
 					{
-						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg);
+						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg.c_str());
 						break;
 					}
 					action=CA_ASSEMBLE;
@@ -215,7 +215,7 @@ void			parse_args(std::vector<std::string> const &args)
 				{
 					if(action)
 					{
-						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg);
+						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg.c_str());
 						break;
 					}
 					action=CA_COMPILE;
@@ -235,7 +235,7 @@ void			parse_args(std::vector<std::string> const &args)
 				{
 					if(action)
 					{
-						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg);
+						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg.c_str());
 						break;
 					}
 					action=CA_LINK;
@@ -253,7 +253,7 @@ void			parse_args(std::vector<std::string> const &args)
 				{
 					if(action)
 					{
-						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg);
+						printf("Invalid command args: Command %s is incompatible with %s.\n", cmdargs[action], arg.c_str());
 						break;
 					}
 					action=CA_PREPROCESS;

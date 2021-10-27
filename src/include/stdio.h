@@ -1,7 +1,8 @@
 #pragma once
 #ifndef STDIO_H
 #define STDIO_H
-
+//#define _NO_CRT_STDIO_INLINE
+//#include<stdio.h>
 #include		"crtdefs.h"
 
 #ifdef __cplusplus
