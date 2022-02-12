@@ -30,8 +30,10 @@ typedef unsigned char byte;
 #elif defined _MSC_VER || defined __ACC2__
 
 
+#ifndef __ACC2__
 #if _MSC_VER>=1900
 #pragma comment(lib, "legacy_stdio_definitions.lib")
+#endif
 #endif
 
 #define _CRT_ALIGN(x)	__declspec(align(x))
