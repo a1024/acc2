@@ -1,0 +1,5 @@
+make build --dry-run --keep-going --print-directory
+make: Entering directory '/media/awm/Data/Linux/acc4'
+gcc -g -no-pie src/acc.c src/acc_preprocessor.c src/acc_util.c -o acc -lm
+make: Leaving directory '/media/awm/Data/Linux/acc4'
+ 
