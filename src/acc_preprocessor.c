@@ -222,7 +222,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 		switch(ret->type)
 		{
 		case NUM_F64:
-			ret->f32=ret->f64;
+			ret->f32=(float)ret->f64;
 		case NUM_F32:
 			break;
 		default:
@@ -351,7 +351,7 @@ int			acme_read_number(const char *text, int len, int *idx, Number *ret)
 			if(text[*idx]=='-')
 				sign=-1;
 			*idx+=text[*idx]=='+'||text[*idx]=='-';
-			double e=(double)acme_read_int_base10(text, len, idx, &ndigits);
+			int e=(int)acme_read_int_base10(text, len, idx, &ndigits);
 			ret->f64*=_10pow(sign*e);
 		}
 		break;
@@ -481,7 +481,7 @@ char*				esc2str(const char *s, int size, int *ret_len)
 					int hex=s[ks]=='x'||s[ks]=='u';
 					ks+=hex;
 					int end=ks, ndigits=0;
-					int val=acme_read_int_basePOT(s, size, &end, hex?BASE16:BASE8, &ndigits);
+					int val=(int)acme_read_int_basePOT(s, size, &end, hex?BASE16:BASE8, &ndigits);
 				//	int val=acme_read_integer(s, size, hex?16:8, ks, &end);
 					int seqlen=codepoint2utf8((int)val, utf8_seq);
 
@@ -627,7 +627,7 @@ const char*			describe_char(char c)//uses g_buf
 		}
 	}
 }
-const char*			lex_tokentype2str(TokenType tokentype)
+const char*			lex_tokentype2str(CTokenType tokentype)
 {
 	const char *a=keywords[tokentype];
 	if(a)
@@ -731,7 +731,7 @@ void				lex_token2buf(Token *token)
 
 
 //lexer
-const char		*keywords[]=//order corresponds to enum TokenType
+const char		*keywords[]=//order corresponds to enum CTokenType
 {
 #define			TOKEN(STRING, LABEL)	STRING,
 #include		"acc_keywords.h"
@@ -897,7 +897,7 @@ typedef enum StringTypeEnum
 	STR_LITERAL,
 	CHAR_LITERAL,
 } StringType;
-static void lex_push_string(DListHandle tokens, TokenType toktype, StringType strtype, const char *p, int plen, int k, int len, int linestart, int lineno)
+static void lex_push_string(DListHandle tokens, CTokenType toktype, StringType strtype, const char *p, int plen, int k, int len, int linestart, int lineno)
 {
 	Token *token;
 	char *str;
@@ -1009,7 +1009,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 		LOG_ERROR("lex() lexfile->filename == nullptr");
 		return 0;
 	}
-	lf->text=load_utf8(lf->filename, &lf->len);
+	lf->text=load_text(lf->filename, &lf->len);
 	if(!lf->text)
 		return 0;
 	if(!lex_slots)
@@ -1200,7 +1200,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				char closingsymbol=opt->token==T_QUOTE||opt->token==T_QUOTE_WIDE?'\'':'\"';
 				int matched=1;
 				k=lex_skip_str_literal(p, len, start, closingsymbol, &matched);
-				TokenType toktype=T_IGNORED;
+				CTokenType toktype=T_IGNORED;
 				StringType strtype=STR_ID;
 				switch(opt->token)
 				{
@@ -1649,7 +1649,7 @@ static ArrayConstHandle eval_tokens=0;
 static Token const *eval_token=0;
 static int eval_idx=0, eval_end=0;
 static MapHandle eval_macros=0;
-static TokenType eval_type=T_IGNORED;
+static CTokenType eval_type=T_IGNORED;
 #define	TOKENS_AT(TOKENS, IDX)			((Token*)array_at(&(TOKENS), IDX))
 #define	TOKENS_AT_CONST(TOKENS, IDX)	((Token const*)array_at_const(&(TOKENS), IDX))
 #define EVAL_DEREF()					TOKENS_AT_CONST(eval_tokens, eval_idx)
@@ -2088,7 +2088,7 @@ static int skip_block(MapHandle macros, ArrayConstHandle tokens, int *k, int las
 					pp_error(token, "#else already appeared. Expected #endif.");
 				int start=*k;
 				*k=skip_till_newline(tokens, *k);
-				int result=eval_expr(tokens, start, *k, macros);
+				long long result=eval_expr(tokens, start, *k, macros);
 				*k+=*k<ntokens;//skip newline
 				if(result)
 					return 1;
@@ -2229,7 +2229,7 @@ static int	macro_stringize(ArrayHandle macrodefinition, int kt, ArrayHandle args
 		pp_error(token, "Stringize operator can only be applied to a macro argument.");//error in definition
 		return 0;
 	}
-	ArrayHandle *arg=array_at(&args2, next->i);
+	ArrayHandle *arg=array_at(&args2, (size_t)next->i);
 	token=(Token*)arg[0]->data;
 	token_stringize(token, arg[0]->count, 0, arg[0]->count, out);//TODO: inline call
 	return 1;
@@ -2244,7 +2244,7 @@ static void	macro_paste(Token const *t_left, ArrayHandle macrodefinition, int *k
 	Token *second=TOKENS_AT(macrodefinition, *kt+1);
 	if(second->type==T_MACRO_ARG)
 	{
-		ArrayHandle *callarg=array_at(&args2, second->i);//callarg is array of tokens
+		ArrayHandle *callarg=array_at(&args2, (size_t)second->i);//callarg is array of tokens
 		if(callarg[0]->count)
 		{
 			token_paste(t_left, (Token*)callarg[0]->data, dst);
@@ -2313,7 +2313,7 @@ static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *k
 		}
 		Macro *m2=topcall->macro;
 		ArrayHandle definition=m2->tokens;
-		while(topcall->kt<definition->count)
+		while(topcall->kt<(int)definition->count)
 		{
 			Token *token=TOKENS_AT(definition, topcall->kt);
 			if(token->type==T_HASH)//stringize call-argument
@@ -2322,10 +2322,10 @@ static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *k
 				macro_stringize(definition, topcall->kt, topcall->args, out);//X  check if next is concatenate
 				topcall->kt+=2;
 			}
-			else if(topcall->kt+1<definition->count&&TOKENS_AT(definition, topcall->kt+1)->type==T_CONCATENATE)//anything can be concatenated
+			else if(topcall->kt+1<(int)definition->count&&TOKENS_AT(definition, topcall->kt+1)->type==T_CONCATENATE)//anything can be concatenated
 			{
 				++topcall->kt;
-				if(topcall->kt+1>=definition->count)
+				if(topcall->kt+1>=(int)definition->count)
 				{
 					Token *next=TOKENS_AT(definition, topcall->kt);
 					pp_error(next, "Token paste operator cannot be at the end of macro.");//error in definition
@@ -2334,7 +2334,7 @@ static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *k
 				Token const *t_left=0;
 				if(token->type==T_MACRO_ARG)
 				{
-					ArrayHandle *callarg2=array_at(&topcall->args, token->i);
+					ArrayHandle *callarg2=array_at(&topcall->args, (size_t)token->i);
 					if(callarg2[0]->count>1)
 					{
 						int count=callarg2[0]->count-1;
@@ -2351,13 +2351,13 @@ static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *k
 			}
 			else if(token->type==T_CONCATENATE)
 			{
-				if(topcall->kt+1>=definition->count)
+				if(topcall->kt+1>=(int)definition->count)
 				{
 					pp_error(token, "Token paste operator cannot be at the end of macro.");//error in definition
 					break;
 				}
 				int kd2=dst[0]->count-1;
-				TokenType temp;
+				CTokenType temp;
 				for(;kd2>=topcall->expansion_start&&((temp=TOKENS_AT(*dst, kd2)->type)<=T_IGNORED||temp==T_NEWLINE);--kd2);
 				if(kd2>=topcall->expansion_start)
 				{
@@ -2371,7 +2371,7 @@ static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *k
 			}
 			else if(token->type==T_MACRO_ARG)//normal macro call arg
 			{
-				ArrayHandle *arg=array_at(&topcall->args, token->i);
+				ArrayHandle *arg=array_at(&topcall->args, (size_t)token->i);
 				for(;topcall->kt2<(int)arg[0]->count;)//copy tokens from arg, while checking the arg for macro calls
 				{
 					Token *token2=TOKENS_AT(*arg, topcall->kt2);
@@ -2425,6 +2425,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	Bookmark *bm;
 	Macro *macro;
 	ArrayHandle ret;
+	int success;
 
 	if(!filename)
 	{
@@ -2442,13 +2443,13 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	{
 		result=MAP_INSERT(lexlib, &unique_fn, 0, 0);
 		lf=(LexedFile*)result[0]->data;
-		lex(lf);
-
-		//lex(&lexedfile);
-		//result=MAP_INSERT_PAIR(lexlib, &lexedfile, 0);
+		success=lex(lf);
 	}
 	else
 		lf=(LexedFile*)result[0]->data;
+
+	if(!lf||!lf->tokens)
+		return 0;
 
 	dlist_init(&bookmarks, sizeof(Bookmark), 16);
 	bm=(Bookmark*)dlist_push_back(&bookmarks, 0);

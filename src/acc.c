@@ -1,9 +1,21 @@
 #include	"acc.h"
 #include	<stdio.h>
 #include	<stdlib.h>
+
+#ifdef _MSC_VER
+	#define	PAUSE
+#endif
+
 Map			macros={0}, lexlib={0};
 ArrayHandle includepaths=0;
-int main(int argc, char **argv)
+void		pause()
+{
+	int k;
+
+	printf("Enter 0 to continue: ");
+	scanf("%d", &k);
+}
+int			main(int argc, char **argv)
 {
 	if(argc<2)
 	{
@@ -13,9 +25,13 @@ int main(int argc, char **argv)
 		, __DATE__, __TIME__);
 		return 1;
 	}
-#if 0
+#if 1
 	printf("pwd:\n");
+#ifdef _MSC_VER
+	system("cd");
+#else
 	system("pwd");
+#endif
 	printf("argv[0]:\n%s\n", argv[0]);
 #endif
 
@@ -28,14 +44,23 @@ int main(int argc, char **argv)
 		printf("Preprocess failed\n");
 		return 1;
 	}
-	printf("Preprocess result: %zd tokens\n", tokens->count);
+	printf("Preprocess result: %d tokens\n", (long long)tokens->count);//%zd doesn't work on MSVC
 
 	printf("\ntokens2text:\n");
 	ArrayHandle text=0;
 	tokens2text(tokens, &text);
 	printf("%s\n", (char*)text->data);
-	
+
+	printf("Cleanup...\n");
+	array_free(&text, 0);
 	free(tokens);
+
+	acc_cleanup(&lexlib, &strlib);//only before exit
+
+	printf("Quitting...\n");
+#ifdef PAUSE
+	pause();
+#endif
 	
 	//string library test
 #if 0

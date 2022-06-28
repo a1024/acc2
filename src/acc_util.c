@@ -7,6 +7,7 @@
 #include		<math.h>
 #include		<errno.h>
 #ifdef _MSC_VER
+#define WIN32_LEAN_AND_MEAN
 #include		<Windows.h>//QueryPerformance...
 #else
 #include		<time.h>//clock_gettime
@@ -223,6 +224,13 @@ int				valid(const void *p)
 	return 1;
 }
 
+#if !defined __linux__
+#if _MSC_VER<1800
+#define	S_IFMT		00170000//octal
+#define	S_IFREG		 0100000
+#endif
+#define	S_ISREG(m)	(((m)&S_IFMT)==S_IFREG)
+#endif
 int				file_is_readable(const char *filename)//0: not readable, 1: regular file, 2: folder
 {
 	struct stat info={0};
@@ -232,7 +240,7 @@ int				file_is_readable(const char *filename)//0: not readable, 1: regular file,
 		return 1+!S_ISREG(info.st_mode);
 	return 0;
 }
-char*			load_utf8(const char *filename, size_t *len)
+char*			load_text(const char *filename, size_t *len)
 {
 	struct stat info={0};
 	FILE *f;
@@ -243,7 +251,9 @@ char*			load_utf8(const char *filename, size_t *len)
 		LOG_ERROR("Cannot open %s\n%s", filename, strerror(errno));
 		return 0;
 	}
-	f=fopen(filename, "r, ccs=UTF-8");
+	f=fopen(filename, "r");
+	//f=fopen(filename, "rb");
+	//f=fopen(filename, "r, ccs=UTF-8");//gets converted to UTF-16 on Windows
 	char *str=(char*)malloc(info.st_size+1);
 	size_t readbytes=fread(str, 1, info.st_size, f);
 	fclose(f);
@@ -320,7 +330,7 @@ void			array_free(ArrayHandle *arr, void (*destructor)(void*))//can be nullptr
 {
 	if(*arr&&destructor)
 	{
-		for(int k=0;k<arr[0]->count;++k)
+		for(size_t k=0;k<arr[0]->count;++k)
 			destructor(array_at(arr, k));
 	}
 	free(*arr);
@@ -332,7 +342,7 @@ void			array_clear(ArrayHandle *arr, void (*destructor)(void*))//can be nullptr
 	{
 		if(destructor)
 		{
-			for(int k=0;k<arr[0]->count;++k)
+			for(size_t k=0;k<arr[0]->count;++k)
 				destructor(array_at(arr, k));
 		}
 		arr[0]->count=0;
@@ -452,7 +462,7 @@ void			dlist_clear(DListHandle list, void (*destructor)(void*))
 		{
 			if(destructor)
 			{
-				for(int k=0;k<list->objpernode;++k)
+				for(size_t k=0;k<list->objpernode;++k)
 					destructor(it->data+k*list->objsize);
 				list->nobj-=list->objpernode;
 			}
@@ -461,7 +471,7 @@ void			dlist_clear(DListHandle list, void (*destructor)(void*))
 		}
 		if(destructor)
 		{
-			for(int k=0;k<list->nobj;++k)
+			for(size_t k=0;k<list->nobj;++k)
 				destructor(it->data+k*list->objsize);
 		}
 		free(it);
@@ -501,7 +511,10 @@ void*			dlist_push_back(DListHandle list, const void *obj)
 			list->f=list->f->next;
 		}
 		else
+		{
+			temp->prev=temp->next=0;
 			list->i=list->f=temp;
+		}
 		++list->nnodes;
 	}
 	void *p=list->f->data+obj_idx*list->objsize;
@@ -514,18 +527,22 @@ void*			dlist_push_back(DListHandle list, const void *obj)
 }
 void*			dlist_back(DListHandle list)
 {
+	size_t obj_idx;
+
 	if(!list->nobj)
 		LOG_ERROR("dlist_back() called on empty list");
-	size_t obj_idx=(list->nobj-1)%list->objpernode;
+	obj_idx=(list->nobj-1)%list->objpernode;
 	return list->f->data+obj_idx*list->objsize;
 }
 void			dlist_pop_back(DListHandle list, void (*destructor)(void*))
 {
+	size_t obj_idx;
+
 	if(!list->nobj)
 		LOG_ERROR("dlist_pop_back() called on empty list");
 	if(destructor)
 		destructor(dlist_back(list));
-	size_t obj_idx=(list->nobj-1)%list->objpernode;
+	obj_idx=(list->nobj-1)%list->objpernode;
 	if(!obj_idx)//last object is first in the last block
 	{
 		DNodeHandle last=list->f;
@@ -606,9 +623,11 @@ void			map_clear_r(BSTNodeHandle node, void (*destroy_callback)(void*))
 }
 BSTNodeHandle*	map_find_r(BSTNodeHandle *node, const void *key, CmpFn cmp_key)
 {
+	CmpRes result;
+
 	if(!*node)
 		return 0;
-	CmpRes result=cmp_key(key, node[0]->data);
+	result=cmp_key(key, node[0]->data);
 	switch(result)
 	{
 	case RESULT_LESS:
@@ -663,11 +682,12 @@ BSTNodeHandle*	map_insert_r(BSTNodeHandle *node, const void *key, MapHandle map,
 }//*/
 BSTNodeHandle*	map_erase_r(BSTNodeHandle *node, const void *key, MapHandle map)//https://www.geeksforgeeks.org/binary-search-tree-set-2-delete/
 {
+	CmpRes result;
 	BSTNodeHandle temp;
 
 	if(!*node)
 		return node;
-	CmpRes result=map->cmp_key(key, node[0]->data);
+	result=map->cmp_key(key, node[0]->data);
 	switch(result)
 	{
 	case RESULT_LESS:

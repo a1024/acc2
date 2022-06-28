@@ -1,5 +1,8 @@
 #ifndef ACC_H
 #define ACC_H
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 #include<stddef.h>//for size_t
 #ifdef __cplusplus
 extern "C"
@@ -31,7 +34,7 @@ int				valid(const void *p);
 
 //file I/O
 int				file_is_readable(const char *filename);//0: not readable, 1: regular file, 2: folder
-char*			load_utf8(const char *filename, size_t *len);//don't forget to free string
+char*			load_text(const char *filename, size_t *len);//don't forget to free string
 
 
 //array
@@ -89,17 +92,17 @@ const void*		array_back_const(ArrayHandle const *arr);
 #define			ESTR_ALLOC(TYPE, STR, LEN)				STR=array_construct(0, sizeof(TYPE), 0, 1, LEN+1, __LINE__)
 #define			ESTR_COPY(TYPE, STR, SRC, LEN, REP)		STR=array_construct(SRC, sizeof(TYPE), LEN, REP, 1, __LINE__)
 #endif
-#define			STR_APPEND(STR, SRC, LEN, REP)			array_insert(&(STR), array_size(&(STR)), SRC, LEN, REP, 1)
-#define			STR_FIT(STR)							array_fit(&STR, 1)
-#define			ESTR_AT(TYPE, STR, IDX)					*(TYPE*)array_at(&(STR), IDX)
+#define			STR_APPEND(STR, SRC, LEN, REP)	array_insert(&(STR), array_size(&(STR)), SRC, LEN, REP, 1)
+#define			STR_FIT(STR)					array_fit(&STR, 1)
+#define			ESTR_AT(TYPE, STR, IDX)			*(TYPE*)array_at(&(STR), IDX)
 
-#define			STR_ALLOC(STR, LEN, ...)				ESTR_ALLOC(char, STR, LEN, ##__VA_ARGS__)
-#define			STR_COPY(STR, SRC, LEN, REP, ...)		ESTR_COPY(char, STR, SRC, LEN, REP, ##__VA_ARGS__)
-#define			STR_AT(STR, IDX)						ESTR_AT(char, STR, IDX)
+#define			STR_ALLOC(STR, LEN)				ESTR_ALLOC(char, STR, LEN)
+#define			STR_COPY(STR, SRC, LEN, REP)	ESTR_COPY(char, STR, SRC, LEN, REP)
+#define			STR_AT(STR, IDX)				ESTR_AT(char, STR, IDX)
 
-#define			WSTR_ALLOC(STR, LEN, ...)				ESTR_ALLOC(wchar_t, STR, LEN, ##__VA_ARGS__)
-#define			WSTR_COPY(STR, SRC, LEN, REP, ...)		ESTR_COPY(wchar_t, STR, SRC, LEN, REP, ##__VA_ARGS__)
-#define			WSTR_AT(STR, IDX)						ESTR_AT(wchar_t, STR, IDX)
+#define			WSTR_ALLOC(STR, LEN)			ESTR_ALLOC(wchar_t, STR, LEN)
+#define			WSTR_COPY(STR, SRC, LEN, REP)	ESTR_COPY(wchar_t, STR, SRC, LEN, REP)
+#define			WSTR_AT(STR, IDX)				ESTR_AT(wchar_t, STR, IDX)
 #endif
 
 //double-linked list of identical size arrays,		append-only, no mid-insertion
@@ -202,12 +205,12 @@ void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNode
 //acc
 #define			CASE_MASK			0xDF
 #define			BETWEEN(LO, X, HI)	((unsigned)(X-LO)<(unsigned)(HI+1-LO))
-typedef enum TokenTypeEnum//should include cpp,		separate enum for asm
+typedef enum CTokenTypeEnum//should include cpp,		separate enum for asm
 {
 #define		TOKEN(STRING, LABEL)	LABEL,
 #include	"acc_keywords.h"
 #undef		TOKEN
-} TokenType;
+} CTokenType;
 extern const char *keywords[];
 typedef enum NumberBaseEnum
 {
@@ -218,7 +221,7 @@ typedef enum NumberBaseEnum
 } NumberBase;
 typedef struct TokenStruct//32 bytes
 {
-	TokenType type;
+	CTokenType type;
 	int pos, len, line, col;
 	union
 	{
@@ -257,6 +260,8 @@ extern Map	strlib;//don't clear strlib until the program quits
 char*		strlib_insert(const char *str, int len);
 void		strlib_debugprint();
 ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle includepaths, MapHandle lexlib);
+void		acc_cleanup(MapHandle lexlib, MapHandle strings);
+
 void		tokens2text(ArrayHandle tokens, ArrayHandle *str);
 
 
