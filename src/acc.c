@@ -1,9 +1,21 @@
 #include	"acc.h"
 #include	<stdio.h>
 #include	<stdlib.h>
+#ifdef _MSC_VER
+#include	<Windows.h>
+#endif
 
 #ifdef _MSC_VER
-	#define	PAUSE
+void			set_console_buffer_size(short w, short h)
+{
+	COORD coords={w, h};
+	void *handle=GetStdHandle(STD_OUTPUT_HANDLE);
+	int success=SetConsoleScreenBufferSize(handle, coords);
+	if(!success)
+		printf("Failed to resize console buffer: %d\n\n", GetLastError());
+}
+#else
+#define			set_console_buffer_size(...)
 #endif
 
 Map			macros={0}, lexlib={0};
@@ -17,6 +29,7 @@ void		pause()
 }
 int			main(int argc, char **argv)
 {
+	set_console_buffer_size(80, 9001);
 	if(argc<2)
 	{
 		printf(
@@ -35,7 +48,7 @@ int			main(int argc, char **argv)
 	printf("argv[0]:\n%s\n", argv[0]);
 #endif
 
-	ARRAY_ALLOC(char*, includepaths, 0, 0);
+	ARRAY_ALLOC(char*, includepaths, 0, 0, 0);//FIXME: need destructor
 	
 	printf("Preprocessing %s\n", argv[1]);
 	ArrayHandle tokens=preprocess(argv[1], &macros, includepaths, &lexlib);
@@ -52,13 +65,13 @@ int			main(int argc, char **argv)
 	printf("%s\n", (char*)text->data);
 
 	printf("Cleanup...\n");
-	array_free(&text, 0);
+	array_free(&text);
 	free(tokens);
 
 	acc_cleanup(&lexlib, &strlib);//only before exit
 
 	printf("Quitting...\n");
-#ifdef PAUSE
+#ifdef _MSC_VER
 	pause();
 #endif
 	

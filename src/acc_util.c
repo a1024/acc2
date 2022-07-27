@@ -39,7 +39,7 @@ void			memfill(void *dst, const void *src, size_t dstbytes, size_t srcbytes)
 	if(copied<dstbytes)
 		memcpy(d+copied, d, dstbytes-copied);
 }
-void			memswap(void *p1, void *p2, size_t size)
+void			memswap_slow(void *p1, void *p2, size_t size)
 {
 	unsigned char *s1=(unsigned char*)p1, *s2=(unsigned char*)p2, *end=s1+size;
 	for(;s1<end;++s1, ++s2)
@@ -49,16 +49,86 @@ void			memswap(void *p1, void *p2, size_t size)
 		*s2=t;
 	}
 }
-void			memreverse(void *p, size_t count, size_t size)
+void 			memswap(void *p1, void *p2, size_t size, void *temp)
 {
-	size_t totalsize=count*size;
-	unsigned char *s1=(unsigned char*)p, *s2=s1+totalsize-size;
+	memcpy(temp, p1, size);
+	memcpy(p1, p2, size);
+	memcpy(p2, temp, size);
+}
+void			memreverse(void *p, size_t count, size_t esize)
+{
+	size_t totalsize=count*esize;
+	unsigned char *s1=(unsigned char*)p, *s2=s1+totalsize-esize;
+	void *temp=malloc(esize);
 	while(s1<s2)
 	{
-		memswap(s1, s2, size);
-		s1+=size, s2-=size;
+		memswap(s1, s2, esize, temp);
+		s1+=esize, s2-=esize;
+	}
+	free(temp);
+}
+void 			memrotate(void *p, size_t byteoffset, size_t bytesize, void *temp)
+{
+	unsigned char *buf=(unsigned char*)p;
+
+	if(byteoffset<bytesize-byteoffset)
+	{
+		memcpy(temp, buf, byteoffset);
+		memmove(buf, buf+byteoffset, bytesize-byteoffset);
+		memcpy(buf+bytesize-byteoffset, temp, byteoffset);
+	}
+	else
+	{
+		memcpy(temp, buf+byteoffset, bytesize-byteoffset);
+		memmove(buf+bytesize-byteoffset, buf, byteoffset);
+		memcpy(buf, temp, bytesize-byteoffset);
 	}
 }
+int 			binary_search(const void *base, size_t count, size_t esize, int (*threeway)(const void*, const void*), const void *val, size_t *idx)
+{
+	const unsigned char *buf=(const unsigned char*)base;
+	ptrdiff_t L=0, R=(ptrdiff_t)count-1, mid;
+	int ret;
+
+	while(L<=R)
+	{
+		mid=(L+R)>>1;
+		ret=threeway(buf+mid*esize, val);
+		if(ret<0)
+			L=mid+1;
+		else if(ret>0)
+			R=mid-1;
+		else
+		{
+			if(idx)
+				*idx=mid;
+			return 1;
+		}
+	}
+	if(idx)
+		*idx=L+(L<(ptrdiff_t)count&&threeway(buf+L*esize, val)<0);
+	return 0;
+}
+void 			isort(void *base, size_t count, size_t esize, int (*threeway)(const void*, const void*))
+{
+	unsigned char *buf=(unsigned char*)base;
+	size_t k;
+	void *temp;
+
+	if(count<2)
+		return;
+
+	temp=malloc((count>>1)*esize);
+	for(k=1;k<count;++k)
+	{
+		size_t idx=0;
+		binary_search(buf, k, esize, threeway, buf+k*esize, &idx);
+		if(idx<k)
+			memrotate(buf+idx*esize, (k-idx)*esize, (k+1-idx)*esize, temp);
+	}
+	free(temp);
+}
+
 int				floor_log2(unsigned n)
 {
 	int logn=0;
@@ -68,14 +138,6 @@ int				floor_log2(unsigned n)
 		sh=((n&0x0000000C)!=0)<<1;	logn^=sh, n>>=sh;
 		sh=((n&0x00000002)!=0);		logn^=sh;
 	return logn;
-}
-int				minimum(int a, int b)
-{
-	return a<b?a:b;
-}
-int				maximum(int a, int b)
-{
-	return a>b?a:b;
 }
 int				floor_log10(double x)
 {
@@ -165,6 +227,14 @@ double			_10pow(int n)
 	if(n>307)
 		return _HUGE;
 	return mask[n+308];
+}
+int				minimum(int a, int b)
+{
+	return a<b?a:b;
+}
+int				maximum(int a, int b)
+{
+	return a>b?a:b;
 }
 
 double			time_ms()
@@ -286,7 +356,7 @@ static void		array_realloc(ArrayHandle *arr, size_t count, size_t pad)//CANNOT b
 }
 
 //Array API
-ArrayHandle		array_construct(const void *src, size_t esize, size_t count, size_t rep, size_t pad, DebugInfo debug_info)
+ArrayHandle		array_construct(const void *src, size_t esize, size_t count, size_t rep, size_t pad, void (*destructor)(void*))
 {
 	ArrayHandle arr;
 	size_t srcsize, dstsize, cap;
@@ -299,7 +369,7 @@ ArrayHandle		array_construct(const void *src, size_t esize, size_t count, size_t
 	arr->count=count;
 	arr->esize=esize;
 	arr->cap=cap;
-	arr->debug_info=debug_info;
+	arr->destructor=destructor;
 	if(src)
 	{
 		ASSERT_P(src);
@@ -312,7 +382,7 @@ ArrayHandle		array_construct(const void *src, size_t esize, size_t count, size_t
 		memset(arr->data+dstsize, 0, cap-dstsize);
 	return arr;
 }
-ArrayHandle		array_copy(ArrayHandle *arr, DebugInfo debug_info)
+ArrayHandle		array_copy(ArrayHandle *arr)
 {
 	ArrayHandle a2;
 	size_t bytesize;
@@ -323,31 +393,41 @@ ArrayHandle		array_copy(ArrayHandle *arr, DebugInfo debug_info)
 	a2=(ArrayHandle)malloc(bytesize);
 	ASSERT_P(a2);
 	memcpy(a2, *arr, bytesize);
-	a2->debug_info=debug_info;
 	return a2;
 }
-void			array_free(ArrayHandle *arr, void (*destructor)(void*))//can be nullptr
+void			array_free(ArrayHandle *arr)//can be nullptr
 {
-	if(*arr&&destructor)
+	if(*arr&&arr[0]->destructor)
 	{
 		for(size_t k=0;k<arr[0]->count;++k)
-			destructor(array_at(arr, k));
+			arr[0]->destructor(array_at(arr, k));
 	}
 	free(*arr);
 	*arr=0;
 }
-void			array_clear(ArrayHandle *arr, void (*destructor)(void*))//can be nullptr
+void			array_clear(ArrayHandle *arr)//can be nullptr
 {
 	if(*arr)
 	{
-		if(destructor)
+		if(arr[0]->destructor)
 		{
 			for(size_t k=0;k<arr[0]->count;++k)
-				destructor(array_at(arr, k));
+				arr[0]->destructor(array_at(arr, k));
 		}
 		arr[0]->count=0;
 	}
 }
+void			array_fit(ArrayHandle *arr, size_t pad)//can be nullptr
+{
+	ArrayHandle p2;
+	if(!*arr)
+		return;
+	arr[0]->cap=(arr[0]->count+pad)*arr[0]->esize;
+	p2=(ArrayHandle)realloc(*arr, sizeof(ArrayHeader)+arr[0]->cap);
+	ASSERT_P(p2);
+	*arr=p2;
+}
+
 void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t count, size_t rep, size_t pad)
 {
 	size_t start, srcsize, dstsize, movesize;
@@ -365,16 +445,28 @@ void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t coun
 		memset(arr[0]->data+start, 0, dstsize);
 	return arr[0]->data+start;
 }
-void			array_fit(ArrayHandle *arr, size_t pad)//can be nullptr
+void*			array_erase(ArrayHandle *arr, size_t idx, size_t count)
 {
-	ArrayHandle p2;
-	if(!*arr)
-		return;
-	arr[0]->cap=(arr[0]->count+pad)*arr[0]->esize;
-	p2=(ArrayHandle)realloc(*arr, sizeof(ArrayHeader)+arr[0]->cap);
-	ASSERT_P(p2);
-	*arr=p2;
+	size_t k;
+
+	ASSERT_P(*arr);
+	if(arr[0]->count<idx+count)
+	{
+		LOG_ERROR("array_erase() out of bounds: idx=%lld count=%lld size=%lld", (long long)idx, (long long)count, (long long)arr[0]->count);
+		if(arr[0]->count<idx)
+			return 0;
+		count=arr[0]->count-idx;//erase till end of array if OOB
+	}
+	if(arr[0]->destructor)
+	{
+		for(k=0;k<count;++k)
+			arr[0]->destructor(array_at(arr, idx+k));
+	}
+	memmove(arr[0]->data+idx*arr[0]->esize, arr[0]->data+(idx+count)*arr[0]->esize, (arr[0]->count-(idx+count))*arr[0]->esize);
+	arr[0]->count-=count;
+	return arr[0]->data+idx*arr[0]->esize;
 }
+
 size_t			array_size(ArrayHandle const *arr)//can be nullptr
 {
 	if(!arr[0])
@@ -411,12 +503,13 @@ const void*		array_back_const(ArrayHandle const *arr)
 
 //double-linked array list
 #if 1
-void			dlist_init(DListHandle list, size_t objsize, size_t objpernode)
+void			dlist_init(DListHandle list, size_t objsize, size_t objpernode, void (*destructor)(void*))
 {
 	list->i=list->f=0;
 	list->objsize=objsize;
 	list->objpernode=objpernode;
 	list->nnodes=list->nobj=0;//empty
+	list->destructor=destructor;
 }
 #define			DLIST_COPY_NODE(DST, PREV, NEXT, SRC, PAYLOADSIZE)\
 	DST=(DNodeHandle)malloc(sizeof(DNodeHeader)+(PAYLOADSIZE)),\
@@ -428,7 +521,7 @@ void			dlist_copy(DListHandle dst, DListHandle src)
 	DNodeHandle it;
 	size_t payloadsize;
 
-	dlist_init(dst, src->objsize, src->objpernode);
+	dlist_init(dst, src->objsize, src->objpernode, src->destructor);
 	it=dst->i;
 	if(it)
 	{
@@ -451,7 +544,7 @@ void			dlist_copy(DListHandle dst, DListHandle src)
 	dst->nnodes=src->nnodes;
 	dst->nobj=src->nobj;
 }
-void			dlist_clear(DListHandle list, void (*destructor)(void*))
+void			dlist_clear(DListHandle list)
 {
 	DNodeHandle it;
 
@@ -460,19 +553,19 @@ void			dlist_clear(DListHandle list, void (*destructor)(void*))
 	{
 		while(it->next)
 		{
-			if(destructor)
+			if(list->destructor)
 			{
 				for(size_t k=0;k<list->objpernode;++k)
-					destructor(it->data+k*list->objsize);
+					list->destructor(it->data+k*list->objsize);
 				list->nobj-=list->objpernode;
 			}
 			it=it->next;
 			free(it->prev);
 		}
-		if(destructor)
+		if(list->destructor)
 		{
 			for(size_t k=0;k<list->nobj;++k)
-				destructor(it->data+k*list->objsize);
+				list->destructor(it->data+k*list->objsize);
 		}
 		free(it);
 		list->i=list->f=0;
@@ -485,7 +578,7 @@ ArrayHandle		dlist_toarray(DListHandle list)
 	DNodeHandle it;
 	size_t payloadsize;
 
-	arr=array_construct(0, list->objsize, 0, 0, list->nnodes*list->objpernode, __LINE__);
+	arr=array_construct(0, list->objsize, 0, 0, list->nnodes*list->objpernode, list->destructor);
 	it=list->i;
 	payloadsize=list->objpernode*list->objsize;
 	for(size_t offset=0;it;)
@@ -507,8 +600,9 @@ void*			dlist_push_back(DListHandle list, const void *obj)
 		if(list->nnodes)
 		{
 			list->f->next=temp;
-			list->f->next->prev=list->f;
-			list->f=list->f->next;
+			temp->prev=list->f;
+			temp->next=0;
+			list->f=temp;
 		}
 		else
 		{
@@ -534,14 +628,14 @@ void*			dlist_back(DListHandle list)
 	obj_idx=(list->nobj-1)%list->objpernode;
 	return list->f->data+obj_idx*list->objsize;
 }
-void			dlist_pop_back(DListHandle list, void (*destructor)(void*))
+void			dlist_pop_back(DListHandle list)
 {
 	size_t obj_idx;
 
 	if(!list->nobj)
 		LOG_ERROR("dlist_pop_back() called on empty list");
-	if(destructor)
-		destructor(dlist_back(list));
+	if(list->destructor)
+		list->destructor(dlist_back(list));
 	obj_idx=(list->nobj-1)%list->objpernode;
 	if(!obj_idx)//last object is first in the last block
 	{
@@ -602,22 +696,23 @@ void			dlist_it_dec(DListItHandle it)
 
 //BST-map
 #if 1
-void			map_init(MapHandle map, size_t key_size, size_t val_size, CmpFn cmp_key)
+void			map_init(MapHandle map, size_t key_size, size_t val_size, CmpFn cmp_key, void (*destructor)(void*))
 {
 	map->key_size=key_size;
 	map->val_size=val_size;
 	map->nnodes=0;
 	map->root=0;
 	map->cmp_key=cmp_key;
+	map->destructor=destructor;
 }
-void			map_clear_r(BSTNodeHandle node, void (*destroy_callback)(void*))
+void			map_clear_r(MapHandle map, BSTNodeHandle node)
 {
 	if(node)
 	{
-		map_clear_r(node->left, destroy_callback);
-		map_clear_r(node->right, destroy_callback);
-		if(destroy_callback)
-			destroy_callback(node->data);
+		map_clear_r(map, node->left);
+		map_clear_r(map, node->right);
+		if(map->destructor)
+			map->destructor(node->data);
 		free(node);
 	}
 }
@@ -680,7 +775,7 @@ BSTNodeHandle*	map_insert_r(BSTNodeHandle *node, const void *key, MapHandle map,
 		*found=_found;
 	return pn;
 }//*/
-BSTNodeHandle*	map_erase_r(BSTNodeHandle *node, const void *key, MapHandle map)//https://www.geeksforgeeks.org/binary-search-tree-set-2-delete/
+BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key)//https://www.geeksforgeeks.org/binary-search-tree-set-2-delete/
 {
 	CmpRes result;
 	BSTNodeHandle temp;
@@ -691,13 +786,15 @@ BSTNodeHandle*	map_erase_r(BSTNodeHandle *node, const void *key, MapHandle map)/
 	switch(result)
 	{
 	case RESULT_LESS:
-		return map_erase_r(&node[0]->left, key, map);
+		return map_erase_r(map, &node[0]->left, key);
 	case RESULT_GREATER:
-		return map_erase_r(&node[0]->right, key, map);
+		return map_erase_r(map, &node[0]->right, key);
 	case RESULT_EQUAL:
 		if(!node[0]->left)
 		{
 			temp=node[0]->right;
+			if(map->destructor)
+				map->destructor(node[0]->data);
 			free(*node);
 			*node=temp;
 			--map->nnodes;
@@ -706,6 +803,8 @@ BSTNodeHandle*	map_erase_r(BSTNodeHandle *node, const void *key, MapHandle map)/
 		if(!node[0]->right)
 		{
 			temp=node[0]->left;
+			if(map->destructor)
+				map->destructor(node[0]->data);
 			free(*node);
 			*node=temp;
 			--map->nnodes;
@@ -715,12 +814,13 @@ BSTNodeHandle*	map_erase_r(BSTNodeHandle *node, const void *key, MapHandle map)/
 		while(temp->left)//find leftmost child on right
 			temp=temp->left;
 		memcpy(node[0]->data, temp->data, map->key_size+map->val_size);//overwrite erased node contents
-		map_erase_r(&node[0]->right, temp->data, map);//erase relocated node from right subtree
+		map_erase_r(map, &node[0]->right, temp->data);//erase relocated node from right subtree
 		return node;
 	}
 	return 0;
 }
 
+//map rebalance function
 static void		map_reb_tree2vine(BSTNodeHandle root)
 {
 	BSTNodeHandle tail, rest, temp;
@@ -781,6 +881,7 @@ void			map_rebalance(MapHandle map)
 	map->root=pseud->right;
 	free(pseud);
 }
+
 void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNodeHandle *node, int depth))
 {
 	if(*node)

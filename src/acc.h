@@ -9,21 +9,41 @@ extern "C"
 {
 #endif
 
+	#define		BENCHMARK_LEXER
+
 //utility
 #ifndef _MSC_VER
 #define	sprintf_s	snprintf
 #endif
 #define			G_BUF_SIZE	2048
 extern char		g_buf[G_BUF_SIZE];
+
 void			memfill(void *dst, const void *src, size_t dstbytes, size_t srcbytes);
-void			memswap(void *p1, void *p2, size_t size);
-void			memreverse(void *p, size_t count, size_t size);
+void			memswap_slow(void *p1, void *p2, size_t size);
+void 			memswap(void *p1, void *p2, size_t size, void *temp);
+void			memreverse(void *p, size_t count, size_t esize);//calls memswap
+void 			memrotate(void *p, size_t byteoffset, size_t bytesize, void *temp);//temp buffer is min(byteoffset, bytesize-byteoffset)
+int 			binary_search(const void *base, size_t count, size_t esize, int (*threeway)(const void*, const void*), const void *val, size_t *idx);//returns true if found, otherwise the idx is where val should be inserted, standard bsearch doesn't do this
+void 			isort(void *base, size_t count, size_t esize, int (*threeway)(const void*, const void*));//binary insertion sort
+
 int				floor_log2(unsigned n);
 int				floor_log10(double x);
 double			power(double x, int y);
 double			_10pow(int n);
 int				minimum(int a, int b);
 int				maximum(int a, int b);
+
+//benchmark
+double			time_ms();
+#ifdef BENCHMARK_LEXER
+#define			BM_DECL				double bm_t1
+#define			BM_START()			bm_t1=time_ms()
+#define			BM_FINISH(MSG, ...)	bm_t1=time_ms()-bm_t1, printf(MSG, ##__VA_ARGS__)
+#else
+#define			BM_DECL
+#define			BM_START()
+#define			BM_FINISH(MSG)
+#endif
 
 //error handling
 int				log_error(const char *file, int line, const char *format, ...);
@@ -51,17 +71,17 @@ typedef size_t DebugInfo;
 typedef struct ArrayHeaderStruct
 {
 	size_t count, esize, cap;//cap is in bytes
-	DebugInfo debug_info;
+	void (*destructor)(void*);
 	unsigned char data[];
 } ArrayHeader, *ArrayHandle;
 typedef const ArrayHeader *ArrayConstHandle;
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-ArrayHandle		array_construct(const void *src, size_t esize, size_t count, size_t rep, size_t pad, DebugInfo debug_info);
-ArrayHandle		array_copy(ArrayHandle *arr, DebugInfo debug_info);//shallow
-void			array_free(ArrayHandle *arr, void (*destructor)(void*));
-void			array_clear(ArrayHandle *arr, void (*destructor)(void*));//keeps allocation
+ArrayHandle		array_construct(const void *src, size_t esize, size_t count, size_t rep, size_t pad, void (*destructor)(void*));
+ArrayHandle		array_copy(ArrayHandle *arr);//shallow
+void			array_free(ArrayHandle *arr);
+void			array_clear(ArrayHandle *arr);//keeps allocation
 void			array_fit(ArrayHandle *arr, size_t pad);
 
 void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t count, size_t rep, size_t pad);//cannot be nullptr
@@ -72,12 +92,8 @@ const void*		array_at_const(ArrayConstHandle *arr, int idx);
 void*			array_back(ArrayHandle *arr);
 const void*		array_back_const(ArrayHandle const *arr);
 
-#ifdef DEBUG_INFO_STR
-#define			ARRAY_ALLOC(ELEM_TYPE, ARR, COUNT, PAD, DEBUG_INFO)	ARR=array_construct(0, sizeof(ELEM_TYPE), COUNT, 1, PAD, DEBUG_INFO)
-#else
-#define			ARRAY_ALLOC(ELEM_TYPE, ARR, COUNT, PAD)				ARR=array_construct(0, sizeof(ELEM_TYPE), COUNT, 1, PAD, __LINE__)
-#endif
-#define			ARRAY_APPEND(ARR, DATA, COUNT, REP, PAD)			array_insert(&(ARR), array_size(&(ARR)), DATA, COUNT, REP, PAD)
+#define			ARRAY_ALLOC(ELEM_TYPE, ARR, COUNT, PAD, DESTRUCTOR)	ARR=array_construct(0, sizeof(ELEM_TYPE), COUNT, 1, PAD, DESTRUCTOR)
+#define			ARRAY_APPEND(ARR, DATA, COUNT, REP, PAD)			array_insert(&(ARR), (ARR)->count, DATA, COUNT, REP, PAD)
 #define			ARRAY_DATA(ARR)			(ARR)->data
 #define			ARRAY_I(ARR, IDX)		*(int*)array_at(&ARR, IDX)
 #define			ARRAY_U(ARR, IDX)		*(unsigned*)array_at(&ARR, IDX)
@@ -85,23 +101,15 @@ const void*		array_back_const(ArrayHandle const *arr);
 
 
 //null terminated array
-#ifdef DEBUG_INFO_STR
-#define			ESTR_ALLOC(TYPE, STR, LEN, DEBUG_INFO)				STR=array_construct(0, sizeof(TYPE), 0, 1, LEN+1, DEBUG_INFO)
-#define			ESTR_COPY(TYPE, STR, SRC, LEN, REP, DEBUG_INFO)		STR=array_construct(SRC, sizeof(TYPE), LEN, REP, 1, DEBUG_INFO)
-#else
-#define			ESTR_ALLOC(TYPE, STR, LEN)				STR=array_construct(0, sizeof(TYPE), 0, 1, LEN+1, __LINE__)
-#define			ESTR_COPY(TYPE, STR, SRC, LEN, REP)		STR=array_construct(SRC, sizeof(TYPE), LEN, REP, 1, __LINE__)
-#endif
-#define			STR_APPEND(STR, SRC, LEN, REP)	array_insert(&(STR), array_size(&(STR)), SRC, LEN, REP, 1)
-#define			STR_FIT(STR)					array_fit(&STR, 1)
-#define			ESTR_AT(TYPE, STR, IDX)			*(TYPE*)array_at(&(STR), IDX)
+#define			ESTR_ALLOC(TYPE, STR, LEN)			STR=array_construct(0, sizeof(TYPE), LEN, 1, 1, 0)
+#define			STR_APPEND(STR, SRC, LEN, REP)		array_insert(&(STR), (STR)->count, SRC, LEN, REP, 1)
+#define			STR_FIT(STR)						array_fit(&STR, 1)
+#define			ESTR_AT(TYPE, STR, IDX)				*(TYPE*)array_at(&(STR), IDX)
 
 #define			STR_ALLOC(STR, LEN)				ESTR_ALLOC(char, STR, LEN)
-#define			STR_COPY(STR, SRC, LEN, REP)	ESTR_COPY(char, STR, SRC, LEN, REP)
 #define			STR_AT(STR, IDX)				ESTR_AT(char, STR, IDX)
 
 #define			WSTR_ALLOC(STR, LEN)			ESTR_ALLOC(wchar_t, STR, LEN)
-#define			WSTR_COPY(STR, SRC, LEN, REP)	ESTR_COPY(wchar_t, STR, SRC, LEN, REP)
 #define			WSTR_AT(STR, IDX)				ESTR_AT(wchar_t, STR, IDX)
 #endif
 
@@ -120,16 +128,16 @@ typedef struct DListStruct
 		objpernode,	//object count per node,		recommended value 128
 		nnodes,		//node count
 		nobj;		//total object count
+	void (*destructor)(void*);
 } DList, *DListHandle;
-//DListHandle	dlist_construct(size_t objsize, size_t objpernode);
-void			dlist_init(DListHandle list, size_t objsize, size_t objpernode);
+void			dlist_init(DListHandle list, size_t objsize, size_t objpernode, void (*destructor)(void*));
 void			dlist_copy(DListHandle dst, DListHandle src);
-void			dlist_clear(DListHandle list, void (*destructor)(void*));
+void			dlist_clear(DListHandle list);
 ArrayHandle		dlist_toarray(DListHandle list);
 
 void*			dlist_push_back(DListHandle list, const void *obj);//shallow copy of obj	TODO dlist_push_back(array)
 void*			dlist_back(DListHandle list);//returns address of last object
-void			dlist_pop_back(DListHandle list, void (*destructor)(void*));
+void			dlist_pop_back(DListHandle list);
 
 //iterator: seamlessly iterate through contained objects
 typedef struct DListIteratorStruct
@@ -172,7 +180,7 @@ typedef enum CmpResEnum
 	RESULT_EQUAL,
 	RESULT_GREATER,
 } CmpRes;
-typedef CmpRes (*CmpFn)(const void *left, const void *right);
+typedef CmpRes (*CmpFn)(const void *key, const void *pair);//the search key is always on left
 typedef struct MapStruct
 {
 	size_t
@@ -181,23 +189,24 @@ typedef struct MapStruct
 		nnodes;		//stored object count
 	BSTNodeHandle root;
 	CmpFn cmp_key;
+	void (*destructor)(void*);//key and value are packed consequtively
 } Map, *MapHandle;
 typedef Map const *MapConstHandle;
-void			map_init(MapHandle map, size_t key_size, size_t val_size, CmpFn cmp_key);
+void			map_init(MapHandle map, size_t key_size, size_t val_size, CmpFn cmp_key, void (*destructor)(void*));
 void			map_rebalance(MapHandle map);
 
 BSTNodeHandle*	map_find_r(BSTNodeHandle *node, const void *key, CmpFn cmp_key);
 BSTNodeHandle*	map_insert_r(BSTNodeHandle *node, const void *key, MapHandle map, const void *val, int *found);
-BSTNodeHandle*	map_erase_r(BSTNodeHandle *node, const void *key, MapHandle map);
-void			map_clear_r(BSTNodeHandle node, void (*destroy_callback)(void*));
+BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key);
+void			map_clear_r(MapHandle map, BSTNodeHandle node);
 void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNodeHandle *node, int depth));
 
-#define			MAP_INIT(MAP, KEYTYPE, PAIRTYPE, CMP)	map_init(MAP, sizeof(KEYTYPE), sizeof(PAIRTYPE)-sizeof(KEYTYPE), CMP)
+#define			MAP_INIT(MAP, KEYTYPE, PAIRTYPE, CMP, DESTRUCTOR)	map_init(MAP, sizeof(KEYTYPE), sizeof(PAIRTYPE)-sizeof(KEYTYPE), CMP, DESTRUCTOR)
 #define			MAP_FIND(MAP, KEY)					map_find_r(&(MAP)->root, KEY, (MAP)->cmp_key)
 #define			MAP_INSERT(MAP, KEY, VAL, PFOUND)	map_insert_r(&(MAP)->root, KEY, MAP, VAL, PFOUND)
 #define			MAP_INSERT_PAIR(MAP, PAIR, PFOUND)	map_insert_r(&(MAP)->root, PAIR, MAP, (unsigned char*)(PAIR)+(MAP)->key_size, PFOUND)
-#define			MAP_ERASE(MAP, KEY)					map_erase_r(&(MAP)->root, KEY, MAP)
-#define			MAP_CLEAR(MAP, DTOR_CB)				map_clear_r((MAP)->root, DTOR_CB), (MAP)->root=0, (MAP)->nnodes=0
+#define			MAP_ERASE(MAP, KEY)					map_erase_r(MAP, &(MAP)->root, KEY)
+#define			MAP_CLEAR(MAP)						map_clear_r(MAP, (MAP)->root), (MAP)->root=0, (MAP)->nnodes=0
 #define			MAP_DEBUGPRINT(MAP, CALLBACK)		map_debugprint_r(&(MAP)->root, 0, CALLBACK)
 #endif
 
@@ -248,8 +257,8 @@ typedef struct TokenStruct//32 bytes
 typedef struct MacroStruct
 {
 	const char
-		*name,
-		*srcfilename;
+		*name,			//key, belongs to strlib
+		*srcfilename;	//belongs to strlib
 	int nargs,//enum MacroArgCount
 		is_va;
 	ArrayHandle tokens;

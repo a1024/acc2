@@ -15,34 +15,6 @@ void		lex_error(const char *text, int len, int pos, const char *format, ...);
 
 //string library
 Map			strlib={0};
-static CmpRes strlib_cmp(const void *left, const void *right)
-{
-	const char *s1=*(const char**)left, *s2=*(const char**)right;
-	int result=strcmp(s1, s2);
-	return (result>0)-(result<0);
-}
-char*		strlib_insert(const char *str, int len)
-{
-	char *key;
-	int found;
-	BSTNodeHandle *node;
-
-	if(!strlib.cmp_key)
-		map_init(&strlib, sizeof(char*), 0, strlib_cmp);
-
-	node=MAP_INSERT(&strlib, &str, 0, &found);		//search first then allocate
-	if(!found)
-	{
-		if(!len)
-			len=strlen(str);
-		key=(char*)malloc(len+1);
-		memcpy(key, str, len);
-		key[len]=0;
-
-		*(char**)node[0]->data=key;
-	}
-	return *(char**)node[0]->data;
-}
 static void	strlib_printcallback(BSTNodeHandle *node, int depth)
 {
 	char *str=*(char**)node[0]->data;
@@ -52,6 +24,58 @@ void		strlib_debugprint()
 {
 	MAP_DEBUGPRINT(&strlib, strlib_printcallback);
 	printf("\n");
+}
+typedef struct StringStruct
+{
+	const char *str;
+	size_t len;
+} String;
+static CmpRes strlib_cmp(const void *key, const void *pair)
+{
+	String const *s1=(String const*)key;
+	const char *s2=*(const char**)pair;
+	int k;
+	char c1;
+
+	for(k=0;k<s1->len&&*s2&&s1->str[k]==*s2;++k, ++s2);
+
+	c1=k<s1->len?s1->str[k]:0;
+	return (c1>*s2)-(c1<*s2);
+
+	//int result=strcmp(s1, s2);
+	//return (result>0)-(result<0);
+}
+void		strlib_destructor(void *data)
+{
+	char **str=(char**)data;
+	free(*str);
+	*str=0;
+}
+char*		strlib_insert(const char *str, int len)
+{
+	String s2={str, len?len:strlen(str)};
+	char *key;
+	int found;
+	BSTNodeHandle *node;
+
+	if(!strlib.cmp_key)
+		map_init(&strlib, sizeof(char*), 0, strlib_cmp, strlib_destructor);
+
+	node=MAP_INSERT(&strlib, &s2, 0, &found);		//search first then allocate		str is not always null-terminated, but is sometimes of length 'len' instead
+	if(!found)
+	{
+		key=(char*)malloc(s2.len+1);
+		memcpy(key, str, s2.len);
+		key[s2.len]=0;
+
+		//if(!strcmp(key, "node"))//MARKER
+		//	key=key;
+
+		*(char**)node[0]->data=key;
+
+		//strlib_debugprint();//MARKER
+	}
+	return *(char**)node[0]->data;
 }
 
 
@@ -759,19 +783,35 @@ typedef struct LexOptionStruct
 	};
 	const char *name;
 } LexOption;
-static ArrayHandle *lex_slots=0;
-static int lex_slot_less(const void *p1, const void *p2)
+static ArrayHandle *lex_slots=0;//array of arrays of LexOption's
+static int lex_slot_threeway(const void *p1, const void *p2)
 {
-	int k;
 	const char
-		*s1=((LexOption*)p1)->name,
-		*s2=((LexOption*)p2)->name;
+		*s1=((LexOption const*)p1)->name,
+		*s2=((LexOption const*)p2)->name;
 
-	for(k=0;*s1&&*s2&&*s1==*s2;++k, ++s1, ++s2);
+	for(;*s1&&*s2&&*s1==*s2;++s1, ++s2);
 	if(!*s1&&!*s2)
 		return 0;
 
-	char ac=s1[k], bc=s2[k];
+	char ac=*s1, bc=*s2;
+	if(!ac)
+		ac=127;
+	if(!bc)
+		bc=127;
+	return (ac>bc)-(ac<bc);
+}
+static int lex_slot_less(const void *p1, const void *p2)
+{
+	const char
+		*s1=((LexOption const*)p1)->name,
+		*s2=((LexOption const*)p2)->name;
+
+	for(;*s1&&*s2&&*s1==*s2;++s1, ++s2);
+	if(!*s1&&!*s2)
+		return 0;
+
+	char ac=*s1, bc=*s2;
 	if(!ac)
 		ac=127;
 	if(!bc)
@@ -780,44 +820,60 @@ static int lex_slot_less(const void *p1, const void *p2)
 }
 static void	lexer_init()
 {
-	LexOption opt;
+	LexOption *opt;
 
-	lex_slots=(ArrayHandle*)malloc(256*sizeof(void*));
-	memset(lex_slots, 0, 256*sizeof(void*));
+	lex_slots=(ArrayHandle*)malloc(256*sizeof(ArrayHandle));
+	memset(lex_slots, 0, 256*sizeof(ArrayHandle));
 	for(int kt=0;kt<T_NTOKENS;++kt)
 	{
 		const char *kw=keywords[kt];
 		if(kw)
 		{
 			ArrayHandle *slot=lex_slots+(unsigned char)kw[0];
+			if(!*slot)
+				ARRAY_ALLOC(LexOption, *slot, 0, 0, 0);
+			opt=(LexOption*)ARRAY_APPEND(*slot, 0, 1, 1, 0);
 
-			memset(&opt, 0, sizeof(opt));
-			opt.token=kt;
-			opt.len=strlen(kw);
-			memcpy(opt.val.text, kw, opt.len);
-			for(int k2=0;k2<opt.len;++k2)
-				opt.mask.text[k2]=0xFF;
-			opt.endswithnan=isalnum(kw[0])||kw[0]=='_';
+			opt->token=kt;
+			opt->len=strlen(kw);
+			memcpy(opt->val.text, kw, opt->len);
+			for(int k2=0;k2<opt->len;++k2)
+				opt->mask.text[k2]=0xFF;
+			opt->endswithnan=isalnum(kw[0])||kw[0]=='_';
 			if(kt==T_DQUOTE_WIDE)
-				opt.endswithnan=0;
+				opt->endswithnan=0;
 #ifdef ACC_CPP
 			if(kt==T_DQUOTE_RAW)
-				opt.endswithnan=0;
+				opt->endswithnan=0;
 #endif
-			opt.endswithnd=opt.len==1&&kw[0]=='.';//only the '.' operator should end with a non-digit
-			opt.name=kw;
-
-			if(!*slot)
-				ARRAY_ALLOC(LexOption, *slot, 0, 0);
-			ARRAY_APPEND(*slot, &opt, 1, 1, 0);
+			opt->endswithnd=opt->len==1&&kw[0]=='.';//only the '.' operator should end with a non-digit
+			opt->name=kw;
 		}
 	}
 	for(int ks=0;ks<128;++ks)
 	{
 		ArrayHandle *slot=lex_slots+ks;
 		if(*slot)
-			qsort(slot[0]->data, slot[0]->count, slot[0]->esize, lex_slot_less);
+			isort(slot[0]->data, slot[0]->count, slot[0]->esize, lex_slot_threeway);
+			//qsort(slot[0]->data, slot[0]->count, slot[0]->esize, lex_slot_less);
 	}
+
+	//DEBUG LEXER
+#if 0
+	printf("Sorted keywords:\n");
+	for(int ks=0;ks<128;++ks)
+	{
+		ArrayHandle *slot=lex_slots+ks;
+		if(*slot)
+		{
+			for(int k2=0;k2<slot[0]->count;++k2)
+			{
+				opt=(LexOption*)array_at(slot, k2);
+				printf("\t%s\n", opt->name);
+			}
+		}
+	}
+#endif
 }
 
 int			get_lineno(const char *text, int pos, int *linestart)
@@ -999,11 +1055,13 @@ static void	lexlib_destructor(void *data)
 }
 static int	lex(LexedFile *lf)//returns 1 if succeeded
 {
-	DList tokens={0};
+	DList tokens={0};//list of Token's
 	Reg128 reg={0};
 	LexOption *opt;
 	LexerState lex_chevron_state=IC_NORMAL;
+	BM_DECL;
 
+	BM_START();
 	if(!lf->filename)
 	{
 		LOG_ERROR("lex() lexfile->filename == nullptr");
@@ -1012,7 +1070,10 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 	lf->text=load_text(lf->filename, &lf->len);
 	if(!lf->text)
 		return 0;
-	if(!lex_slots)
+	currentfilename=lf->filename;
+	currentfile=lf->text;
+
+	if(!lex_slots)//init lexer
 		lexer_init();
 
 	lf->text=(char*)realloc(lf->text, lf->len+16);//look-ahead padding
@@ -1033,7 +1094,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 		data<<=8, data|=(unsigned char)p[k+2];
 	}
 
-	dlist_init(&tokens, sizeof(Token), 128);
+	dlist_init(&tokens, sizeof(Token), 128, 0);
 	int k0=-1;
 	for(int k=0, lineno=0, linestart=0, lineinc=1;k<len;)//lexer loop
 	{
@@ -1277,7 +1338,12 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 	}
 
 	lf->tokens=dlist_toarray(&tokens);
-	dlist_clear(&tokens, 0);
+	dlist_clear(&tokens);
+	BM_FINISH("Lex %s:\t%lfms\n", currentfilename, bm_t1);
+
+	BM_START();
+	map_rebalance(&strlib);
+	BM_FINISH("Rebalance strlib:\t%lfms\n", bm_t1);
 	return 1;
 }
 
@@ -1286,7 +1352,7 @@ void pp_error(Token const *token, const char *format, ...)
 {
 	va_list args;
 	if(token)
-		printf("%s(%d) ", currentfilename, token->line);
+		printf("%s(%d) ", currentfilename, token->line+1);
 	printf("Error: ");
 	if(format)
 	{
@@ -1367,7 +1433,7 @@ static void token_stringize(Token const *tokens, int ntokens, int first, int cou
 	}
 	out->len=text->count;
 	out->str=strlib_insert((char*)text->data, out->len);
-	array_free(&text, 0);
+	array_free(&text);
 }
 static void token_append2str(Token const *t, ArrayHandle *text)
 {
@@ -1419,6 +1485,17 @@ static void token_paste(Token const *t1, Token const *t2, ArrayHandle *dst)//con
 	}
 }
 
+static CmpRes macro_cmp(const void *left, const void *right)
+{
+	const char **s1=(const char**)left, **s2=(const char**)right;
+	return (CmpRes)((*s1>*s2)-(*s1<*s2));
+}
+static void macro_destructor(void *data)
+{
+	Macro *macro=(Macro*)data;
+	array_free(&macro->tokens);
+}
+
 typedef enum MacroArgCountEnum
 {
 	MACRO_NO_ARGLIST=-1,
@@ -1429,10 +1506,10 @@ typedef struct MacroArgStruct
 	const char *name;//key
 	size_t idx;//val
 } MacroArg;
-static int macro_arg_cmp(const void *left, const void *right)
+static int macro_arg_sort_threeway(const void *left, const void *right)
 {
 	MacroArg *a1=(MacroArg*)left, *a2=(MacroArg*)right;
-	return a1->name<a2->name;//sort by pointer value
+	return (a1->name>a2->name)-(a1->name<a2->name);//sort by pointer value
 }
 static int macro_arg_new(ArrayHandle *argnames, const char *name)
 {
@@ -1450,13 +1527,19 @@ static int macro_arg_new(ArrayHandle *argnames, const char *name)
 	}
 	if(!duplicate)
 	{
-		arg=ARRAY_APPEND(*argnames, 0, 1, 1, 0);
+		arg=(MacroArg*)ARRAY_APPEND(*argnames, 0, 1, 1, 0);
 		arg->name=name;
 		arg->idx=nargs;
 	}
 	return duplicate;
 }
-static int macro_arg_lookup(ArrayHandle argnames, const char *name)//returns -1 if not found
+static int macro_arg_search_threeway(const void *left, const void *right)
+{
+	MacroArg const *a1=(MacroArg const*)left;
+	const char **a2=(const char**)right;
+	return (a1->name>*a2)-(a1->name<*a2);
+}
+/*static int macro_arg_lookup(ArrayHandle argnames, const char *name)//returns -1 if not found
 {
 	int nargs=argnames->count;
 	int L=0, R=nargs-1, mid;
@@ -1473,18 +1556,18 @@ static int macro_arg_lookup(ArrayHandle argnames, const char *name)//returns -1 
 			return mid;
 	}
 	return -1;
-}
+}//*/
 int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int count)
 {
 	int ret, kt, duplicate;
 	Token const *token;
 	Token *token2;
-	ArrayHandle argnames;
+	ArrayHandle argnames;//array of MacroArg's
 
 	if(!str_va_args)
 		str_va_args=strlib_insert("__VA_ARGS__", 0);
 
-	ARRAY_ALLOC(MacroArg, argnames, 0, 0);
+	ARRAY_ALLOC(MacroArg, argnames, 0, 0, 0);//no destructor needed
 
 	if(tokens->type!=T_ID)
 	{
@@ -1492,7 +1575,7 @@ int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int c
 		ret=0;
 		goto exit;
 	}
-	dst->name=tokens->str;
+	dst->name=tokens->str;//<- this assignment is redundant
 	dst->srcfilename=srcfilename;
 	dst->is_va=0;
 
@@ -1522,9 +1605,9 @@ int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int c
 				{
 					dst->is_va=1;
 					duplicate=macro_arg_new(&argnames, str_va_args);
-					if(duplicate)
+					if(duplicate)//unreachable
 					{
-						pp_error(token, "__VA_ARGS__ already declared.");
+						pp_error(token, "Ellipsis (...) was already declared.");
 						ret=0;
 						goto exit;
 					}
@@ -1580,36 +1663,36 @@ int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int c
 		goto exit;
 
 	//macro has a definition
-	qsort(argnames->data, argnames->count, argnames->esize, macro_arg_cmp);//sort args by name pointer value for fast lookup of index
-
 	count-=kt;
-	ARRAY_ALLOC(Token, dst->tokens, count, 0);
+	ARRAY_ALLOC(Token, dst->tokens, count, 0, 0);
 	memcpy(dst->tokens->data, tokens+kt, count*sizeof(Token));
 
-	token2=(Token*)array_at(&dst->tokens, 0);
-	for(kt=0;kt<count;++kt, ++token2)
+	if(argnames->count)//translate macro args
 	{
-		int idx;
-		if(token2->type==T_ID)
+		isort(argnames->data, argnames->count, argnames->esize, macro_arg_sort_threeway);//sort args by name pointer value for fast lookup of arg index
+		for(kt=0;kt<count;++kt)
 		{
-			idx=macro_arg_lookup(argnames, token2->str);
-			if(idx!=-1)
+			int idx;
+			token2=(Token*)array_at(&dst->tokens, kt);
+			if(token2->type==T_ID)
 			{
+				if(binary_search(argnames->data, argnames->count, argnames->esize, macro_arg_search_threeway, &token2->str, &idx))
+				{
+					token2->type=T_MACRO_ARG;
+					token2->i=idx;
+				}
+			}
+			else if(token2->type==T_VA_ARGS)
+			{
+				if(!binary_search(argnames->data, argnames->count, argnames->esize, macro_arg_search_threeway, &str_va_args, &idx))
+				{
+					pp_error(token2, "__VA_ARGS__ is reserved for variadic macros.");
+					ret=0;
+					goto exit;
+				}
 				token2->type=T_MACRO_ARG;
-				token2->i=idx;
+				token2->i=argnames->count-1;
 			}
-		}
-		else if(token2->type==T_VA_ARGS)
-		{
-			idx=macro_arg_lookup(argnames, str_va_args);
-			if(idx==-1)
-			{
-				pp_error(token2, "__VA_ARGS__ is reserved for variadic macros.");
-				ret=0;
-				goto exit;
-			}
-			token2->type=T_MACRO_ARG;
-			token2->i=argnames->count-1;
 		}
 	}
 
@@ -1641,7 +1724,7 @@ int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int c
 	}
 
 exit:
-	array_free(&argnames, 0);//no destructor needed
+	array_free(&argnames);
 	return ret;
 }
 
@@ -2022,7 +2105,7 @@ static char*	test_include(const char *searchpath, int pathlen, const char *inclu
 		str=strlib_insert((char*)filename->data, filename->count);
 	else
 		str=0;
-	array_free(&filename, 0);
+	array_free(&filename);
 	return str;
 }
 static char*	find_include(const char *includename, int custom, ArrayHandle includepaths)
@@ -2075,53 +2158,58 @@ static int skip_block(MapHandle macros, ArrayConstHandle tokens, int *k, int las
 	while(*k<ntokens)
 	{
 		token=(Token const*)array_at_const(&tokens, *k);
-		++*k;//k points at next token
-		switch(token->type)
+		if(token->type==T_HASH)
 		{
-		case T_IF:case T_IFDEF:
-			++level;
-			break;
-		case T_ELIF:
-			if(level==1)
+			++*k;
+			token=(Token const*)array_at_const(&tokens, *k);
+			++*k;//k points at next token
+			switch(token->type)
 			{
-				if(lastblock)
-					pp_error(token, "#else already appeared. Expected #endif.");
-				int start=*k;
-				*k=skip_till_newline(tokens, *k);
-				long long result=eval_expr(tokens, start, *k, macros);
-				*k+=*k<ntokens;//skip newline
-				if(result)
+			case T_IF:case T_IFDEF:
+				++level;
+				break;
+			case T_ELIF:
+				if(level==1)
+				{
+					if(lastblock)
+						pp_error(token, "#else already appeared. Expected #endif.");
+					int start=*k;
+					*k=skip_till_newline(tokens, *k);
+					long long result=eval_expr(tokens, start, *k, macros);
+					*k+=*k<ntokens;//skip newline
+					if(result)
+						return 1;
+				}
+				break;
+			case T_ELSE:
+				if(level==1)
+				{
+					if(lastblock)
+						pp_error(token, "#else already appeared. Expected #endif.");
+					int start=*k;
+					*k=skip_till_newline(tokens, start);
+					if(start<*k)
+						pp_error(token, "Unexpected tokens after #else.");
+					*k+=*k<ntokens;//skip newline
 					return 1;
-			}
-			break;
-		case T_ELSE:
-			if(level==1)
-			{
-				if(lastblock)
-					pp_error(token, "#else already appeared. Expected #endif.");
-				int start=*k;
-				*k=skip_till_newline(tokens, start);
-				if(start<*k)
-					pp_error(token, "Unexpected tokens after #else.");
-				*k+=*k<ntokens;//skip newline
-				return 1;
-			}
-			break;
-		case T_ENDIF:
-			--level;
-			if(!level)
-			{
-				int start=*k;
-				*k=skip_till_newline(tokens, start);
-				if(start<*k)
-					pp_error(token, "Unexpected tokens after #endif.");
-				*k+=*k<ntokens;//skip newline
-				return 0;
-			}
-			break;
-		default:
-			break;
-		}//end switch
+				}
+				break;
+			case T_ENDIF:
+				--level;
+				if(!level)
+				{
+					int start=*k;
+					*k=skip_till_newline(tokens, start);
+					if(start<*k)
+						pp_error(token, "Unexpected tokens after #endif.");
+					*k+=*k<ntokens;//skip newline
+					return 0;
+				}
+				break;
+			default:
+				break;
+			}//end switch
+		}
 		*k=skip_till_newline(tokens, *k);
 		*k+=*k<ntokens;//skip the newline
 	}
@@ -2138,14 +2226,14 @@ static int skip_block(MapHandle macros, ArrayConstHandle tokens, int *k, int las
 static void macro_arg_destructor(void *data)
 {
 	ArrayHandle *tokens=(ArrayHandle*)data;
-	array_free(tokens, 0);
+	array_free(tokens);
 }
 static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, int *ret_len, ArrayHandle *args)
 {
 	if(!*args)
-		ARRAY_ALLOC(ArrayHandle, *args, 0, 0);
+		ARRAY_ALLOC(ArrayHandle, *args, 0, 0, macro_arg_destructor);
 	else//clear args
-		array_clear(args, macro_arg_destructor);
+		array_clear(args);
 	
 	if(macro->nargs==MACRO_NO_ARGLIST)
 	{
@@ -2178,7 +2266,7 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 			else
 			{
 				ArrayHandle *h=ARRAY_APPEND(*args, 0, 1, 1, 0);
-				ARRAY_ALLOC(Token, *h, count, 0);
+				ARRAY_ALLOC(Token, *h, count, 0, 0);
 				memcpy(h[0]->data, token, count*sizeof(Token));
 			}
 			k0=end+1;
@@ -2282,7 +2370,7 @@ typedef struct MacroCallStruct
 static void macrocall_destructor(void *data)
 {
 	MacroCall *call=(MacroCall*)data;
-	array_free(&call->args, macro_arg_destructor);
+	array_free(&call->args);//macro_arg_destructor
 }
 static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks, ArrayHandle *dst)
 {
@@ -2290,13 +2378,13 @@ static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *k
 	DList context;//a stack of macro calls
 	MacroCall *topcall;
 
-	dlist_init(&context, sizeof(MacroCall), 4);
+	dlist_init(&context, sizeof(MacroCall), 4, macrocall_destructor);
 	topcall=(MacroCall*)dlist_push_back(&context, 0);
 	if(!macro_find_call_extent(macro, src, *ks, &len, &topcall->args))
 	{
 		ks+=len;
 		//error_pp(TOKENS_AT(src, *ks), "Invalid macro call.");//redundant error message
-		dlist_clear(&context, macrocall_destructor);
+		dlist_clear(&context);
 		return;
 	}
 	
@@ -2308,7 +2396,7 @@ static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *k
 		topcall=(MacroCall*)dlist_back(&context);
 		if(topcall->done)
 		{
-			dlist_pop_back(&context, macrocall_destructor);
+			dlist_pop_back(&context);
 			continue;
 		}
 		Macro *m2=topcall->macro;
@@ -2434,8 +2522,12 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	}
 	if(!str_pragma_once)
 		str_pragma_once=strlib_insert("once", 0);
+
 	if(!lexlib->key_size)
-		MAP_INIT(lexlib, const char*, LexedFile, lexlib_cmp);
+		MAP_INIT(lexlib, const char*, LexedFile, lexlib_cmp, lexlib_destructor);
+
+	if(!macros->cmp_key)
+		MAP_INIT(macros, char*, Macro, macro_cmp, macro_destructor);
 
 	unique_fn=strlib_insert(filename, 0);
 	BSTNodeHandle *result=MAP_FIND(lexlib, unique_fn);
@@ -2443,6 +2535,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	{
 		result=MAP_INSERT(lexlib, &unique_fn, 0, 0);
 		lf=(LexedFile*)result[0]->data;
+		currentfilename=lf->filename;
 		success=lex(lf);
 	}
 	else
@@ -2451,13 +2544,13 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	if(!lf||!lf->tokens)
 		return 0;
 
-	dlist_init(&bookmarks, sizeof(Bookmark), 16);
+	dlist_init(&bookmarks, sizeof(Bookmark), 16, 0);//no destructor
 	bm=(Bookmark*)dlist_push_back(&bookmarks, 0);
 	bm->lf=lf;
 	bm->ks=0;
 	bm->iflevel=0;
 
-	dlist_init(&tokens, sizeof(Token), 128);
+	dlist_init(&tokens, sizeof(Token), 128, 0);//no destructor
 
 	while(bookmarks.nobj>0)
 	{
@@ -2501,7 +2594,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						else
 						{
 							redefinition=0;
-							macro=(Macro*)MAP_INSERT(macros, token->str, 0, &redefinition)[0]->data;//insert can return null only if comparator is ill-defined
+							macro=(Macro*)MAP_INSERT(macros, &token->str, 0, &redefinition)[0]->data;//insert can return null only if comparator is ill-defined
 							if(redefinition)
 								pp_error(token, "Macro redifinition.");
 							macro_define(macro, currentfilename, token, k-bm->ks);
@@ -2558,7 +2651,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					{
 						++bm->ks;//skip IF
 						int start=bm->ks;
-						skip_till_newline(lf->tokens, bm->ks);
+						bm->ks=skip_till_newline(lf->tokens, bm->ks);
 						long long result=eval_expr(lf->tokens, start, bm->ks, macros);
 						if(result)
 						{
@@ -2624,10 +2717,13 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						else
 						{
 							int found=0;
-							BSTNodeHandle *result=MAP_INSERT(lexlib, filename, 0, &found);
+							BSTNodeHandle *result=MAP_INSERT(lexlib, &filename, 0, &found);
 							LexedFile *lf2=(LexedFile*)result[0]->data;
 							if(!found)//not lexed before
 								lex(lf2);
+
+							//strlib_debugprint();//MARKER
+
 							bm->ks=skip_till_newline(lf->tokens, bm->ks);
 							bm->ks+=bm->ks<ntokens;
 							if(!(lf2->flags&LEX_INCLUDE_ONCE))//not marked with '#pragma once'
@@ -2641,7 +2737,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					else
 					{
 						pp_error(token, "Expected include file name.");
-						skip_till_newline(lf->tokens, bm->ks);
+						bm->ks=skip_till_newline(lf->tokens, bm->ks);
 						bm->ks+=bm->ks<ntokens;
 					}
 					break;
@@ -2761,24 +2857,24 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 		}//end file loop
 		if(bm->iflevel>0)
 			pp_error((Token*)array_back(&lf->tokens), "End of file reached. Expected %s #endif\'s.", bm->iflevel);
-		dlist_pop_back(&bookmarks, 0);
+		dlist_pop_back(&bookmarks);//no destructor
 	}//end preprocess loop
 
 	ret=dlist_toarray(&tokens);
-	dlist_clear(&tokens, 0);
+	dlist_clear(&tokens);
 	return ret;
 }
 
-void str_destructor(void *data)
-{
-	char **str=(char**)data;
-	free(*str);
-	*str=0;
-}
+//void str_destructor(void *data)
+//{
+//	char **str=(char**)data;
+//	free(*str);
+//	*str=0;
+//}
 void acc_cleanup(MapHandle lexlib, MapHandle strings)
 {
-	MAP_CLEAR(lexlib, lexlib_destructor);
-	MAP_CLEAR(strings, str_destructor);
+	MAP_CLEAR(lexlib);
+	MAP_CLEAR(strings);
 }
 
 void tokens2text(ArrayHandle tokens, ArrayHandle *str)
