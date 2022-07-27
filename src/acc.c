@@ -5,6 +5,12 @@
 #include	<Windows.h>
 #endif
 
+const char *std_includes[]=//hardcoded: a temporary measure
+{
+	"C:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include",
+	"C:/Program Files (x86)/Windows Kits/8.1/Include/um",
+};
+
 #ifdef _MSC_VER
 void			set_console_buffer_size(short w, short h)
 {
@@ -19,7 +25,7 @@ void			set_console_buffer_size(short w, short h)
 #endif
 
 Map			macros={0}, lexlib={0};
-ArrayHandle includepaths=0;
+ArrayHandle includepaths=0;//array of strings
 void		pause()
 {
 	int k;
@@ -57,12 +63,12 @@ int			main(int argc, char **argv)
 		printf("Preprocess failed\n");
 		return 1;
 	}
-	printf("Preprocess result: %d tokens\n", (long long)tokens->count);//%zd doesn't work on MSVC
+	printf("Preprocess result: %lld tokens\n", (long long)tokens->count);//%zd doesn't work on MSVC
 
 	printf("\ntokens2text:\n");
 	ArrayHandle text=0;
 	tokens2text(tokens, &text);
-	printf("%s\n", (char*)text->data);
+	//printf("%s\n", (char*)text->data);
 
 	printf("Cleanup...\n");
 	array_free(&text);

@@ -1315,9 +1315,13 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 					k=k2+1;
 				}
 				else
+				{
+					//if(lex_chevron_state==IC_HASH)
+					//	lex_error(p, len, k, "Hash followed by a chevron");
 					lex_push_tok(&tokens, opt, p, k, linestart, lineno);
+					k+=opt->len;
+				}
 				lex_chevron_state=IC_NORMAL;
-				k+=opt->len;
 				break;
 		case T_INCLUDE:
 			if(lex_chevron_state==IC_HASH)
@@ -2596,7 +2600,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 							redefinition=0;
 							macro=(Macro*)MAP_INSERT(macros, &token->str, 0, &redefinition)[0]->data;//insert can return null only if comparator is ill-defined
 							if(redefinition)
-								pp_error(token, "Macro redifinition.");
+								pp_error(token, "Macro \'%s\' redefined.", token->str);
 							macro_define(macro, currentfilename, token, k-bm->ks);
 						}
 						bm->ks=k+(((Token*)array_at(&lf->tokens, k))->type==T_NEWLINE);//skip possible newline
@@ -2614,7 +2618,10 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						pp_error(token, "Expected an identifier.");
 					else
 					{
-						MAP_ERASE(macros, token->str);
+						//if(!strcmp(token->str, "TOKEN"))//MARKER
+						//	token->str=token->str;
+
+						MAP_ERASE(macros, &token->str);
 						++bm->ks;//skip ID
 					}
 					break;
