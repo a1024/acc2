@@ -12,6 +12,7 @@ extern "C"
 	#define		BENCHMARK_LEXER
 
 //utility
+#define			SIZEOF(ARR)		(sizeof(ARR)/sizeof(*(ARR)))
 #ifndef _MSC_VER
 #define	sprintf_s	snprintf
 #endif
@@ -32,6 +33,7 @@ double			power(double x, int y);
 double			_10pow(int n);
 int				minimum(int a, int b);
 int				maximum(int a, int b);
+int				acme_isdigit(char c, char base);
 
 //benchmark
 double			time_ms();
@@ -85,6 +87,7 @@ void			array_clear(ArrayHandle *arr);//keeps allocation
 void			array_fit(ArrayHandle *arr, size_t pad);
 
 void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t count, size_t rep, size_t pad);//cannot be nullptr
+void*			array_erase(ArrayHandle *arr, size_t idx, size_t count);
 
 size_t			array_size(ArrayHandle const *arr);
 void*			array_at(ArrayHandle *arr, size_t idx);
@@ -101,15 +104,17 @@ const void*		array_back_const(ArrayHandle const *arr);
 
 
 //null terminated array
-#define			ESTR_ALLOC(TYPE, STR, LEN)			STR=array_construct(0, sizeof(TYPE), LEN, 1, 1, 0)
+#define			ESTR_ALLOC(TYPE, STR, DATA, LEN)	STR=array_construct(DATA, sizeof(TYPE), LEN, 1, 1, 0)
 #define			STR_APPEND(STR, SRC, LEN, REP)		array_insert(&(STR), (STR)->count, SRC, LEN, REP, 1)
 #define			STR_FIT(STR)						array_fit(&STR, 1)
 #define			ESTR_AT(TYPE, STR, IDX)				*(TYPE*)array_at(&(STR), IDX)
 
-#define			STR_ALLOC(STR, LEN)				ESTR_ALLOC(char, STR, LEN)
+#define			STR_ALLOC(STR, LEN)				ESTR_ALLOC(char, STR, 0, LEN)
+#define			STR_COPY(STR, DATA, LEN)		ESTR_ALLOC(char, STR, DATA, LEN)
 #define			STR_AT(STR, IDX)				ESTR_AT(char, STR, IDX)
 
-#define			WSTR_ALLOC(STR, LEN)			ESTR_ALLOC(wchar_t, STR, LEN)
+#define			WSTR_ALLOC(STR, LEN)			ESTR_ALLOC(wchar_t, STR, 0, LEN)
+#define			WSTR_COPY(STR, DATA, LEN)		ESTR_ALLOC(wchar_t, STR, DATA, LEN)
 #define			WSTR_AT(STR, IDX)				ESTR_AT(wchar_t, STR, IDX)
 #endif
 
@@ -213,7 +218,7 @@ void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNode
 
 //acc
 #define			CASE_MASK			0xDF
-#define			BETWEEN(LO, X, HI)	((unsigned)(X-LO)<(unsigned)(HI+1-LO))
+#define			BETWEEN(LO, X, HI)	((unsigned)((X)-LO)<(unsigned)(HI+1-LO))
 typedef enum CTokenTypeEnum//should include cpp,		separate enum for asm
 {
 #define		TOKEN(STRING, LABEL)	LABEL,
@@ -227,7 +232,7 @@ typedef enum NumberBaseEnum
 	BASE8,
 	BASE10,
 	BASE16,
-} NumberBase;
+} NumberBase;//fits in 2 bits
 typedef struct TokenStruct//32 bytes
 {
 	CTokenType type;
@@ -239,7 +244,8 @@ typedef struct TokenStruct//32 bytes
 		{
 			int ws_before:1, nl_before:1,
 				ws_after:1, nl_after:1,
-				synth:1, base:2,
+				synth:1,
+				base:2,//NumberBase
 				lexme:1;
 		};
 	};
@@ -257,17 +263,34 @@ typedef struct TokenStruct//32 bytes
 typedef struct MacroStruct
 {
 	const char
-		*name,			//key, belongs to strlib
+		*name,			//THE KEY, should be the first attribute, belongs to strlib
 		*srcfilename;	//belongs to strlib
 	int nargs,//enum MacroArgCount
 		is_va;
 	ArrayHandle tokens;
 } Macro;
 int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int count);//tokens points at after '#define', undef macro on error
-
-extern Map	strlib;//don't clear strlib until the program quits
+extern Map	strlib;//don't clear strlib until the program quits		TODO: pass as argument
 char*		strlib_insert(const char *str, int len);
 void		strlib_debugprint();
+
+void		init_dateNtime();
+
+typedef struct PreDefStruct//FIXME pre-defined macros cannot have arguments and can have 1 token max in definition
+{
+	const char *name;
+	CTokenType type;
+	union
+	{
+		const char *str;
+		const int *wstr;
+		long long i;
+		unsigned long long u;
+		double f64;	//lossy
+		float f32;	//lossy
+	};
+} PreDef;
+void		macros_init(MapHandle macros, PreDef *preDefs, int nPreDefs);
 ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle includepaths, MapHandle lexlib);
 void		acc_cleanup(MapHandle lexlib, MapHandle strings);
 

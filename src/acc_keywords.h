@@ -1,18 +1,23 @@
 #ifdef TOKEN
 
 	TOKEN(0, T_IGNORED)
+		
+	TOKEN(0, T_ID)			//identifier
 
-	TOKEN(0, T_VAL_C8)	//stores 8bit characters (up to 8) (MSVC: 4)
-	TOKEN(0, T_VAL_C32)	//stores 32bit characters (up to 2)
-	TOKEN(0, T_VAL_I32)	//int
-	TOKEN(0, T_VAL_U32)	//unsigned
-	TOKEN(0, T_VAL_I64)	//long long
-	TOKEN(0, T_VAL_U64)	//unsigned long long
-	TOKEN(0, T_VAL_F32)	//float
-	TOKEN(0, T_VAL_F64)	//double
-	TOKEN(0, T_ID)
-	TOKEN(0, T_VAL_STR)
-	TOKEN(0, T_VAL_WSTR)//string of 32-bit unicode codepoints
+	TOKEN(0, T_VAL_C8)		TOKEN(0, T_VAL_UC8)	//[unsigned] char, stores 8bit characters (up to 8) (MSVC: 4)
+	TOKEN(0, T_VAL_CW)		TOKEN(0, T_VAL_UCW)	//[unsigned] wchar_t			//TODO: stores 32bit characters (up to 2)
+	
+	TOKEN(0, T_VAL_I16)		TOKEN(0, T_VAL_U16)	//[unsigned] short
+	TOKEN(0, T_VAL_I32)		TOKEN(0, T_VAL_U32)	//[unsigned] int
+	TOKEN(0, T_VAL_I64)		TOKEN(0, T_VAL_U64)	//[unsigned] long long
+	TOKEN(0, T_VAL_I128)	TOKEN(0, T_VAL_U128)//error type
+
+	TOKEN(0, T_VAL_F32)		//float
+	TOKEN(0, T_VAL_F64)		//double
+
+	TOKEN(0, T_VAL_STR)		//char string literal
+	TOKEN(0, T_VAL_WSTR)	//wide (L"") string literal			//TODO: string of 32-bit unicode codepoints
+
 	TOKEN(0, T_INCLUDENAME_STD)
 
 	//type keywords
@@ -139,7 +144,7 @@
 
 	//predefined macros
 	TOKEN("__FILE__", T_MACRO_FILE) TOKEN("__LINE__", T_MACRO_LINE)
-	TOKEN("__DATE__", T_MACRO_DATE) TOKEN("__TIME__", T_MACRO_TIME) TOKEN("__TIMESTAMP__", T_TIMESTAMP)
+	TOKEN("__DATE__", T_MACRO_DATE) TOKEN("__TIME__", T_MACRO_TIME) TOKEN("__TIMESTAMP__", T_MACRO_TIMESTAMP)
 #ifdef ACC_CPP
 	TOKEN("__func__", T_FUNC)
 #endif

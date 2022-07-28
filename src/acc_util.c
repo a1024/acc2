@@ -236,6 +236,16 @@ int				maximum(int a, int b)
 {
 	return a>b?a:b;
 }
+int				acme_isdigit(char c, char base)
+{
+	switch(base)
+	{
+	case 2:		return BETWEEN('0', c, '1');
+	case 8:		return BETWEEN('0', c, '7');
+	case 10:	return BETWEEN('0', c, '9');
+	case 16:	return BETWEEN('0', c, '9')||BETWEEN('A', c&0xDF, 'F');
+	}
+}
 
 double			time_ms()
 {
@@ -428,7 +438,7 @@ void			array_fit(ArrayHandle *arr, size_t pad)//can be nullptr
 	*arr=p2;
 }
 
-void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t count, size_t rep, size_t pad)
+void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t count, size_t rep, size_t pad)//cannot be nullptr
 {
 	size_t start, srcsize, dstsize, movesize;
 	

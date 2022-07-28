@@ -5,12 +5,14 @@
 #include	<string.h>
 #include	<ctype.h>
 #include	<math.h>
+#include	<time.h>
 static const char file[]=__FILE__;
 
 //	#define	PRINT_LEX
 
-const char *str_va_args=0, *str_pragma_once=0;
-const char *currentfilename=0, *currentfile=0;
+const char	*str_va_args=0, *str_pragma_once=0;
+const char	*currentfilename=0, *currentfile=0;
+char		*currentdate=0, *currenttime=0, *currenttimestamp=0;
 void		lex_error(const char *text, int len, int pos, const char *format, ...);
 
 //string library
@@ -34,7 +36,7 @@ static CmpRes strlib_cmp(const void *key, const void *pair)
 {
 	String const *s1=(String const*)key;
 	const char *s2=*(const char**)pair;
-	int k;
+	size_t k;
 	char c1;
 
 	for(k=0;k<s1->len&&*s2&&s1->str[k]==*s2;++k, ++s2);
@@ -53,7 +55,7 @@ void		strlib_destructor(void *data)
 }
 char*		strlib_insert(const char *str, int len)
 {
-	String s2={str, len?len:strlen(str)};
+	String s2={str, len?len:strlen(str)};//str is not always null-terminated, but is sometimes of length 'len' instead
 	char *key;
 	int found;
 	BSTNodeHandle *node;
@@ -61,19 +63,13 @@ char*		strlib_insert(const char *str, int len)
 	if(!strlib.cmp_key)
 		map_init(&strlib, sizeof(char*), 0, strlib_cmp, strlib_destructor);
 
-	node=MAP_INSERT(&strlib, &s2, 0, &found);		//search first then allocate		str is not always null-terminated, but is sometimes of length 'len' instead
+	node=MAP_INSERT(&strlib, &s2, 0, &found);		//search first then allocate
 	if(!found)
 	{
 		key=(char*)malloc(s2.len+1);
 		memcpy(key, str, s2.len);
 		key[s2.len]=0;
-
-		//if(!strcmp(key, "node"))//MARKER
-		//	key=key;
-
 		*(char**)node[0]->data=key;
-
-		//strlib_debugprint();//MARKER
 	}
 	return *(char**)node[0]->data;
 }
@@ -83,10 +79,18 @@ char*		strlib_insert(const char *str, int len)
 
 typedef enum NumberTypeEnum
 {
+	NUM_I8,//postfix 'i8' && can fit in 2's complement 8 bits
+	NUM_U8,//postfix 'ui8'
+	NUM_I16,//postfix 'i16' && can fit in 2's complement 16 bits
+	NUM_U16,//postfix 'ui16'
+
 	NUM_I32,//no postfix && can fit in 2's complement 32 bits
 	NUM_U32,//has postfix U
 	NUM_I64,//has postfix LL || from 2^31 to 2^63
 	NUM_U64,//has postfix ULL || from 2^31 to 2^64
+	NUM_I128,//has postfix LL || from 2^31 to 2^63
+	NUM_U128,//has postfix ULL || from 2^31 to 2^64
+
 	NUM_F32,//has point and postfix F
 	NUM_F64,//has point
 } NumberType;
@@ -231,6 +235,32 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 			Z=1;
 			++*idx;
 			continue;
+		case 'I':
+			{
+				++*idx;
+				unsigned size=(unsigned)acme_read_int_base10(text, len, idx, 0);
+				if(ret->type==NUM_F32||ret->type==NUM_F64)
+				{
+					lex_error(text, len, start, "Invalid number literal suffix");
+					success=0;
+				}
+				else
+				{
+					switch(size)
+					{
+					case 8:		ret->type=NUM_I8	|ret->type&1;	break;
+					case 16:	ret->type=NUM_I16	|ret->type&1;	break;
+					case 32:	ret->type=NUM_I32	|ret->type&1;	break;
+					case 64:	ret->type=NUM_I64	|ret->type&1;	break;
+					case 128:	ret->type=NUM_I128	|ret->type&1;	break;
+					default:
+						lex_error(text, len, start, "Invalid number literal suffix");
+						success=0;
+						break;
+					}
+				}
+			}
+			break;
 		default:
 			if(isalnum(text[*idx])||text[*idx]=='_')
 			{
@@ -302,7 +332,8 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 int			acme_read_number(const char *text, int len, int *idx, Number *ret)
 {
 	unsigned long long tail;
-	int start, success, ndigits;
+	int success, start, base, ndigits, overflow;
+	double val;
 
 	success=1;
 	start=*idx;
@@ -313,31 +344,46 @@ int			acme_read_number(const char *text, int len, int *idx, Number *ret)
 		{
 		case 'B':
 			*idx+=2;
-			ret->base=BASE2;
+			ret->base=BASE2, base=2;
 			break;
 		case 'X':
 			*idx+=2;
-			ret->base=BASE16;
+			ret->base=BASE16, base=16;
+			break;
+		case '.':
+			ret->base=BASE10, base=10;
 			break;
 		default:
-			ret->base=BASE8;
+			ret->base=BASE8, base=8;
 			break;
 		}
 	}
 	else
-		ret->base=BASE10;
+		ret->base=BASE10, base=10;
 	
-	switch(ret->base)
+	switch(ret->base)//FIXME: needs precise integer overflow detection
 	{
 	case BASE2:case BASE8:case BASE16:
 		ret->u64=acme_read_int_basePOT(text, len, idx, ret->base, &ndigits);
+		val=(double)ret->u64;
+		if(overflow=acme_isdigit(text[*idx], base))
+		{
+			do
+			{
+				long long v2=acme_read_int_basePOT(text, len, idx, ret->base, &ndigits);
+				val=val*pow(base, ndigits)+v2;
+			}
+			while(acme_isdigit(text[*idx], base));
+		}
 		if(text[*idx]=='.')
 		{
 			++*idx;
 			ret->type=NUM_F64;
 			tail=acme_read_int_basePOT(text, len, idx, ret->base, &ndigits);
-			ret->f64=(double)ret->u64+tail*_10pow(-ndigits);
+			ret->f64=val+tail*pow(base, -ndigits);
 		}
+		else if(overflow)
+			lex_error(text, len, start, "Integer overflow");
 		if((text[*idx]&0xDF)=='P')
 		{
 			++*idx;
@@ -356,13 +402,25 @@ int			acme_read_number(const char *text, int len, int *idx, Number *ret)
 		break;
 	case BASE10:
 		ret->u64=acme_read_int_base10(text, len, idx, &ndigits);
+		val=(double)ret->u64;
+		if(overflow=acme_isdigit(text[*idx], base))
+		{
+			do
+			{
+				long long v2=acme_read_int_base10(text, len, idx, &ndigits);
+				val=val*pow(base, ndigits)+v2;
+			}
+			while(acme_isdigit(text[*idx], base));
+		}
 		if(text[*idx]=='.')
 		{
 			++*idx;
 			ret->type=NUM_F64;
 			tail=acme_read_int_base10(text, len, idx, &ndigits);
-			ret->f64=ret->u64+tail*_10pow(-ndigits);
+			ret->f64=val+tail*_10pow(-ndigits);
 		}
+		else if(overflow)
+			lex_error(text, len, start, "Integer overflow");
 		if((text[*idx]&0xDF)=='E')
 		{
 			++*idx;
@@ -519,7 +577,14 @@ char*				esc2str(const char *s, int size, int *ret_len)
 			case '\n'://escaped newline
 				break;
 			default:
-				ret[kd]='?';
+				++ret_size;
+				ret=(char*)realloc(ret, ret_size);
+
+				ret[kd]='\\', ++kd;
+				ret[kd]=s[ks];
+
+				//ret[kd]='?';
+
 				printf("Unsupported escape sequence at %d: \\%c\n", ks, s[ks]);
 				break;
 			}
@@ -706,7 +771,7 @@ void				lex_token2buf(Token *token)
 			free(proc);
 		}
 		break;
-	case T_VAL_C32:
+	case T_VAL_CW:
 		{
 			int codepoints[2]={0};
 			char utf8[9]={0};
@@ -1091,7 +1156,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				p[k2-2]=p[k2];
 			p[k2-2]=' ', p[k2-1]='\r';//'\r' doesn't break #defines but adjusts line increment
 		}
-		data<<=8, data|=(unsigned char)p[k+2];
+		data>>=8, data|=(unsigned char)p[k+2]<<8;
 	}
 
 	dlist_init(&tokens, sizeof(Token), 128, 0);
@@ -1142,30 +1207,19 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 					Token *token=dlist_push_back(&tokens, 0);
 					switch(val.type)
 					{
-					case NUM_I32:
-						token->type=T_VAL_I32;
-						token->i=val.i64;
-						break;
-					case NUM_U32:
-						token->type=T_VAL_U32;
-						token->i=val.u64;
-						break;
-					case NUM_I64:
-						token->type=T_VAL_I64;
-						token->i=val.i64;
-						break;
-					case NUM_U64:
-						token->type=T_VAL_U64;
-						token->i=val.u64;
-						break;
-					case NUM_F32:
-						token->type=T_VAL_F32;
-						token->f32=val.f32;
-						break;
-					case NUM_F64:
-						token->type=T_VAL_F64;
-						token->f64=val.f64;
-						break;
+					case NUM_I8:	token->type=T_VAL_C8,	token->i=val.i64;break;
+					case NUM_U8:	token->type=T_VAL_UC8,	token->i=val.i64;break;
+					case NUM_I16:	token->type=T_VAL_I16,	token->i=val.i64;break;
+					case NUM_U16:	token->type=T_VAL_U32,	token->i=val.i64;break;
+					case NUM_I32:	token->type=T_VAL_I32,	token->i=val.i64;break;
+					case NUM_U32:	token->type=T_VAL_U32,	token->i=val.u64;break;
+					case NUM_I64:	token->type=T_VAL_I64,	token->i=val.i64;break;
+					case NUM_U64:	token->type=T_VAL_U64,	token->i=val.u64;break;
+					case NUM_F32:	token->type=T_VAL_F32,	token->f32=val.f32;break;
+					case NUM_F64:	token->type=T_VAL_F64,	token->f64=val.f64;break;
+
+					case NUM_I128:	token->type=T_VAL_I128,	token->u=val.u64;break;
+					case NUM_U128:	token->type=T_VAL_U128,	token->u=val.u64;break;
 					}
 					token->pos=start;
 					token->len=k-start;
@@ -1206,11 +1260,12 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 			}
 			break;
 		case T_BLOCKCOMMENTMARK:
+			k+=2;
 			for(unsigned short data=DUPLET(p[k], p[k+1]);;)
 			{
 				if(k>=len)
 				{
-					lex_error(p, len, k, "Expected \'/*\'");
+					lex_error(p, len, k, "Expected \'*/\'");
 					break;
 				}
 				if(data==DUPLET('*', '/'))
@@ -1221,11 +1276,11 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				if((data&0xFF)=='\n')
 				{
 					++k;
-					lineno+=lineinc, lineinc=0, linestart=k;
+					lineno+=lineinc, lineinc=1, linestart=k;
 				}
 				else
 					++k;
-				data<<=8, data|=(unsigned char)p[k+1];
+				data>>=8, data|=(unsigned char)p[k+1]<<8;
 			}
 			//{
 			//	int k2=k+2;
@@ -1266,7 +1321,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				switch(opt->token)
 				{
 				case T_QUOTE:		toktype=T_VAL_C8,	strtype=CHAR_LITERAL;	break;
-				case T_QUOTE_WIDE:	toktype=T_VAL_C32,	strtype=CHAR_LITERAL;	break;
+				case T_QUOTE_WIDE:	toktype=T_VAL_CW,	strtype=CHAR_LITERAL;	break;
 				case T_DOUBLEQUOTE:	toktype=T_VAL_STR,	strtype=STR_LITERAL;	break;
 				case T_DQUOTE_WIDE:	toktype=T_VAL_WSTR,	strtype=STR_LITERAL;	break;
 				}
@@ -1288,7 +1343,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 			{
 				lex_chevron_state=IC_NORMAL;
 				lex_push_tok(&tokens, opt, p, k, linestart, lineno);
-				int start=k+strlen(keywords[T_ERROR]);
+				int start=k+opt->len;
 				for(;start<len&&(p[start]==' '||p[start]=='\t'||p[start]=='\r');lineinc+=p[start]=='\r', ++start);
 				int end=start+1;
 				for(;end<len&&p[end]&&p[end]!='\n';lineinc+=p[end]=='\r', ++end);//BUG: esc nl flags remain in error msg
@@ -1296,33 +1351,35 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				k=end;
 			}
 			else
-				lex_push_string(&tokens, T_VAL_STR, STR_LITERAL, p, len, k, strlen(keywords[T_ERROR]), linestart, lineno);
-			k+=opt->len;
+			{
+				lex_push_string(&tokens, T_VAL_STR, STR_LITERAL, p, len, k, opt->len, linestart, lineno);
+				k+=opt->len;
+			}
 			break;
-			case T_LESS:
-				if(lex_chevron_state==IC_INCLUDE)
-				{
-					int k2=k+1;
-					for(;k2<len&&p[k2]&&p[k2]!='>'&&p[k2]!='\n';lineinc+=p[k2]=='\r', ++k2);
-					if(p[k]=='<'&&p[k2]=='>')
-						lex_push_string(&tokens, T_INCLUDENAME_STD, STR_LITERAL, p, len, k+1, k2-(k+1), linestart, lineno);
-					else
-					{
-						//error: unmatched chevron
-						lex_error(p, len, k, "Unmatched include chevron: [%d]: %s, [%d] %s\n", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
-						//printf("Lexer: line %d: unmatched include chevron: [%d]: %s, [%d] %s\n", lineno+1, k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
-					}
-					k=k2+1;
-				}
+		case T_LESS:
+			if(lex_chevron_state==IC_INCLUDE)
+			{
+				int k2=k+1;
+				for(;k2<len&&p[k2]&&p[k2]!='>'&&p[k2]!='\n';lineinc+=p[k2]=='\r', ++k2);
+				if(p[k]=='<'&&p[k2]=='>')
+					lex_push_string(&tokens, T_INCLUDENAME_STD, STR_LITERAL, p, len, k+1, k2-(k+1), linestart, lineno);
 				else
 				{
-					//if(lex_chevron_state==IC_HASH)
-					//	lex_error(p, len, k, "Hash followed by a chevron");
-					lex_push_tok(&tokens, opt, p, k, linestart, lineno);
-					k+=opt->len;
+					//error: unmatched chevron
+					lex_error(p, len, k, "Unmatched include chevron: [%d]: %s, [%d] %s\n", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
+					//printf("Lexer: line %d: unmatched include chevron: [%d]: %s, [%d] %s\n", lineno+1, k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
 				}
-				lex_chevron_state=IC_NORMAL;
-				break;
+				k=k2+1;
+			}
+			else
+			{
+				//if(lex_chevron_state==IC_HASH)
+				//	lex_error(p, len, k, "Hash followed by a chevron");
+				lex_push_tok(&tokens, opt, p, k, linestart, lineno);
+				k+=opt->len;
+			}
+			lex_chevron_state=IC_NORMAL;
+			break;
 		case T_INCLUDE:
 			if(lex_chevron_state==IC_HASH)
 			{
@@ -1330,7 +1387,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				lex_push_tok(&tokens, opt, p, k, linestart, lineno);
 			}
 			else
-				lex_push_string(&tokens, T_ID, STR_LITERAL, p, len, k, strlen(keywords[T_INCLUDE]), linestart, lineno);
+				lex_push_string(&tokens, T_ID, STR_LITERAL, p, len, k, opt->len, linestart, lineno);
 			k+=opt->len;
 			break;
 		default:
@@ -1343,7 +1400,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 
 	lf->tokens=dlist_toarray(&tokens);
 	dlist_clear(&tokens);
-	BM_FINISH("Lex %s:\t%lfms\n", currentfilename, bm_t1);
+	BM_FINISH("Lex \'%s\':\t%lfms\n", currentfilename, bm_t1);
 
 	BM_START();
 	map_rebalance(&strlib);
@@ -1426,7 +1483,8 @@ static void token_stringize(Token const *tokens, int ntokens, int first, int cou
 					}
 					continue;
 				}
-				*(char*)array_at(&text, kd)=currentfile[ks];
+				text->data[kd]=currentfile[ks];
+				//*(char*)array_at(&text, kd)=currentfile[ks];
 				++ks, ++kd;
 			}
 			text->count=kd;
@@ -1446,7 +1504,7 @@ static void token_append2str(Token const *t, ArrayHandle *text)
 	else
 	{
 		int isstr=t->type==T_VAL_STR||t->type==T_VAL_WSTR,
-			ischar=t->type==T_VAL_C8||t->type==T_VAL_C32;
+			ischar=t->type==T_VAL_C8||t->type==T_VAL_UC8||t->type==T_VAL_CW||t->type==T_VAL_UCW;
 		if(isstr)
 			STR_APPEND(*text, "\"", 1, 1);
 		if(ischar)
@@ -1476,6 +1534,7 @@ static void token_paste(Token const *t1, Token const *t2, ArrayHandle *dst)//con
 	else
 	{
 		ArrayHandle text=0;
+		STR_ALLOC(text, 0);
 		token_append2str(t1, &text);
 		token_append2str(t2, &text);
 		Token *token=array_insert(dst, dst[0]->count, 0, 1, 1, 0);
@@ -1498,6 +1557,11 @@ static void macro_destructor(void *data)
 {
 	Macro *macro=(Macro*)data;
 	array_free(&macro->tokens);
+}
+static void macros_debugprint(BSTNodeHandle *node, int depth)
+{
+	Macro const *macro=(Macro const*)node[0]->data;
+	printf("%4d %*s%p %s\n", depth, depth, "", macro->name, macro->name);
 }
 
 typedef enum MacroArgCountEnum
@@ -1543,24 +1607,6 @@ static int macro_arg_search_threeway(const void *left, const void *right)
 	const char **a2=(const char**)right;
 	return (a1->name>*a2)-(a1->name<*a2);
 }
-/*static int macro_arg_lookup(ArrayHandle argnames, const char *name)//returns -1 if not found
-{
-	int nargs=argnames->count;
-	int L=0, R=nargs-1, mid;
-	MacroArg *arg;
-	while(L<=R)
-	{
-		mid=(L+R)>>1;
-		arg=(MacroArg*)array_at(&argnames, mid);
-		if(arg->name<name)
-			L=mid+1;
-		else if(arg->name>name)
-			R=mid-1;
-		else
-			return mid;
-	}
-	return -1;
-}//*/
 int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int count)
 {
 	int ret, kt, duplicate;
@@ -1646,7 +1692,9 @@ int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int c
 					ret=0;
 					goto exit;
 				}
-				++kt;
+				++dst->nargs;
+
+				++kt;//skip ID
 				token=tokens+kt;
 				if(token->type==T_RPR)
 				{
@@ -1732,97 +1780,444 @@ exit:
 	return ret;
 }
 
-static ArrayConstHandle eval_tokens=0;
-static Token const *eval_token=0;
-static int eval_idx=0, eval_end=0;
-static MapHandle eval_macros=0;
-static CTokenType eval_type=T_IGNORED;
+
+//macro expansion
 #define	TOKENS_AT(TOKENS, IDX)			((Token*)array_at(&(TOKENS), IDX))
 #define	TOKENS_AT_CONST(TOKENS, IDX)	((Token const*)array_at_const(&(TOKENS), IDX))
-#define EVAL_DEREF()					TOKENS_AT_CONST(eval_tokens, eval_idx)
-static int eval_next()
+static void macro_arg_destructor(void *data)
 {
-	int inc=eval_idx+1<eval_end;
+	ArrayHandle *tokens=(ArrayHandle*)data;
+	array_free(tokens);
+}
+static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, int *ret_len, ArrayHandle *args)
+{
+	Token *token;
+
+	if(!*args)
+		ARRAY_ALLOC(ArrayHandle, *args, 0, 0, macro_arg_destructor);
+	else//clear args
+		array_clear(args);
+	
+	if(macro->nargs==MACRO_NO_ARGLIST)
+	{
+		*ret_len=1;
+		return 1;
+	}
+	int ntokens=(int)tokens->count;
+	if(start+1>=ntokens)
+	{
+		token=start<ntokens?TOKENS_AT(tokens, start):0;
+		pp_error(token, "Macro should have an argument list with %d arguments.", macro->nargs);
+		*ret_len=1;
+		return 0;
+	}
+	token=TOKENS_AT(tokens, start+1);
+	if(token->type!=T_LPR)
+	{
+		pp_error(token, "Macro should have an argument list with %d arguments.", macro->nargs);
+		*ret_len=1;
+		return 0;
+	}
+	int k0=start+2, end=k0, nargs=0, level=1;
+	for(;end<ntokens&&level>0;++end)
+	{
+		token=TOKENS_AT(tokens, end);
+		level+=(token->type==T_LPR)-(token->type==T_RPR);
+		if(level==1&&token->type==T_COMMA||!level&&token->type==T_RPR)//end of an argument expression
+		{
+			int va_append=macro->is_va&&nargs+1>macro->nargs;//in case of variadic macros, append extra args with commas as the last arg
+			int count=end-k0;
+			token=TOKENS_AT(tokens, k0);
+			if(va_append)
+			{
+				ArrayHandle *h=array_back(args);
+				count+=token->type==T_COMMA;//DEBUG
+				ARRAY_APPEND(*h, token, count, 1, 0);
+			}
+			else
+			{
+				ArrayHandle *h=ARRAY_APPEND(*args, 0, 1, 1, 0);
+				ARRAY_ALLOC(Token, *h, count, 0, 0);
+				memcpy(h[0]->data, token, count*sizeof(Token));
+			}
+			k0=end+1;
+			nargs+=!va_append;
+		}
+	}
+	*ret_len=end-start;
+	if(level)
+	{
+		pp_error(token, "%d unmatched parentheses.", level);
+		return 0;
+	}
+	if(macro->is_va)
+	{
+		if(nargs<macro->nargs)
+		{
+			token=TOKENS_AT(tokens, start);
+			pp_error(token, "Variadic macro: expected at least %d arguments, got %d instead.", macro->nargs, nargs);
+			return 0;
+		}
+	}
+	else
+	{
+		if(nargs!=macro->nargs)
+		{
+			token=TOKENS_AT(tokens, start);
+			pp_error(token, "Macro: expected %d arguments, got %d instead.", macro->nargs, nargs);
+			return 0;
+		}
+	}
+	return 1;
+}
+//macrodefinition: array of tokens
+//kt: index of stringize token '##'
+//args2: array of arrays of tokens
+//out: result token
+static int	macro_stringize(ArrayHandle macrodefinition, int kt, ArrayHandle args2, Token *out)
+{
+	Token *token=TOKENS_AT(macrodefinition, kt), *next;
+	if(kt+1>(int)macrodefinition->count)
+	{
+		pp_error(token, "Stringize operator can only be applied to a macro argument.");//error in definition	DUPLICATE
+		return 0;
+	}
+	next=TOKENS_AT(macrodefinition, kt+1);
+	if(next->type!=T_MACRO_ARG)
+	{
+		pp_error(token, "Stringize operator can only be applied to a macro argument.");//error in definition
+		return 0;
+	}
+	ArrayHandle *arg=(ArrayHandle*)array_at(&args2, (size_t)next->i);
+	token=(Token*)arg[0]->data;
+	token_stringize(token, arg[0]->count, 0, arg[0]->count, out);//TODO: inline call
+	return 1;
+}
+//t_left: ?
+//macrodefinition: array of tokens
+//kt: ?
+//args2: array of arrays of tokens
+//dst: result array of tokens
+static void	macro_paste(Token const *t_left, ArrayHandle macrodefinition, int *kt, ArrayHandle args2, ArrayHandle *dst)
+{
+	Token *second=TOKENS_AT(macrodefinition, *kt+1);
+	if(second->type==T_MACRO_ARG)
+	{
+		ArrayHandle *callarg=(ArrayHandle*)array_at(&args2, (size_t)second->i);//callarg is array of tokens
+		if(callarg[0]->count)
+		{
+			token_paste(t_left, (Token*)callarg[0]->data, dst);
+			if(callarg[0]->count>1)
+			{
+				int count=callarg[0]->count-1;
+				ARRAY_APPEND(*dst, 0, count, 1, 0);
+				Token *tsrc=TOKENS_AT(*callarg, 1), *tdst=TOKENS_AT(*dst, dst[0]->count-1);
+				memcpy(tdst, tsrc, count*sizeof(Token));
+			}
+		}
+		else
+			token_paste(t_left, 0, dst);
+	}
+	else if(second->type==T_HASH)
+	{
+		Token str={0};
+		++*kt;
+		macro_stringize(macrodefinition, *kt, args2, &str);
+		token_paste(t_left, &str, dst);
+	}
+	else
+		token_paste(t_left, second, dst);
+}
+
+typedef struct MacroCallStruct
+{
+	Macro *macro;
+	ArrayHandle args;//array of arrays of tokens
+	int kt,//macro definition index
+		kt2,//macro call argument index, use on args when macrodefinition[kt] is an arg
+		expansion_start,//dst index
+		done;
+} MacroCall;
+static void macrocall_destructor(void *data)
+{
+	MacroCall *call=(MacroCall*)data;
+	array_free(&call->args);//macro_arg_destructor
+}
+static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks, ArrayHandle *dst)//returns ntokens in call
+{
+	int len;//initial macro call length
+	DList context;//a stack of macro calls
+	MacroCall *topcall;
+
+	dlist_init(&context, sizeof(MacroCall), 4, macrocall_destructor);
+	topcall=(MacroCall*)dlist_push_back(&context, 0);
+	topcall->macro=macro;
+	if(!macro_find_call_extent(macro, src, *ks, &len, &topcall->args))
+	{
+		*ks+=len;
+		//error_pp(TOKENS_AT(src, *ks), "Invalid macro call.");//redundant error message
+		dlist_clear(&context);
+		return len;
+	}
+	
+	ARRAY_APPEND(*dst, 0, 0, 1, len);
+
+	while(context.nobj)
+	{
+	macro_expand_again:
+		topcall=(MacroCall*)dlist_back(&context);
+		if(topcall->done)
+		{
+			dlist_pop_back(&context);
+			continue;
+		}
+		Macro *m2=topcall->macro;
+		ArrayHandle definition=m2->tokens;
+		if(!definition)
+		{
+			dlist_pop_back(&context);
+			continue;
+		}
+		while(topcall->kt<(int)definition->count)
+		{
+			Token *token=TOKENS_AT(definition, topcall->kt);
+			if(token->type==T_HASH)//stringize call-argument
+			{
+				Token *out=array_insert(dst, dst[0]->count, 0, 1, 1, 0);
+				macro_stringize(definition, topcall->kt, topcall->args, out);//X  check if next is concatenate
+				topcall->kt+=2;
+			}
+			else if(topcall->kt+1<(int)definition->count&&TOKENS_AT(definition, topcall->kt+1)->type==T_CONCATENATE)//anything can be concatenated
+			{
+				++topcall->kt;
+				if(topcall->kt+1>=(int)definition->count)
+				{
+					Token *next=TOKENS_AT(definition, topcall->kt);
+					pp_error(next, "Token paste operator cannot be at the end of macro.");//error in definition
+					break;
+				}
+				Token const *t_left=0;
+				if(token->type==T_MACRO_ARG)
+				{
+					ArrayHandle *callarg2=(ArrayHandle*)array_at(&topcall->args, (size_t)token->i);
+					if(callarg2[0]->count>1)
+					{
+						int count=callarg2[0]->count-1;
+						ARRAY_APPEND(*dst, callarg2[0]->data, count, 1, 0);
+						//ARRAY_APPEND(*dst, 0, count, 1, 0);
+						//memcpy(TOKENS_AT(*dst, dst[0]->count-count), callarg2[0]->data, count*sizeof(Token));
+					}
+					if(callarg2[0]->count>0)
+						t_left=(Token const*)array_back(callarg2);
+				}
+				else
+					t_left=token;
+				macro_paste(t_left, definition, &topcall->kt, topcall->args, dst);
+				topcall->kt+=2;
+			}
+			else if(token->type==T_CONCATENATE)
+			{
+				if(topcall->kt+1>=(int)definition->count)
+				{
+					pp_error(token, "Token paste operator cannot be at the end of macro.");//error in definition
+					break;
+				}
+				int kd2=dst[0]->count-1;
+				CTokenType temp;
+				for(;kd2>=topcall->expansion_start&&((temp=TOKENS_AT(*dst, kd2)->type)<=T_IGNORED||temp==T_NEWLINE);--kd2);
+				if(kd2>=topcall->expansion_start)
+				{
+					dst[0]->count=kd2;
+					macro_paste(TOKENS_AT(*dst, dst[0]->count), definition, &topcall->kt, topcall->args, dst);
+				}
+				else
+					macro_paste(0, definition, &topcall->kt, topcall->args, dst);//
+				++dst[0]->count;
+				topcall->kt+=2;
+			}
+			else if(token->type==T_MACRO_ARG)//normal macro call arg
+			{
+				ArrayHandle *arg=(ArrayHandle*)array_at(&topcall->args, (size_t)token->i);
+				for(;topcall->kt2<(int)arg[0]->count;)//copy tokens from arg, while checking the arg for macro calls
+				{
+					Token *token2=TOKENS_AT(*arg, topcall->kt2);
+					if(token2->type==T_ID)
+					{
+						BSTNodeHandle *result=MAP_FIND(macros, &token2->str);
+						if(result)
+						{
+							Macro *macro3=(Macro*)result[0]->data;
+							int len2=0;
+							ArrayHandle args=0;
+							if(macro_find_call_extent(macro3, *arg, topcall->kt2, &len2, &args))
+							{
+								if(macro3->tokens)
+									ARRAY_APPEND(*dst, 0, macro3->tokens->count, 1, 0);
+								topcall->kt2+=len2;//advance top.kt2 by call length because it will return here
+
+								topcall=dlist_push_back(&context, 0);//request to expand this argument
+								topcall->macro=macro3;
+								topcall->args=args;
+								topcall->kt2=0;
+								topcall->expansion_start=dst[0]->count;
+								
+								goto macro_expand_again;//should resume here after macro is expanded
+							}
+							//else
+							//	error_pp(TOKENS_AT(*dst, kd2-1), "Invalid macro call.");//redundant error message
+						}
+					}
+					ARRAY_APPEND(*dst, TOKENS_AT(*arg, topcall->kt2), 1, 1, 0);
+					//memcpy(TOKENS_AT(*dst, dst[0]->count), TOKENS_AT(*arg, topcall->kt2), sizeof(Token));
+					//++dst[0]->count;
+					++topcall->kt2;
+				}
+				topcall->kt2=0;//reset arg index when done
+				++topcall->kt;
+			}
+			else//copy token from macro definition
+			{
+				ARRAY_APPEND(*dst, token, 1, 1, 0);
+				//memcpy(TOKENS_AT(*dst, dst[0]->count), token, sizeof(Token));
+				//++dst[0]->count;
+				++topcall->kt;
+			}
+		}
+		dlist_pop_back(&context);
+	}
+	*ks+=len;
+	return len;
+}
+
+
+//preprocessor expr eval
+static MapHandle eval_macros=0;
+static ArrayHandle eval_tokens=0;
+static int
+	eval_idx=0,//points at next token
+	eval_end=0,
+	eval_syntharray=0;//set to true after macro expansion (means the tokens array was replaced, and needs to be freed at the end)
+static Token const *eval_token=0;//current token, check for nullptr before reading
+static CTokenType eval_type=T_IGNORED;
+#define EVAL_DEREF()	TOKENS_AT_CONST(eval_tokens, eval_idx)
+static void eval_next()//check if eval_token == nullptr
+{
+	int inc=eval_idx<eval_end;
 	if(inc)
 	{
-		++eval_idx;
 		eval_token=EVAL_DEREF();
-	//	eval_token=(Token const*)array_at_const(&eval_tokens, eval_idx);
+		++eval_idx;
 	}
 	else
 		eval_token=0;
-	return inc;
+	//return eval_idx<eval_end;//return value: true if there are tokens after the newly read token, not always needed
 }
 static long long eval_ternary();
 static long long eval_unary()
 {
 again:
+	if(!eval_token)
+	{
+		pp_error(eval_token, "Expected an expression.");
+		return 0;
+	}
 	switch(eval_token->type)
 	{
+	case T_ID://must be a macro
+		{
+			BSTNodeHandle *node;
+			ArrayHandle dst;
+
+			node=MAP_FIND(eval_macros, &eval_token->str);
+			if(!node)//undefined macros evaluate to zero
+				return 0;
+			ARRAY_ALLOC(Token, dst, 0, 0, 0);
+			macro_expand(eval_macros, (Macro*)node[0]->data, eval_tokens, &eval_idx, &dst);
+			if(eval_idx<eval_end)
+			{
+				eval_token=EVAL_DEREF();
+				ARRAY_APPEND(dst, eval_token, eval_end-eval_idx, 1, 0);
+			}
+			if(eval_syntharray)
+				array_free(&eval_tokens);
+			eval_tokens=dst;
+			eval_idx=0;
+			eval_end=dst->count;
+			eval_syntharray=1;
+			eval_next();
+			return eval_ternary();
+		}
+		break;
 	case T_VAL_I32:
 	case T_VAL_I64:
-		return eval_token->i;
+		{
+			long long result=eval_token->i;
+			eval_next();
+			return result;
+		}
+		break;
 	case T_VAL_U32:
 	case T_VAL_U64:
-		return eval_token->i;//TODO return type struct Number
-	case T_LPR:
-		if(!eval_next())
 		{
-			pp_error(eval_token, "Unexpected end of expression at opening parenthesis.");
-			break;
+			unsigned long long result=eval_token->u;//TODO return type: struct Number
+			eval_next();
+			return result;
 		}
+		break;
+	case T_LPR:
 		{
+			eval_next();//skip LPR
 			long long result=eval_ternary();
-			if(eval_token->type!=T_RPR)
+			if(!eval_token||eval_token->type!=T_RPR)
 				pp_error(eval_token, "Missing closing parenthesis.");
-			if(!eval_next())
-				pp_error(eval_token, "Unexpected end of expression.");
+			eval_next();//skip RPR
 			return result;
 		}
 		break;
 	case T_DEFINED:
-		if(!eval_next())
 		{
-			pp_error(0, "Expected an identifier.");
-			return 0;
-		}
-		if(eval_token->type!=T_ID)
-		{
-			pp_error(eval_token, "Expected an identifier.");
-			return 0;
-		}
-		{
-			BSTNodeHandle *h=MAP_FIND(eval_macros, eval_token->str);
-			return h!=0;
+			BSTNodeHandle *node;
+			int nparens=0;
+			eval_next();//skip DEFINED
+			while(eval_token&&eval_token->type==T_LPR)//skip and count opening parentheses
+			{
+				++nparens;
+				eval_next();
+			}
+			if(eval_token->type!=T_ID)
+			{
+				pp_error(eval_token, "Expected an identifier.");
+				return 0;
+			}
+			node=MAP_FIND(eval_macros, &eval_token->str);
+			eval_next();//skip ID
+			if(nparens>0)
+			{
+				while(nparens>0&&eval_token&&eval_token->type==T_RPR)//skip and count closing parentheses
+				{
+					--nparens;
+					eval_next();
+				}
+				if(nparens>0)
+				{
+					pp_error(eval_token, "Missing closing parenthesis \')\'.");
+					return 0;
+				}
+			}
+			return node!=0;
 		}
 		break;
 	case T_PLUS:
-		if(!eval_next())
-		{
-			pp_error(eval_token, "Unexpected end of expression at \'+\'.");
-			return 0;
-		}
+		eval_next();
 		goto again;
 	case T_MINUS:
-		if(!eval_next())
-		{
-			pp_error(eval_token, "Unexpected end of expression at \'-\'.");
-			return 0;
-		}
+		eval_next();
 		return -eval_unary();
 	case T_EXCLAMATION:
-		if(!eval_next())
-		{
-			pp_error(eval_token, "Unexpected end of expression at \'!\'.");
-			return 0;
-		}
+		eval_next();
 		return !eval_unary();
 	case T_TILDE:
-		if(!eval_next())
-		{
-			pp_error(eval_token, "Unexpected end of expression at \'~\'.");
-			return 0;
-		}
+		eval_next();
 		return ~eval_unary();
 		break;
 	default:
@@ -1837,11 +2232,7 @@ static long long eval_mul()
 	while(eval_token&&(eval_token->type==T_ASTERIX||eval_token->type==T_SLASH||eval_token->type==T_MODULO))
 	{
 		eval_type=eval_token->type;
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression.");
-			break;
-		}
+		eval_next();//skip operator
 		switch(eval_type)
 		{
 		case T_ASTERIX:
@@ -1879,11 +2270,7 @@ static long long eval_sum()
 	while(eval_token&&(eval_token->type==T_PLUS||eval_token->type==T_MINUS))
 	{
 		eval_type=eval_token->type;
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression.");
-			break;
-		}
+		eval_next();//skip operator
 		if(eval_type==T_PLUS)
 			result+=eval_mul();
 		else
@@ -1897,11 +2284,7 @@ static long long eval_shift()
 	while(eval_token&&(eval_token->type==T_SHIFT_LEFT||eval_token->type==T_SHIFT_RIGHT))
 	{
 		eval_type=eval_token->type;
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression.");
-			break;
-		}
+		eval_next();//skip operator
 		switch(eval_type)
 		{
 		case T_SHIFT_LEFT:
@@ -1922,11 +2305,7 @@ static long long eval_comp()
 	while(eval_token&&(eval_token->type==T_LESS||eval_token->type==T_LESS_EQUAL||eval_token->type==T_GREATER||eval_token->type==T_GREATER_EQUAL))
 	{
 		eval_type=eval_token->type;
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression.");
-			break;
-		}
+		eval_next();//skip operator
 		switch(eval_type)
 		{
 		case T_LESS:
@@ -1953,11 +2332,7 @@ static long long eval_eq()
 	while(eval_token&&(eval_token->type==T_EQUAL||eval_token->type==T_NOT_EQUAL))
 	{
 		eval_type=eval_token->type;
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression.");
-			break;
-		}
+		eval_next();//skip operator
 		if(eval_type==T_EQUAL)
 			result=result==eval_comp();
 		else
@@ -1970,11 +2345,7 @@ static long long eval_and()
 	long long result=eval_eq();
 	while(eval_token&&eval_token->type==T_AMPERSAND)
 	{
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression at ^.");
-			break;
-		}
+		eval_next();//skip operator
 		result&=eval_eq();
 	}
 	return result;
@@ -1984,11 +2355,7 @@ static long long eval_xor()
 	long long result=eval_and();
 	while(eval_token&&eval_token->type==T_CARET)
 	{
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression at ^.");
-			break;
-		}
+		eval_next();//skip operator
 		result^=eval_and();
 	}
 	return result;
@@ -1998,11 +2365,7 @@ static long long eval_or()
 	long long result=eval_xor();
 	while(eval_token&&eval_token->type==T_VBAR)
 	{
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression at |.");
-			break;
-		}
+		eval_next();//skip operator
 		result|=eval_xor();
 	}
 	return result;
@@ -2012,12 +2375,9 @@ static long long eval_logic_and()
 	long long result=eval_or();
 	while(eval_token&&eval_token->type==T_LOGIC_AND)
 	{
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression at &&.");
-			break;
-		}
-		result=result&&eval_or();
+		eval_next();//skip operator
+		long long r2=eval_or();
+		result=result&&r2;//be ware of short-circuit
 	}
 	return result;
 }
@@ -2026,52 +2386,36 @@ static long long eval_logic_or()
 	long long result=eval_logic_and();
 	while(eval_token&&eval_token->type==T_LOGIC_OR)
 	{
-		if(!eval_next())
-		{
-			pp_error(0, "Unexpected end of expression at ||.");
-			break;
-		}
-		result=result||eval_logic_and();
+		eval_next();//skip operator
+		long long r2=eval_logic_and();
+		result=result||r2;//be ware of short-circuit
 	}
 	return result;
 }
 static long long eval_ternary()
 {
-	long long result;
-	Token const *token;
-	int level;
-	
-again:
-	result=eval_logic_or();
+	long long result=eval_logic_or();
 	if(eval_token&&eval_token->type==T_QUESTION)
 	{
-		token=eval_token;
-		if(!eval_next())
+		eval_next();//skip QUESTION
+		if(result)
 		{
-			pp_error(token, "Unexpected end of expression at ?.");
-			return result;
+			result=eval_ternary();//true branch
+			if(!eval_token||eval_token->type!=T_COLON)
+				pp_error(eval_token, "Expected a colon \':\'.");
+			eval_ternary();//skip false branch
 		}
-		if(!result)//skip till after matching colon
+		else
 		{
-			++eval_idx;
-			level=1;
-			for(;eval_idx<eval_end;++eval_idx)
-			{
-				token=EVAL_DEREF();
-				level+=(token->type==T_QUESTION)-(token->type==T_COLON);
-				if(!level)
-				{
-					++eval_idx;
-					break;
-				}
-			}
+			eval_ternary();//skip true branch
+			if(!eval_token||eval_token->type!=T_COLON)
+				pp_error(eval_token, "Expected a colon \':\'.");
+			result=eval_ternary();//false branch
 		}
-		goto again;
-		//result=eval_ternary();
 	}
 	return result;
 }
-static long long eval_expr(ArrayConstHandle tokens, int start, int end, MapHandle macros)
+static long long eval_expr(ArrayHandle tokens, int start, int end, MapHandle macros)
 {
 	if(start>=end)
 	{
@@ -2081,12 +2425,16 @@ static long long eval_expr(ArrayConstHandle tokens, int start, int end, MapHandl
 		pp_error(token, "Expected an expression.");
 		return 0;
 	}
-	eval_tokens=tokens;
-	eval_idx=start-1;
-	eval_end=end;
 	eval_macros=macros;
+	eval_tokens=tokens;
+	eval_idx=start;
+	eval_end=end;
+	eval_syntharray=0;
 	eval_next();
-	return eval_ternary();
+	long long result=eval_ternary();
+	if(eval_syntharray)
+		array_free(&eval_tokens);
+	return result;
 }
 
 
@@ -2133,8 +2481,8 @@ static char*	find_include(const char *includename, int custom, ArrayHandle inclu
 	}
 	for(int ki=0;ki<(int)includepaths->count;++ki)
 	{
-		const char *path=*(const char**)array_at(&includepaths, ki);
-		filename=test_include(path, strlen(path), includename, inclen);
+		ArrayHandle const *path=(ArrayHandle const*)array_at(&includepaths, ki);
+		filename=test_include(path[0]->data, path[0]->count, includename, inclen);
 		if(filename)
 			return filename;
 	}
@@ -2151,7 +2499,7 @@ static int skip_till_newline(ArrayConstHandle tokens, int k)
 	for(;k<(int)tokens->count&&((Token const*)array_at_const(&tokens, k))->type!=T_NEWLINE;++k);
 	return k;
 }
-static int skip_block(MapHandle macros, ArrayConstHandle tokens, int *k, int lastblock)
+static int skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblock)
 {
 	int k0, ntokens, level;
 	Token const *token;
@@ -2169,7 +2517,7 @@ static int skip_block(MapHandle macros, ArrayConstHandle tokens, int *k, int las
 			++*k;//k points at next token
 			switch(token->type)
 			{
-			case T_IF:case T_IFDEF:
+			case T_IF:case T_IFDEF:case T_IFNDEF:
 				++level;
 				break;
 			case T_ELIF:
@@ -2226,289 +2574,6 @@ static int skip_block(MapHandle macros, ArrayConstHandle tokens, int *k, int las
 }
 
 
-//macro expansion
-static void macro_arg_destructor(void *data)
-{
-	ArrayHandle *tokens=(ArrayHandle*)data;
-	array_free(tokens);
-}
-static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, int *ret_len, ArrayHandle *args)
-{
-	if(!*args)
-		ARRAY_ALLOC(ArrayHandle, *args, 0, 0, macro_arg_destructor);
-	else//clear args
-		array_clear(args);
-	
-	if(macro->nargs==MACRO_NO_ARGLIST)
-	{
-		*ret_len=1;
-		return 1;
-	}
-	Token *token=TOKENS_AT(tokens, start+1);
-	if(token->type!=T_LPR)
-	{
-		pp_error(token, "Macro should have an argument list with %d arguments.", macro->nargs);
-		*ret_len=1;
-		return 0;
-	}
-	int k0=start+2, end=k0, nargs=0, ntokens=(int)tokens->count;
-	for(int level=1;end<ntokens&&level>0;++end)
-	{
-		token=TOKENS_AT(tokens, end);
-		level+=(token->type==T_LPR)-(token->type==T_RPR);
-		if(level==1&&token->type==T_COMMA||!level&&token->type==T_RPR)//end of an argument expression
-		{
-			int va_append=macro->is_va&&nargs+1>macro->nargs;//in case of variadic macros, append extra args with commas as the last arg
-			int count=end-k0;
-			token=TOKENS_AT(tokens, k0);
-			if(va_append)
-			{
-				ArrayHandle *h=array_back(args);
-				count+=token->type==T_COMMA;//DEBUG
-				ARRAY_APPEND(*h, token, count, 1, 0);
-			}
-			else
-			{
-				ArrayHandle *h=ARRAY_APPEND(*args, 0, 1, 1, 0);
-				ARRAY_ALLOC(Token, *h, count, 0, 0);
-				memcpy(h[0]->data, token, count*sizeof(Token));
-			}
-			k0=end+1;
-			nargs+=!va_append;
-		}
-	}
-	*ret_len=end-start;
-	if(token->type!=T_RPR)
-	{
-		pp_error(token, "Unmatched parenthesis.");
-		return 0;
-	}
-	if(macro->is_va)
-	{
-		if(nargs<macro->nargs)
-		{
-			token=TOKENS_AT(tokens, start);
-			pp_error(token, "Variadic macro: expected at least %d arguments, got %d instead.", macro->nargs, nargs);
-			return 0;
-		}
-	}
-	else
-	{
-		if(nargs!=macro->nargs)
-		{
-			token=TOKENS_AT(tokens, start);
-			pp_error(token, "Macro: expected %d arguments, got %d instead.", macro->nargs, nargs);
-			return 0;
-		}
-	}
-	return 1;
-}
-//macrodefinition: array of tokens
-//kt: index of stringize token '##'
-//args2: array of arrays of tokens
-//out: result token
-static int	macro_stringize(ArrayHandle macrodefinition, int kt, ArrayHandle args2, Token *out)
-{
-	Token *token=TOKENS_AT(macrodefinition, kt), *next;
-	if(kt+1>(int)macrodefinition->count)
-	{
-		pp_error(token, "Stringize operator can only be applied to a macro argument.");//error in definition	DUPLICATE
-		return 0;
-	}
-	next=TOKENS_AT(macrodefinition, kt+1);
-	if(next->type!=T_MACRO_ARG)
-	{
-		pp_error(token, "Stringize operator can only be applied to a macro argument.");//error in definition
-		return 0;
-	}
-	ArrayHandle *arg=array_at(&args2, (size_t)next->i);
-	token=(Token*)arg[0]->data;
-	token_stringize(token, arg[0]->count, 0, arg[0]->count, out);//TODO: inline call
-	return 1;
-}
-//t_left: ?
-//macrodefinition: array of tokens
-//kt: ?
-//args2: array of arrays of tokens
-//dst: result array of tokens
-static void	macro_paste(Token const *t_left, ArrayHandle macrodefinition, int *kt, ArrayHandle args2, ArrayHandle *dst)
-{
-	Token *second=TOKENS_AT(macrodefinition, *kt+1);
-	if(second->type==T_MACRO_ARG)
-	{
-		ArrayHandle *callarg=array_at(&args2, (size_t)second->i);//callarg is array of tokens
-		if(callarg[0]->count)
-		{
-			token_paste(t_left, (Token*)callarg[0]->data, dst);
-			if(callarg[0]->count>1)
-			{
-				int count=callarg[0]->count-1;
-				ARRAY_APPEND(*dst, 0, count, 1, 0);
-				Token *tsrc=TOKENS_AT(*callarg, 1), *tdst=TOKENS_AT(*dst, dst[0]->count-1);
-				memcpy(tdst, tsrc, count*sizeof(Token));
-			}
-		}
-		else
-			token_paste(t_left, 0, dst);
-	}
-	else if(second->type==T_HASH)
-	{
-		Token str={0};
-		++*kt;
-		macro_stringize(macrodefinition, *kt, args2, &str);
-		token_paste(t_left, &str, dst);
-	}
-	else
-		token_paste(t_left, second, dst);
-}
-
-typedef struct MacroCallStruct
-{
-	Macro *macro;
-	ArrayHandle args;//array of arrays of tokens
-	int kt,//macro definition index
-		kt2,//macro call argument index, use on args when macrodefinition[kt] is an arg
-		expansion_start,//dst index
-		done;
-} MacroCall;
-static void macrocall_destructor(void *data)
-{
-	MacroCall *call=(MacroCall*)data;
-	array_free(&call->args);//macro_arg_destructor
-}
-static void	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks, ArrayHandle *dst)
-{
-	int len;
-	DList context;//a stack of macro calls
-	MacroCall *topcall;
-
-	dlist_init(&context, sizeof(MacroCall), 4, macrocall_destructor);
-	topcall=(MacroCall*)dlist_push_back(&context, 0);
-	if(!macro_find_call_extent(macro, src, *ks, &len, &topcall->args))
-	{
-		ks+=len;
-		//error_pp(TOKENS_AT(src, *ks), "Invalid macro call.");//redundant error message
-		dlist_clear(&context);
-		return;
-	}
-	
-	ARRAY_APPEND(*dst, 0, 0, 1, len);
-
-	while(context.nobj)
-	{
-	macro_expand_again:
-		topcall=(MacroCall*)dlist_back(&context);
-		if(topcall->done)
-		{
-			dlist_pop_back(&context);
-			continue;
-		}
-		Macro *m2=topcall->macro;
-		ArrayHandle definition=m2->tokens;
-		while(topcall->kt<(int)definition->count)
-		{
-			Token *token=TOKENS_AT(definition, topcall->kt);
-			if(token->type==T_HASH)//stringize call-argument
-			{
-				Token *out=array_insert(dst, dst[0]->count, 0, 1, 1, 0);
-				macro_stringize(definition, topcall->kt, topcall->args, out);//X  check if next is concatenate
-				topcall->kt+=2;
-			}
-			else if(topcall->kt+1<(int)definition->count&&TOKENS_AT(definition, topcall->kt+1)->type==T_CONCATENATE)//anything can be concatenated
-			{
-				++topcall->kt;
-				if(topcall->kt+1>=(int)definition->count)
-				{
-					Token *next=TOKENS_AT(definition, topcall->kt);
-					pp_error(next, "Token paste operator cannot be at the end of macro.");//error in definition
-					break;
-				}
-				Token const *t_left=0;
-				if(token->type==T_MACRO_ARG)
-				{
-					ArrayHandle *callarg2=array_at(&topcall->args, (size_t)token->i);
-					if(callarg2[0]->count>1)
-					{
-						int count=callarg2[0]->count-1;
-						ARRAY_APPEND(*dst, 0, count, 1, 0);
-						memcpy(TOKENS_AT(*dst, dst[0]->count-count), callarg2[0]->data, count*sizeof(Token));
-					}
-					if(callarg2[0]->count>0)
-						t_left=(Token const*)array_back(callarg2);
-				}
-				else
-					t_left=token;
-				macro_paste(t_left, definition, &topcall->kt, topcall->args, dst);
-				topcall->kt+=2;
-			}
-			else if(token->type==T_CONCATENATE)
-			{
-				if(topcall->kt+1>=(int)definition->count)
-				{
-					pp_error(token, "Token paste operator cannot be at the end of macro.");//error in definition
-					break;
-				}
-				int kd2=dst[0]->count-1;
-				CTokenType temp;
-				for(;kd2>=topcall->expansion_start&&((temp=TOKENS_AT(*dst, kd2)->type)<=T_IGNORED||temp==T_NEWLINE);--kd2);
-				if(kd2>=topcall->expansion_start)
-				{
-					dst[0]->count=kd2;
-					macro_paste(TOKENS_AT(*dst, dst[0]->count), definition, &topcall->kt, topcall->args, dst);
-				}
-				else
-					macro_paste(0, definition, &topcall->kt, topcall->args, dst);//
-				++dst[0]->count;
-				topcall->kt+=2;
-			}
-			else if(token->type==T_MACRO_ARG)//normal macro call arg
-			{
-				ArrayHandle *arg=array_at(&topcall->args, (size_t)token->i);
-				for(;topcall->kt2<(int)arg[0]->count;)//copy tokens from arg, while checking the arg for macro calls
-				{
-					Token *token2=TOKENS_AT(*arg, topcall->kt2);
-					if(token2->type==T_ID)
-					{
-						BSTNodeHandle *result=MAP_FIND(macros, token2->str);
-						if(result)
-						{
-							Macro *macro3=(Macro*)result[0]->data;
-							int len2=0;
-							ArrayHandle args=0;
-							if(macro_find_call_extent(macro3, *arg, topcall->kt2, &len2, &args))
-							{
-								ARRAY_APPEND(*dst, 0, macro3->tokens->count, 1, 0);
-								topcall->kt2+=len2;//advance top.kt2 by call length because it will return here
-
-								topcall=dlist_push_back(&context, 0);//request to expand this argument
-								topcall->macro=macro3;
-								topcall->args=args;
-								topcall->kt2=0;
-								topcall->expansion_start=dst[0]->count;
-								
-								goto macro_expand_again;//should resume here after macro is expanded
-							}
-							//else
-							//	error_pp(TOKENS_AT(*dst, kd2-1), "Invalid macro call.");//redundant error message
-						}
-					}
-					memcpy(TOKENS_AT(*dst, dst[0]->count), TOKENS_AT(*arg, topcall->kt2), sizeof(Token));
-					++dst[0]->count;
-					++topcall->kt2;
-				}
-				topcall->kt2=0;//reset arg index when done
-				++topcall->kt;
-			}
-			else//copy token from macro definition
-			{
-				memcpy(TOKENS_AT(*dst, dst[0]->count), token, sizeof(Token));
-				++dst[0]->count;
-				++topcall->kt;
-			}
-		}
-	}
-}
-
 ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle includepaths, MapHandle lexlib)
 {
 	LexedFile *lf;
@@ -2527,14 +2592,17 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	if(!str_pragma_once)
 		str_pragma_once=strlib_insert("once", 0);
 
-	if(!lexlib->key_size)
-		MAP_INIT(lexlib, const char*, LexedFile, lexlib_cmp, lexlib_destructor);
-
 	if(!macros->cmp_key)
 		MAP_INIT(macros, char*, Macro, macro_cmp, macro_destructor);
 
+	if(!includepaths)
+		ARRAY_ALLOC(ArrayHandle, includepaths, 0, 0, 0);
+
+	if(!lexlib->key_size)
+		MAP_INIT(lexlib, const char*, LexedFile, lexlib_cmp, lexlib_destructor);
+
 	unique_fn=strlib_insert(filename, 0);
-	BSTNodeHandle *result=MAP_FIND(lexlib, unique_fn);
+	BSTNodeHandle *result=MAP_FIND(lexlib, &unique_fn);
 	if(!result)
 	{
 		result=MAP_INSERT(lexlib, &unique_fn, 0, 0);
@@ -2584,7 +2652,6 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 				case T_DEFINE:
 					{
 						int k, redefinition;
-
 						++bm->ks;//skip DEFINE
 						if(bm->ks>=ntokens)
 						{
@@ -2618,39 +2685,38 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						pp_error(token, "Expected an identifier.");
 					else
 					{
-						//if(!strcmp(token->str, "TOKEN"))//MARKER
-						//	token->str=token->str;
-
 						MAP_ERASE(macros, &token->str);
 						++bm->ks;//skip ID
 					}
 					break;
 				case T_IFDEF:
 				case T_IFNDEF:
-					++bm->ks;
-					if(bm->ks>=ntokens)
 					{
-						pp_error(token, "Unexpected end of file.");
-						break;
-					}
-					token=(Token*)array_at(&lf->tokens, bm->ks);
-					if(token->type!=T_ID)
-						pp_error(token, "Expected an identifier.");
-					else
-					{
-						BSTNodeHandle *result=MAP_FIND(macros, token->str);
-						int ndef=((Token*)array_at(&lf->tokens, bm->ks-1))->type==T_IFNDEF;
-						if((!result)!=ndef)
-							bm->iflevel+=skip_block(macros, lf->tokens, &bm->ks, 0);
+						int ndef=token->type==T_IFNDEF;
+						++bm->ks;
+						if(bm->ks>=ntokens)
+						{
+							pp_error(token, "Unexpected end of file.");
+							break;
+						}
+						token=(Token*)array_at(&lf->tokens, bm->ks);
+						if(token->type!=T_ID)
+							pp_error(token, "Expected an identifier.");
 						else
 						{
-							++bm->iflevel;
-							++bm->ks;
-							int start=bm->ks;
-							bm->ks=skip_till_newline(lf->tokens, bm->ks);
-							if(start<bm->ks)
-								pp_error(token, "Expected a single token after #ifdef/ifndef.");
+							BSTNodeHandle *result=MAP_FIND(macros, &token->str);
 							bm->ks+=bm->ks<ntokens;
+							if((!result)!=ndef)
+								bm->iflevel+=skip_block(macros, lf->tokens, &bm->ks, 0);
+							else
+							{
+								++bm->iflevel;
+								int start=bm->ks;
+								bm->ks=skip_till_newline(lf->tokens, bm->ks);
+								if(start<bm->ks)
+									pp_error(token, "Expected a single token after #ifdef/ifndef.");
+								bm->ks+=bm->ks<ntokens;
+							}
 						}
 					}
 					break;
@@ -2660,11 +2726,9 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						int start=bm->ks;
 						bm->ks=skip_till_newline(lf->tokens, bm->ks);
 						long long result=eval_expr(lf->tokens, start, bm->ks, macros);
+						bm->ks+=bm->ks<ntokens;//skip newline
 						if(result)
-						{
 							++bm->iflevel;
-							bm->ks+=bm->ks<ntokens;
-						}
 						else
 							bm->iflevel+=skip_block(macros, lf->tokens, &bm->ks, 0);//skip till #elif true/else/endif
 					}
@@ -2693,7 +2757,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					{
 						++bm->ks;//skip ENDIF
 						if(!bm->iflevel)
-							pp_error(token, "Unmatched #endif.");
+							pp_error(token, "Enedpected #endif.");
 						else
 							--bm->iflevel;
 						int start=bm->ks;
@@ -2728,9 +2792,6 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 							LexedFile *lf2=(LexedFile*)result[0]->data;
 							if(!found)//not lexed before
 								lex(lf2);
-
-							//strlib_debugprint();//MARKER
-
 							bm->ks=skip_till_newline(lf->tokens, bm->ks);
 							bm->ks+=bm->ks<ntokens;
 							if(!(lf2->flags&LEX_INCLUDE_ONCE))//not marked with '#pragma once'
@@ -2827,12 +2888,46 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					token2->synth=1;
 				}
 				break;
+			case T_MACRO_DATE:
+				{
+					++bm->ks;
+					Token *token2=dlist_push_back(&tokens, 0);
+
+					memcpy(token2, token, sizeof(Token));
+					token2->type=T_VAL_STR;
+					token2->str=currentdate;
+					token2->synth=1;
+				}
+				break;
+			case T_MACRO_TIME:
+				{
+					++bm->ks;
+					Token *token2=dlist_push_back(&tokens, 0);
+
+					memcpy(token2, token, sizeof(Token));
+					token2->type=T_VAL_STR;
+					token2->str=currenttime;
+					token2->synth=1;
+				}
+				break;
+			case T_MACRO_TIMESTAMP:
+				{
+					++bm->ks;
+					Token *token2=dlist_push_back(&tokens, 0);
+
+					memcpy(token2, token, sizeof(Token));
+					token2->type=T_VAL_STR;
+					token2->str=currenttimestamp;
+					token2->synth=1;
+				}
+				break;
 			case T_ID:
 				{
-					BSTNodeHandle *result=MAP_FIND(macros, token->str);
+					BSTNodeHandle *result=MAP_FIND(macros, &token->str);
 					if(result)
 					{
-						ArrayHandle dst=0;
+						ArrayHandle dst;
+						ARRAY_ALLOC(Token, dst, 0, 0, 0);
 						macro=(Macro*)result[0]->data;
 						macro_expand(macros, macro, lf->tokens, &bm->ks, &dst);
 						if(dst)
@@ -2863,7 +2958,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 			}
 		}//end file loop
 		if(bm->iflevel>0)
-			pp_error((Token*)array_back(&lf->tokens), "End of file reached. Expected %s #endif\'s.", bm->iflevel);
+			pp_error((Token*)array_back(&lf->tokens), "End of file reached. Expected %d #endif\'s.", bm->iflevel);
 		dlist_pop_back(&bookmarks);//no destructor
 	}//end preprocess loop
 
@@ -2872,12 +2967,68 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	return ret;
 }
 
-//void str_destructor(void *data)
-//{
-//	char **str=(char**)data;
-//	free(*str);
-//	*str=0;
-//}
+void		init_dateNtime()
+{
+	time_t t_now=time(0);
+#ifdef _MSC_VER
+	struct tm t_formatted={0};
+	int error=localtime_s(&t_formatted, &t_now);
+	struct tm *ts=&t_formatted;
+#else
+	struct tm *ts=localtime(&t_now);
+#endif
+	int printed;
+
+	const char *weekdays[]={"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
+	printed=sprintf_s(g_buf, G_BUF_SIZE, "%d-%02d-%02d%s", 1900+ts->tm_year, 1+ts->tm_mon, ts->tm_mday, weekdays[ts->tm_wday]);//FIXME: these are not standard
+	//size_t printed=strftime(g_buf, G_BUF_SIZE, "%Y-%m-%e%a", ts);
+	currentdate=strlib_insert(g_buf, printed);
+
+	printed=sprintf_s(g_buf, G_BUF_SIZE, "%02d:%02d:%02d%s", ts->tm_hour%12, ts->tm_min, ts->tm_sec, ts->tm_hour<12?"AM":"PM");
+	//size_t printed=strftime(g_buf, G_BUF_SIZE, "%H:%M:%S", ts);
+	currenttime=strlib_insert(g_buf, printed);
+
+	printed=sprintf_s(g_buf, G_BUF_SIZE, "%d-%02d-%02d%s %02d:%02d:%02d%s", 1900+ts->tm_year, 1+ts->tm_mon, ts->tm_mday, weekdays[ts->tm_wday], ts->tm_hour%12, ts->tm_min, ts->tm_sec, ts->tm_hour<12?"AM":"PM");
+	currenttimestamp=strlib_insert(g_buf, printed);
+}
+void		macros_init(MapHandle macros, PreDef *preDefs, int nPreDefs)
+{
+	BSTNodeHandle *node;
+	Macro *macro;
+	int tokenCount;
+	Token *token;
+
+	MAP_INIT(macros, char*, Macro, macro_cmp, macro_destructor);
+	for(int k=0;k<nPreDefs;++k)
+	{
+		int found=0;
+		char *unique_name=strlib_insert(preDefs[k].name, strlen(preDefs[k].name));
+		node=MAP_INSERT(macros, &unique_name, 0, &found);
+		macro=(Macro*)node[0]->data;
+		macro->srcfilename=0;
+		macro->nargs=0;
+		macro->is_va=0;
+		tokenCount=preDefs[k].type!=T_IGNORED;
+		ARRAY_ALLOC(Token, macro->tokens, tokenCount, 0, 0);
+		if(tokenCount)
+		{
+			token=(Token*)array_at(&macro->tokens, 0);
+			token->type=preDefs[k].type;
+			switch(preDefs[k].type)
+			{
+			case T_VAL_STR:
+				token->str=strlib_insert(preDefs[k].str, strlen(preDefs[k].str));
+				break;
+			case T_VAL_I32:
+				token->i=preDefs[k].i;
+				break;
+			default:
+				printf("Error: Pre-defined macro of unsupported type %d", preDefs[k].type);
+				break;
+			}
+		}
+	}
+}
 void acc_cleanup(MapHandle lexlib, MapHandle strings)
 {
 	MAP_CLEAR(lexlib);
@@ -2912,7 +3063,8 @@ void tokens2text(ArrayHandle tokens, ArrayHandle *str)
 			int printed=0;
 			switch(token->type)
 			{
-			case T_VAL_C8://TODO multi-character literal
+			case T_VAL_C8:
+			case T_VAL_UC8://TODO multi-character literal
 				{
 					char s[9]={0};
 					memcpy(s, &token->i, 8);
@@ -2926,9 +3078,10 @@ void tokens2text(ArrayHandle tokens, ArrayHandle *str)
 				}
 				//printed=sprintf_s(g_buf, G_BUF_SIZE, "\'%s\'", describe_char((char)token->i));
 				break;
-			case T_VAL_C32:
+			case T_VAL_CW:
 				//TODO
 				break;
+			case T_VAL_I16:case T_VAL_U16:
 			case T_VAL_I32:
 			case T_VAL_I64:
 				printed=sprintf_s(g_buf, G_BUF_SIZE, "%lld", token->i);
