@@ -184,7 +184,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 		case 'F':
 			if(F)
 			{
-				lex_error(text, len, start, "Invalid number literal suffix");
+				lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 				success=0;
 				break;
 			}
@@ -196,7 +196,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 			{
 				if(LL||L)
 				{
-					lex_error(text, len, start, "Invalid number literal suffix");
+					lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 					success=0;
 					break;
 				}
@@ -207,7 +207,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 			{
 				if(LL||L)
 				{
-					lex_error(text, len, start, "Invalid number literal suffix");
+					lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 					success=0;
 					break;
 				}
@@ -218,7 +218,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 		case 'U':
 			if(U)
 			{
-				lex_error(text, len, start, "Invalid number literal suffix");
+				lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 				success=0;
 				break;
 			}
@@ -228,7 +228,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 		case 'Z'://ptrdiff_t/size_t
 			if(Z)
 			{
-				lex_error(text, len, start, "Invalid number literal suffix");
+				lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 				success=0;
 				break;
 			}
@@ -241,7 +241,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 				unsigned size=(unsigned)acme_read_int_base10(text, len, idx, 0);
 				if(ret->type==NUM_F32||ret->type==NUM_F64)
 				{
-					lex_error(text, len, start, "Invalid number literal suffix");
+					lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 					success=0;
 				}
 				else
@@ -254,7 +254,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 					case 64:	ret->type=NUM_I64	|ret->type&1;	break;
 					case 128:	ret->type=NUM_I128	|ret->type&1;	break;
 					default:
-						lex_error(text, len, start, "Invalid number literal suffix");
+						lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 						success=0;
 						break;
 					}
@@ -264,7 +264,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 		default:
 			if(isalnum(text[*idx])||text[*idx]=='_')
 			{
-				lex_error(text, len, start, "Invalid number literal suffix");
+				lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 				success=0;
 			}
 			break;
@@ -340,13 +340,13 @@ int			acme_read_number(const char *text, int len, int *idx, Number *ret)
 	ret->type=NUM_I32;
 	if(text[*idx]=='0')
 	{
-		switch(text[*idx+1]&0xDF)
+		switch(text[*idx+1])
 		{
-		case 'B':
+		case 'B':case 'b':
 			*idx+=2;
 			ret->base=BASE2, base=2;
 			break;
-		case 'X':
+		case 'X':case 'x':
 			*idx+=2;
 			ret->base=BASE16, base=16;
 			break;
@@ -381,6 +381,8 @@ int			acme_read_number(const char *text, int len, int *idx, Number *ret)
 			ret->type=NUM_F64;
 			tail=acme_read_int_basePOT(text, len, idx, ret->base, &ndigits);
 			ret->f64=val+tail*pow(base, -ndigits);
+			while(acme_isdigit(text[*idx], base))//ignore the rest
+				acme_read_int_basePOT(text, len, idx, ret->base, &ndigits);
 		}
 		else if(overflow)
 			lex_error(text, len, start, "Integer overflow");
@@ -418,6 +420,8 @@ int			acme_read_number(const char *text, int len, int *idx, Number *ret)
 			ret->type=NUM_F64;
 			tail=acme_read_int_base10(text, len, idx, &ndigits);
 			ret->f64=val+tail*_10pow(-ndigits);
+			while(acme_isdigit(text[*idx], base))//ignore the rest
+				acme_read_int_base10(text, len, idx, &ndigits);
 		}
 		else if(overflow)
 			lex_error(text, len, start, "Integer overflow");
@@ -1871,7 +1875,7 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 	return 1;
 }
 //macrodefinition: array of tokens
-//kt: index of stringize token '##'
+//kt: index of stringize token '#'
 //args2: array of arrays of tokens
 //out: result token
 static int	macro_stringize(ArrayHandle macrodefinition, int kt, ArrayHandle args2, Token *out)
@@ -1893,9 +1897,10 @@ static int	macro_stringize(ArrayHandle macrodefinition, int kt, ArrayHandle args
 	token_stringize(token, arg[0]->count, 0, arg[0]->count, out);//TODO: inline call
 	return 1;
 }
-//t_left: ?
+//token paste '##': concatenate tokens
+//t_left: first token
 //macrodefinition: array of tokens
-//kt: ?
+//kt: index of second token
 //args2: array of arrays of tokens
 //dst: result array of tokens
 static void	macro_paste(Token const *t_left, ArrayHandle macrodefinition, int *kt, ArrayHandle args2, ArrayHandle *dst)
@@ -1904,7 +1909,7 @@ static void	macro_paste(Token const *t_left, ArrayHandle macrodefinition, int *k
 	if(second->type==T_MACRO_ARG)
 	{
 		ArrayHandle *callarg=(ArrayHandle*)array_at(&args2, (size_t)second->i);//callarg is array of tokens
-		if(callarg[0]->count)
+		if(callarg&&callarg[0]->count)
 		{
 			token_paste(t_left, (Token*)callarg[0]->data, dst);
 			if(callarg[0]->count>1)
@@ -2038,39 +2043,42 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 			else if(token->type==T_MACRO_ARG)//normal macro call arg
 			{
 				ArrayHandle *arg=(ArrayHandle*)array_at(&topcall->args, (size_t)token->i);
-				for(;topcall->kt2<(int)arg[0]->count;)//copy tokens from arg, while checking the arg for macro calls
+				if(arg)
 				{
-					Token *token2=TOKENS_AT(*arg, topcall->kt2);
-					if(token2->type==T_ID)
+					for(;topcall->kt2<(int)arg[0]->count;)//copy tokens from arg, while checking the arg for macro calls
 					{
-						BSTNodeHandle *result=MAP_FIND(macros, &token2->str);
-						if(result)
+						Token *token2=TOKENS_AT(*arg, topcall->kt2);
+						if(token2->type==T_ID)
 						{
-							Macro *macro3=(Macro*)result[0]->data;
-							int len2=0;
-							ArrayHandle args=0;
-							if(macro_find_call_extent(macro3, *arg, topcall->kt2, &len2, &args))
+							BSTNodeHandle *result=MAP_FIND(macros, &token2->str);
+							if(result)
 							{
-								if(macro3->tokens)
-									ARRAY_APPEND(*dst, 0, macro3->tokens->count, 1, 0);
-								topcall->kt2+=len2;//advance top.kt2 by call length because it will return here
+								Macro *macro3=(Macro*)result[0]->data;
+								int len2=0;
+								ArrayHandle args=0;
+								if(macro_find_call_extent(macro3, *arg, topcall->kt2, &len2, &args))
+								{
+									if(macro3->tokens)
+										ARRAY_APPEND(*dst, 0, macro3->tokens->count, 1, 0);
+									topcall->kt2+=len2;//advance top.kt2 by call length because it will return here
 
-								topcall=dlist_push_back(&context, 0);//request to expand this argument
-								topcall->macro=macro3;
-								topcall->args=args;
-								topcall->kt2=0;
-								topcall->expansion_start=dst[0]->count;
+									topcall=dlist_push_back(&context, 0);//request to expand this argument
+									topcall->macro=macro3;
+									topcall->args=args;
+									topcall->kt2=0;
+									topcall->expansion_start=dst[0]->count;
 								
-								goto macro_expand_again;//should resume here after macro is expanded
+									goto macro_expand_again;//should resume here after macro is expanded
+								}
+								//else
+								//	error_pp(TOKENS_AT(*dst, kd2-1), "Invalid macro call.");//redundant error message
 							}
-							//else
-							//	error_pp(TOKENS_AT(*dst, kd2-1), "Invalid macro call.");//redundant error message
 						}
+						ARRAY_APPEND(*dst, TOKENS_AT(*arg, topcall->kt2), 1, 1, 0);
+						//memcpy(TOKENS_AT(*dst, dst[0]->count), TOKENS_AT(*arg, topcall->kt2), sizeof(Token));
+						//++dst[0]->count;
+						++topcall->kt2;
 					}
-					ARRAY_APPEND(*dst, TOKENS_AT(*arg, topcall->kt2), 1, 1, 0);
-					//memcpy(TOKENS_AT(*dst, dst[0]->count), TOKENS_AT(*arg, topcall->kt2), sizeof(Token));
-					//++dst[0]->count;
-					++topcall->kt2;
 				}
 				topcall->kt2=0;//reset arg index when done
 				++topcall->kt;

@@ -73,7 +73,7 @@ int			main(int argc, char **argv)
 #else
 	system("pwd");
 #endif
-	printf("argv[0]:\n%s\n", argv[0]);
+	printf("argv[0]:\n%s\n\n", argv[0]);
 #endif
 
 
