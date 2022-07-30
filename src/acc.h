@@ -202,7 +202,7 @@ void			map_rebalance(MapHandle map);
 
 BSTNodeHandle*	map_find_r(BSTNodeHandle *node, const void *key, CmpFn cmp_key);
 BSTNodeHandle*	map_insert_r(BSTNodeHandle *node, const void *key, MapHandle map, const void *val, int *found);
-BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key);
+BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key, int call_destructor);
 void			map_clear_r(MapHandle map, BSTNodeHandle node);
 void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNodeHandle *node, int depth));
 
@@ -210,7 +210,7 @@ void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNode
 #define			MAP_FIND(MAP, KEY)					map_find_r(&(MAP)->root, KEY, (MAP)->cmp_key)
 #define			MAP_INSERT(MAP, KEY, VAL, PFOUND)	map_insert_r(&(MAP)->root, KEY, MAP, VAL, PFOUND)
 #define			MAP_INSERT_PAIR(MAP, PAIR, PFOUND)	map_insert_r(&(MAP)->root, PAIR, MAP, (unsigned char*)(PAIR)+(MAP)->key_size, PFOUND)
-#define			MAP_ERASE(MAP, KEY)					map_erase_r(MAP, &(MAP)->root, KEY)
+#define			MAP_ERASE(MAP, KEY)					map_erase_r(MAP, &(MAP)->root, KEY, 1)
 #define			MAP_CLEAR(MAP)						map_clear_r(MAP, (MAP)->root), (MAP)->root=0, (MAP)->nnodes=0
 #define			MAP_DEBUGPRINT(MAP, CALLBACK)		map_debugprint_r(&(MAP)->root, 0, CALLBACK)
 #endif

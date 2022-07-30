@@ -4,6 +4,8 @@
 		
 	TOKEN(0, T_ID)			//identifier
 
+
+	//literal constants:
 	TOKEN(0, T_VAL_C8)		TOKEN(0, T_VAL_UC8)	//[unsigned] char, stores 8bit characters (up to 8) (MSVC: 4)
 	TOKEN(0, T_VAL_CW)		TOKEN(0, T_VAL_UCW)	//[unsigned] wchar_t			//TODO: stores 32bit characters (up to 2)
 	
@@ -14,13 +16,15 @@
 
 	TOKEN(0, T_VAL_F32)		//float
 	TOKEN(0, T_VAL_F64)		//double
+	TOKEN(0, T_VAL_F128)	//long double
 
 	TOKEN(0, T_VAL_STR)		//char string literal
 	TOKEN(0, T_VAL_WSTR)	//wide (L"") string literal			//TODO: string of 32-bit unicode codepoints
 
 	TOKEN(0, T_INCLUDENAME_STD)
 
-	//type keywords
+
+	//type keywords:
 	TOKEN("typedef", T_TYPEDEF)
 	TOKEN("enum", T_ENUM)
 	TOKEN("struct", T_STRUCT) TOKEN("union", T_UNION)

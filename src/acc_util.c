@@ -267,8 +267,8 @@ double			time_ms()
 }
 
 //error handling
-char				first_error_msg[G_BUF_SIZE]={0}, latest_error_msg[G_BUF_SIZE]={0};
-int					log_error(const char *file, int line, const char *format, ...)
+char			first_error_msg[G_BUF_SIZE]={0}, latest_error_msg[G_BUF_SIZE]={0};
+int				log_error(const char *file, int line, const char *format, ...)
 {
 	int firsttime=first_error_msg[0]=='\0';
 
@@ -730,7 +730,7 @@ BSTNodeHandle*	map_find_r(BSTNodeHandle *node, const void *key, CmpFn cmp_key)
 {
 	CmpRes result;
 
-	if(!*node)
+	if(!*node)//not found
 		return 0;
 	result=cmp_key(key, node[0]->data);
 	switch(result)
@@ -739,10 +739,10 @@ BSTNodeHandle*	map_find_r(BSTNodeHandle *node, const void *key, CmpFn cmp_key)
 		return map_find_r(&node[0]->left, key, cmp_key);
 	case RESULT_GREATER:
 		return map_find_r(&node[0]->right, key, cmp_key);
-	case RESULT_EQUAL:
+	case RESULT_EQUAL://found
 		return node;
 	}
-	return 0;
+	return 0;//unreachable, if comparator is valid
 }
 BSTNodeHandle*	map_insert_r(BSTNodeHandle *node, const void *key, MapHandle map, const void *val, int *found)
 {
@@ -785,7 +785,7 @@ BSTNodeHandle*	map_insert_r(BSTNodeHandle *node, const void *key, MapHandle map,
 		*found=_found;
 	return pn;
 }//*/
-BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key)//https://www.geeksforgeeks.org/binary-search-tree-set-2-delete/
+BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key, int call_destructor)//https://www.geeksforgeeks.org/binary-search-tree-set-2-delete/
 {
 	CmpRes result;
 	BSTNodeHandle temp;
@@ -796,15 +796,18 @@ BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key)/
 	switch(result)
 	{
 	case RESULT_LESS:
-		return map_erase_r(map, &node[0]->left, key);
+		return map_erase_r(map, &node[0]->left, key, call_destructor);
 	case RESULT_GREATER:
-		return map_erase_r(map, &node[0]->right, key);
+		return map_erase_r(map, &node[0]->right, key, call_destructor);
 	case RESULT_EQUAL:
 		if(!node[0]->left)
 		{
 			temp=node[0]->right;
-			if(map->destructor)
+			if(map->destructor&&call_destructor)
+			//{
+			//	printf("DESTROYING %p %p\n", node, node?*node:0);//MARKER
 				map->destructor(node[0]->data);
+			//}
 			free(*node);
 			*node=temp;
 			--map->nnodes;
@@ -813,18 +816,25 @@ BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key)/
 		if(!node[0]->right)
 		{
 			temp=node[0]->left;
-			if(map->destructor)
+			if(map->destructor&&call_destructor)
+			//{
+			//	printf("DESTROYING %p %p\n", node, node?*node:0);//MARKER
 				map->destructor(node[0]->data);
+			//}
 			free(*node);
 			*node=temp;
 			--map->nnodes;
 			return node;
 		}
-		temp=node[0]->right;//both children exist
+
+		//both children exist
+		temp=node[0]->right;
 		while(temp->left)//find leftmost child on right
 			temp=temp->left;
+		if(map->destructor&&call_destructor)//destroy node
+			map->destructor(node[0]->data);
 		memcpy(node[0]->data, temp->data, map->key_size+map->val_size);//overwrite erased node contents
-		map_erase_r(map, &node[0]->right, temp->data);//erase relocated node from right subtree
+		map_erase_r(map, &node[0]->right, temp->data, 0);//erase relocated node from right subtree
 		return node;
 	}
 	return 0;

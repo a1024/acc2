@@ -10,6 +10,67 @@ static const char file[]=__FILE__;
 
 //	#define	PRINT_LEX
 
+	#define		PROFILE_LEXER
+
+#ifdef PROFILE_LEXER
+#define			PROF_STAGES\
+	PROF_LABEL(START)\
+	PROF_LABEL(FINISH)\
+	PROF_LABEL(DEFINE)\
+	PROF_LABEL(REBALANCE)\
+	PROF_LABEL(UNDEF)\
+	PROF_LABEL(IFDEF)\
+	PROF_LABEL(ELSE)\
+	PROF_LABEL(ENDIF)\
+	PROF_LABEL(INCLUDE)\
+	PROF_LABEL(PRAGMA)\
+	PROF_LABEL(ERROR)\
+	PROF_LABEL(MACRO_FILE)\
+	PROF_LABEL(MACRO_LINE)\
+	PROF_LABEL(MACRO_DATE)\
+	PROF_LABEL(MACRO_TIME)\
+	PROF_LABEL(MACRO_TIMESTAMP)\
+	PROF_LABEL(IDENTIFIER_LOOKUP)\
+	PROF_LABEL(MACRO_EXPANSION)\
+	PROF_LABEL(IDENTIFIER)\
+	PROF_LABEL(TOKEN)
+enum			ProfilerStage
+{
+#define			PROF_LABEL(LABEL)	PROF_##LABEL,
+	PROF_STAGES
+#undef			PROF_LABEL
+	PROF_COUNT,
+};
+const char		*prof_labels[]=
+{
+#define			PROF_LABEL(LABEL)	#LABEL,
+	PROF_STAGES
+#undef			PROF_LABEL
+};
+#undef			PROF_STAGES
+int				prof_count[PROF_COUNT]={0};
+long long		prof_cycles[PROF_COUNT]={0}, prof_temp=0;
+#define			PROF_INIT()		prof_temp=__rdtsc()
+#define			PROF(LABEL)		++prof_count[PROF_##LABEL], prof_cycles[PROF_##LABEL]+=__rdtsc()-prof_temp, prof_temp=__rdtsc()
+void			prof_end()
+{
+	long long sum=0;
+	for(int k=0;k<PROF_COUNT;++k)
+		sum+=prof_cycles[k];
+	printf("\nPROFILER\nLabel\tvisited\tcycles\tpercentage\tcycles_per_call\n");
+	for(int k=0;k<PROF_COUNT;++k)
+		printf("%s:\t%d\t%lld\t%.2lf%%\t%lf\n", prof_labels[k], prof_count[k], prof_cycles[k], 100.*prof_cycles[k]/sum, (double)prof_cycles[k]/prof_count[k]);
+	printf("\n");
+	memset(prof_cycles, 0, sizeof(prof_cycles));
+	memset(prof_count, 0, sizeof(prof_count));
+}
+#else
+#define			PROF_INIT()
+#define			PROF(...)
+#define			prof_end()
+#endif
+
+
 const char	*str_va_args=0, *str_pragma_once=0;
 const char	*currentfilename=0, *currentfile=0;
 char		*currentdate=0, *currenttime=0, *currenttimestamp=0;
@@ -79,20 +140,23 @@ char*		strlib_insert(const char *str, int len)
 
 typedef enum NumberTypeEnum
 {
-	NUM_I8,//postfix 'i8' && can fit in 2's complement 8 bits
-	NUM_U8,//postfix 'ui8'
-	NUM_I16,//postfix 'i16' && can fit in 2's complement 16 bits
-	NUM_U16,//postfix 'ui16'
+	//integer results:
+	NUM_I8,//suffix 'i8' && can fit in 2's complement 8 bits
+	NUM_U8,//suffix 'ui8'
+	NUM_I16,//suffix 'i16' && can fit in 2's complement 16 bits
+	NUM_U16,//suffix 'ui16'
 
-	NUM_I32,//no postfix && can fit in 2's complement 32 bits
-	NUM_U32,//has postfix U
-	NUM_I64,//has postfix LL || from 2^31 to 2^63
-	NUM_U64,//has postfix ULL || from 2^31 to 2^64
-	NUM_I128,//has postfix LL || from 2^31 to 2^63
-	NUM_U128,//has postfix ULL || from 2^31 to 2^64
+	NUM_I32,//no suffix && can fit in 2's complement 32 bits
+	NUM_U32,//has suffix U
+	NUM_I64,//has suffix LL || from 2^31 to 2^63
+	NUM_U64,//has suffix ULL || from 2^31 to 2^64
+	NUM_I128,//has suffix LL || from 2^31 to 2^63
+	NUM_U128,//has suffix ULL || from 2^31 to 2^64
 
-	NUM_F32,//has point and postfix F
+	//floating point results:
+	NUM_F32,//has point and suffix F
 	NUM_F64,//has point
+	NUM_F128,//has point and suffix L
 } NumberType;
 typedef struct NumberStruct
 {
@@ -181,7 +245,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 	{
 		switch(text[*idx]&0xDF)
 		{
-		case 'F':
+		case 'F'://float literal
 			if(F)
 			{
 				lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
@@ -191,7 +255,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 			F=1;
 			++*idx;
 			continue;
-		case 'L':
+		case 'L'://long [[long]int/double] literal
 			if((text[*idx+1]&0xDF)=='L')
 			{
 				if(LL||L)
@@ -211,11 +275,19 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 					success=0;
 					break;
 				}
+				if(ret->type==NUM_F32||F)
+				{
+					lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
+					success=0;
+					break;
+				}
+				if(ret->type==NUM_F64)
+					ret->type=NUM_F128;
 				L=1;
 				++*idx;
 			}
 			continue;
-		case 'U':
+		case 'U'://unsigned
 			if(U)
 			{
 				lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
@@ -235,11 +307,11 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 			Z=1;
 			++*idx;
 			continue;
-		case 'I':
+		case 'I'://integer of a particular size
 			{
 				++*idx;
 				unsigned size=(unsigned)acme_read_int_base10(text, len, idx, 0);
-				if(ret->type==NUM_F32||ret->type==NUM_F64)
+				if(ret->type==NUM_F32||ret->type==NUM_F64||ret->type==NUM_F128)
 				{
 					lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 					success=0;
@@ -280,7 +352,7 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 		case NUM_F32:
 			break;
 		default:
-			lex_error(text, len, start, "Invalid number literal suffix");
+			lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 			success=0;
 			break;
 		}
@@ -290,9 +362,9 @@ static int	acme_read_number_suffix(const char *text, int len, int *idx, Number *
 	{
 		if(ret->type==NUM_F32||ret->type==NUM_F64)
 		{
-			if(U||LL||L||Z)
+			if(U||Z||LL||ret->type==NUM_F32&&L)
 			{
-				lex_error(text, len, start, "Invalid number literal suffix");
+				lex_error(text, len, start, "Invalid number literal suffix \'...%.*s\'", *idx+1-start, text+start);
 				success=0;
 			}
 		}
@@ -1150,17 +1222,11 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 	int len=(int)lf->len;
 
 	unsigned short data=DUPLET(p[0], p[1]);
-	for(int k=0;k<len;++k)//remove esc newlines
+	for(int k=0;k<len;++k)//remove esc newlines		who in their right mind would break an identifier or even an operator with an escaped newline?!
 	{
-		//if(p[k]=='\\'&&p[k+1]=='\n')
-		if(data==('\\'|'\n'<<8))
-		{
-			int k2=k+2;
-			for(;k2<len&&p[k2]!=' '&&p[k2]!='\t';++k2)
-				p[k2-2]=p[k2];
-			p[k2-2]=' ', p[k2-1]='\r';//'\r' doesn't break #defines but adjusts line increment
-		}
-		data>>=8, data|=(unsigned char)p[k+2]<<8;
+		if(data==DUPLET('\\', '\n'))
+			p[k]=' ', p[k+1]='\r';//'\r' doesn't break #defines, but adjusts line increment
+		data>>=8, data|=(unsigned char)p[k+2]<<8;//text is over-allocated by 16 chars
 	}
 
 	dlist_init(&tokens, sizeof(Token), 128, 0);
@@ -1219,11 +1285,13 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 					case NUM_U32:	token->type=T_VAL_U32,	token->i=val.u64;break;
 					case NUM_I64:	token->type=T_VAL_I64,	token->i=val.i64;break;
 					case NUM_U64:	token->type=T_VAL_U64,	token->i=val.u64;break;
-					case NUM_F32:	token->type=T_VAL_F32,	token->f32=val.f32;break;
-					case NUM_F64:	token->type=T_VAL_F64,	token->f64=val.f64;break;
 
 					case NUM_I128:	token->type=T_VAL_I128,	token->u=val.u64;break;
 					case NUM_U128:	token->type=T_VAL_U128,	token->u=val.u64;break;
+
+					case NUM_F32:	token->type=T_VAL_F32,	token->f32=val.f32;break;
+					case NUM_F64:	token->type=T_VAL_F64,	token->f64=val.f64;break;
+					case NUM_F128:	token->type=T_VAL_F128,	token->f64=val.f64;break;
 					}
 					token->pos=start;
 					token->len=k-start;
@@ -1513,7 +1581,10 @@ static void token_append2str(Token const *t, ArrayHandle *text)
 			STR_APPEND(*text, "\"", 1, 1);
 		if(ischar)
 			STR_APPEND(*text, "\'", 1, 1);
-		STR_APPEND(*text, currentfile+t->pos, t->len, 1);//BUG what if token is not from current file?
+		if(t->type==T_ID)
+			STR_APPEND(*text, t->str, t->len, 1);
+		else
+			STR_APPEND(*text, currentfile+t->pos, t->len, 1);//BUG what if the token is not from current file?
 		if(ischar)
 			STR_APPEND(*text, "\'", 1, 1);
 		if(isstr)
@@ -1560,12 +1631,25 @@ static CmpRes macro_cmp(const void *left, const void *right)
 static void macro_destructor(void *data)
 {
 	Macro *macro=(Macro*)data;
-	array_free(&macro->tokens);
+	//if(macro->tokens)
+	//{
+	//	if((size_t)macro->tokens->destructor==0xFEEEFEEE)//MARKER
+	//		return;
+	//	if(macro->tokens->destructor)//MARKER
+	//		ASSERT_P(macro->tokens->destructor);
+		array_free(&macro->tokens);
+	//}
 }
-static void macros_debugprint(BSTNodeHandle *node, int depth)
+static void macros_debugprint_callback(BSTNodeHandle *node, int depth)
 {
 	Macro const *macro=(Macro const*)node[0]->data;
 	printf("%4d %*s%p %s\n", depth, depth, "", macro->name, macro->name);
+}
+void		macros_debugprint(MapHandle macros)
+{
+	printf("All macros:\n");
+	MAP_DEBUGPRINT(macros, macros_debugprint_callback);
+	printf("\n");
 }
 
 typedef enum MacroArgCountEnum
@@ -1811,14 +1895,14 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 	if(start+1>=ntokens)
 	{
 		token=start<ntokens?TOKENS_AT(tokens, start):0;
-		pp_error(token, "Macro should have an argument list with %d arguments.", macro->nargs);
+		pp_error(token, "Macro \'%s\' needs %d arguments, got EOF.", macro->name, macro->nargs);
 		*ret_len=1;
 		return 0;
 	}
 	token=TOKENS_AT(tokens, start+1);
 	if(token->type!=T_LPR)
 	{
-		pp_error(token, "Macro should have an argument list with %d arguments.", macro->nargs);
+		pp_error(token, "Macro \'%s\' needs %d arguments, missing argument list.", macro->name, macro->nargs);
 		*ret_len=1;
 		return 0;
 	}
@@ -1838,14 +1922,14 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 				count+=token->type==T_COMMA;//DEBUG
 				ARRAY_APPEND(*h, token, count, 1, 0);
 			}
-			else
+			else if(count||nargs)//if macro is called with empty parens, then nargs==0
 			{
 				ArrayHandle *h=ARRAY_APPEND(*args, 0, 1, 1, 0);
 				ARRAY_ALLOC(Token, *h, count, 0, 0);
 				memcpy(h[0]->data, token, count*sizeof(Token));
+				++nargs;
 			}
 			k0=end+1;
-			nargs+=!va_append;
 		}
 	}
 	*ret_len=end-start;
@@ -1859,7 +1943,7 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 		if(nargs<macro->nargs)
 		{
 			token=TOKENS_AT(tokens, start);
-			pp_error(token, "Variadic macro: expected at least %d arguments, got %d instead.", macro->nargs, nargs);
+			pp_error(token, "Variadic macro \'%s\' needs at least %d arguments, got %d.", macro->name, macro->nargs, nargs);
 			return 0;
 		}
 	}
@@ -1868,7 +1952,7 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 		if(nargs!=macro->nargs)
 		{
 			token=TOKENS_AT(tokens, start);
-			pp_error(token, "Macro: expected %d arguments, got %d instead.", macro->nargs, nargs);
+			pp_error(token, "Macro \'%s\' needs %d args, got %d.", macro->name, macro->nargs, nargs);
 			return 0;
 		}
 	}
@@ -2005,15 +2089,18 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 				if(token->type==T_MACRO_ARG)
 				{
 					ArrayHandle *callarg2=(ArrayHandle*)array_at(&topcall->args, (size_t)token->i);
-					if(callarg2[0]->count>1)
+					if(callarg2&&*callarg2)
 					{
-						int count=callarg2[0]->count-1;
-						ARRAY_APPEND(*dst, callarg2[0]->data, count, 1, 0);
-						//ARRAY_APPEND(*dst, 0, count, 1, 0);
-						//memcpy(TOKENS_AT(*dst, dst[0]->count-count), callarg2[0]->data, count*sizeof(Token));
+						if(callarg2[0]->count>1)
+						{
+							int count=callarg2[0]->count-1;
+							ARRAY_APPEND(*dst, callarg2[0]->data, count, 1, 0);
+							//ARRAY_APPEND(*dst, 0, count, 1, 0);
+							//memcpy(TOKENS_AT(*dst, dst[0]->count-count), callarg2[0]->data, count*sizeof(Token));
+						}
+						if(callarg2[0]->count>0)
+							t_left=(Token const*)array_back(callarg2);
 					}
-					if(callarg2[0]->count>0)
-						t_left=(Token const*)array_back(callarg2);
 				}
 				else
 					t_left=token;
@@ -2502,12 +2589,12 @@ static char*	find_include(const char *includename, int custom, ArrayHandle inclu
 	//}
 	return 0;
 }
-static int skip_till_newline(ArrayConstHandle tokens, int k)
+static int		skip_till_newline(ArrayConstHandle tokens, int k)
 {
 	for(;k<(int)tokens->count&&((Token const*)array_at_const(&tokens, k))->type!=T_NEWLINE;++k);
 	return k;
 }
-static int skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblock)
+static int		skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblock)
 {
 	int k0, ntokens, level;
 	Token const *token;
@@ -2582,6 +2669,7 @@ static int skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastbloc
 }
 
 
+char *DEBUG_macro=0;
 ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle includepaths, MapHandle lexlib)
 {
 	LexedFile *lf;
@@ -2590,8 +2678,12 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	Bookmark *bm;
 	Macro *macro;
 	ArrayHandle ret;
+	long long bytes_processed;
 	int success;
-
+	BM_DECL;
+	
+	BM_START();
+	PROF_INIT();
 	if(!filename)
 	{
 		pp_error(0, "Filename is not provided");
@@ -2617,9 +2709,13 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 		lf=(LexedFile*)result[0]->data;
 		currentfilename=lf->filename;
 		success=lex(lf);
+		bytes_processed=lf->len;
 	}
 	else
+	{
 		lf=(LexedFile*)result[0]->data;
+		bytes_processed=0;
+	}
 
 	if(!lf||!lf->tokens)
 		return 0;
@@ -2631,6 +2727,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 	bm->iflevel=0;
 
 	dlist_init(&tokens, sizeof(Token), 128, 0);//no destructor
+	PROF(START);
 
 	while(bookmarks.nobj>0)
 	{
@@ -2645,6 +2742,22 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 		while(bm->ks<ntokens)
 		{
 			Token *token=(Token*)array_at(&lf->tokens, bm->ks);
+
+			//if(DEBUG_macro)//MARKER
+			//{
+			//	BSTNodeHandle *r4=MAP_FIND(macros, &DEBUG_macro);
+			//	if(r4)
+			//	{
+			//		Macro *m4=(Macro*)r4[0]->data;
+			//		printf("BOINK %p\n", m4->tokens);
+			//		if((size_t)m4->tokens->destructor==0xFEEEFEEE)
+			//			token=token;
+			//	}
+			//}
+			//if(!strcmp(currentfilename, "C:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include/time.h")&&token->line==196)//MARKER
+			//	token=token;
+			//printf("DEBUG %s(%d)\n", currentfilename, token->line);//MARKER
+			
 			switch(token->type)
 			{
 			case T_HASH://TODO: directives should only work at the beginning of line
@@ -2672,14 +2785,33 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 							pp_error(token, "Expected an identifier.");
 						else
 						{
+							//printf("DEFINE %s\n", token->str);//MARKER
+
 							redefinition=0;
-							macro=(Macro*)MAP_INSERT(macros, &token->str, 0, &redefinition)[0]->data;//insert can return null only if comparator is ill-defined
+							BSTNodeHandle *node=MAP_INSERT(macros, &token->str, 0, &redefinition);//insert can return null only if comparator is ill-defined
+							macro=(Macro*)node[0]->data;
 							if(redefinition)
 								pp_error(token, "Macro \'%s\' redefined.", token->str);
 							macro_define(macro, currentfilename, token, k-bm->ks);
+
+							//if(!strcmp(token->str, "_NEXT_ALIGN"))//MARKER
+							//{
+							//	BSTNodeHandle *r5;
+							//
+							//	DEBUG_macro=token->str;
+							//	r5=MAP_FIND(macros, &DEBUG_macro);
+							//	if(r5)
+							//	{
+							//		Macro *m5=(Macro*)r5[0]->data;
+							//		printf("JUMBO %p\n", m5->tokens);
+							//	}
+							//}
 						}
 						bm->ks=k+(((Token*)array_at(&lf->tokens, k))->type==T_NEWLINE);//skip possible newline
 					}
+					PROF(DEFINE);
+					map_rebalance(macros);
+					PROF(REBALANCE);
 					break;
 				case T_UNDEF:
 					++bm->ks;//skip UNDEF
@@ -2693,9 +2825,22 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						pp_error(token, "Expected an identifier.");
 					else
 					{
+						//if(!strcmp(token->str, "BFMAP"))//MARKER-2
+						//	macros_debugprint(macros);
+						//printf("UNDEF %s\n", token->str);//MARKER		BFMAP
+
+						//if(!strcmp(token->str, "_NEXT_ALIGN"))//MARKER
+						//{
+						//	BSTNodeHandle *result=MAP_FIND(macros, &token->str);
+						//	Macro *m2=(Macro*)result[0]->data;
+						//	token=token;
+						//	macros_debugprint(macros);
+						//}
+
 						MAP_ERASE(macros, &token->str);
 						++bm->ks;//skip ID
 					}
+					PROF(UNDEF);
 					break;
 				case T_IFDEF:
 				case T_IFNDEF:
@@ -2727,6 +2872,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 							}
 						}
 					}
+					PROF(IFDEF);
 					break;
 				case T_IF:
 					{
@@ -2760,6 +2906,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						if(!expected)
 							bm->ks+=bm->ks<ntokens;//skip newline
 					}
+					PROF(ELSE);
 					break;
 				case T_ENDIF:
 					{
@@ -2774,6 +2921,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 							pp_error(TOKENS_AT(lf->tokens, start), "Unexpected tokens after #endif.");
 						bm->ks+=bm->ks<ntokens;
 					}
+					PROF(ENDIF);
 					break;
 
 				case T_INCLUDE:
@@ -2786,8 +2934,8 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					token=TOKENS_AT(lf->tokens, bm->ks);
 					if(token->type==T_INCLUDENAME_STD||token->type==T_VAL_STR)
 					{
-						char *filename=find_include(token->str, token->type==T_VAL_STR, includepaths);
-						if(!filename)
+						char *filename2=find_include(token->str, token->type==T_VAL_STR, includepaths);
+						if(!filename2)
 						{
 							pp_error(token, "Cannot open include file \'%s\'.", token->str);
 							bm->ks=skip_till_newline(lf->tokens, bm->ks);
@@ -2796,10 +2944,13 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						else
 						{
 							int found=0;
-							BSTNodeHandle *result=MAP_INSERT(lexlib, &filename, 0, &found);
+							BSTNodeHandle *result=MAP_INSERT(lexlib, &filename2, 0, &found);
 							LexedFile *lf2=(LexedFile*)result[0]->data;
 							if(!found)//not lexed before
+							{
 								lex(lf2);
+								bytes_processed+=lf2->len;
+							}
 							bm->ks=skip_till_newline(lf->tokens, bm->ks);
 							bm->ks+=bm->ks<ntokens;
 							if(!(lf2->flags&LEX_INCLUDE_ONCE))//not marked with '#pragma once'
@@ -2816,6 +2967,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						bm->ks=skip_till_newline(lf->tokens, bm->ks);
 						bm->ks+=bm->ks<ntokens;
 					}
+					PROF(INCLUDE);
 					break;
 				case T_PRAGMA:
 					++bm->ks;//skip INCLUDE
@@ -2832,6 +2984,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					}
 					bm->ks=skip_till_newline(lf->tokens, bm->ks);
 					bm->ks+=bm->ks<ntokens;
+					PROF(PRAGMA);
 					break;
 				case T_ERROR:
 					{
@@ -2856,11 +3009,13 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 							bm->ks+=bm->ks<ntokens;//skip newline
 						}
 					}
+					PROF(ERROR);
 					break;
 				default:
 					pp_error(token, "Expected a preprocessor directive.");
 					bm->ks=skip_till_newline(lf->tokens, bm->ks);
 					bm->ks+=bm->ks<ntokens;
+					PROF(ERROR);
 					break;
 				}
 				break;//case T_HASH		#...
@@ -2884,6 +3039,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					//token2->flags=token->flags;
 					//token2->synth=1;
 				}
+				PROF(MACRO_FILE);
 				break;
 			case T_MACRO_LINE:
 				{
@@ -2895,6 +3051,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					token2->i=token->line;
 					token2->synth=1;
 				}
+				PROF(MACRO_LINE);
 				break;
 			case T_MACRO_DATE:
 				{
@@ -2906,6 +3063,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					token2->str=currentdate;
 					token2->synth=1;
 				}
+				PROF(MACRO_DATE);
 				break;
 			case T_MACRO_TIME:
 				{
@@ -2917,6 +3075,7 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					token2->str=currenttime;
 					token2->synth=1;
 				}
+				PROF(MACRO_TIME);
 				break;
 			case T_MACRO_TIMESTAMP:
 				{
@@ -2928,10 +3087,12 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 					token2->str=currenttimestamp;
 					token2->synth=1;
 				}
+				PROF(MACRO_TIMESTAMP);
 				break;
 			case T_ID:
 				{
 					BSTNodeHandle *result=MAP_FIND(macros, &token->str);
+					PROF(IDENTIFIER_LOOKUP);
 					if(result)
 					{
 						ArrayHandle dst;
@@ -2940,28 +3101,33 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 						macro_expand(macros, macro, lf->tokens, &bm->ks, &dst);
 						if(dst)
 						{
-							for(int kt=0;kt<(int)dst->count;++kt)
+							for(int kt=0;kt<(int)dst->count;++kt)//TODO dlist_push_back(array)
 							{
 								Token *token2=TOKENS_AT(dst, kt);
-								dlist_push_back(&tokens, token2);//TODO dlist_push_back(array)
+								dlist_push_back(&tokens, token2);
 							}
 						}
+						array_free(&dst);
+						PROF(MACRO_EXPANSION);
 					}
 					else
 					{
 						dlist_push_back(&tokens, token);
 						++bm->ks;
+						PROF(IDENTIFIER);
 					}
 				}
 				break;
 			case T_NEWLINE:
 			case T_NEWLINE_ESC:
 				++bm->ks;
+				PROF(TOKEN);
 				break;
 			default:
 				if(token->type>T_IGNORED)
 					dlist_push_back(&tokens, token);
 				++bm->ks;
+				PROF(TOKEN);
 				break;
 			}
 		}//end file loop
@@ -2972,6 +3138,10 @@ ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle inclu
 
 	ret=dlist_toarray(&tokens);
 	dlist_clear(&tokens);
+	PROF(FINISH);
+	BM_FINISH("Preprocess \'%s\':\t%lfms\n", filename, bm_t1);
+	printf("Processed %lld bytes (%lf MB/s)\n", bytes_processed, (double)bytes_processed/(1024*1.024*bm_t1));
+	prof_end();
 	return ret;
 }
 
@@ -3100,8 +3270,10 @@ void tokens2text(ArrayHandle tokens, ArrayHandle *str)
 				break;
 			case T_VAL_F32:
 				printed=sprintf_s(g_buf, G_BUF_SIZE, "%ff", token->f32);
+				break;
 			case T_VAL_F64:
 				printed=sprintf_s(g_buf, G_BUF_SIZE, "%g", token->f64);
+				break;
 			case T_VAL_STR:
 				printed=sprintf_s(g_buf, G_BUF_SIZE, "\"%s\"", token->str);
 				break;
