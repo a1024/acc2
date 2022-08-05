@@ -79,7 +79,7 @@ int			main(int argc, char **argv)
 
 	//initialize includepaths
 	const int nStdIncludes=SIZEOF(std_includes);
-	ARRAY_ALLOC(ArrayHandle, includepaths, nStdIncludes, 0, free_incpath);
+	ARRAY_ALLOC(ArrayHandle, includepaths, 0, nStdIncludes, 0, free_incpath);
 	for(int k=0;k<nStdIncludes;++k)
 	{
 		ArrayHandle *includepath=(ArrayHandle*)array_at(&includepaths, k);
@@ -89,29 +89,6 @@ int			main(int argc, char **argv)
 
 	//initialize pre-defined macros (predefs)
 	init_dateNtime();
-#if 0
-	time_t t_now=time(0);
-#ifdef _MSC_VER
-	struct tm t_formatted={0};
-	int error=localtime_s(&t_formatted, &t_now);
-	struct tm *ts=&t_formatted;
-#else
-	struct tm *ts=localtime(&t_now);
-#endif
-	int printed;
-
-	const char *weekdays[]={"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
-	printed=sprintf_s(g_buf, G_BUF_SIZE, "%d-%02d-%02d%s", 1900+ts->tm_year, 1+ts->tm_mon, ts->tm_mday, weekdays[ts->tm_wday]);//FIXME: these are not standard
-	//size_t printed=strftime(g_buf, G_BUF_SIZE, "%Y-%m-%e%a", ts);
-	predefs[0].str=strlib_insert(g_buf, printed);
-
-	printed=sprintf_s(g_buf, G_BUF_SIZE, "%02d:%02d:%02d%s", ts->tm_hour%12, ts->tm_min, ts->tm_sec, ts->tm_hour<12?"AM":"PM");
-	//size_t printed=strftime(g_buf, G_BUF_SIZE, "%H:%M:%S", ts);
-	predefs[1].str=strlib_insert(g_buf, printed);
-
-	printed=sprintf_s(g_buf, G_BUF_SIZE, "%d-%02d-%02d%s %02d:%02d:%02d%s", 1900+ts->tm_year, 1+ts->tm_mon, ts->tm_mday, weekdays[ts->tm_wday], ts->tm_hour%12, ts->tm_min, ts->tm_sec, ts->tm_hour<12?"AM":"PM");
-	predefs[2].str=strlib_insert(g_buf, printed);
-#endif
 	macros_init(&macros, predefs, SIZEOF(predefs));
 
 	
@@ -127,6 +104,22 @@ int			main(int argc, char **argv)
 	printf("\ntokens2text:\n");
 	ArrayHandle text=0;
 	tokens2text(tokens, &text);
+	printf("Save preprocessor output? [Y/N] ");
+	char c=0;
+	scanf("%c", &c);
+	if((c&0xDF)=='Y')
+	{
+		const char ext[]=".c";
+		ArrayHandle filename;
+		STR_COPY(filename, currenttimestamp, strlen(currenttimestamp));
+		STR_APPEND(filename, ext, sizeof(ext)-1, 1);
+		int success=save_text((char*)filename->data, (char*)text->data, text->count);
+		array_free(&filename);
+		if(success)
+			printf("Saved\n");
+		else
+			printf("Failed to save\n");
+	}
 	//printf("%s\n", (char*)text->data);
 
 	printf("Cleanup...\n");

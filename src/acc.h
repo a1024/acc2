@@ -57,6 +57,7 @@ int				valid(const void *p);
 //file I/O
 int				file_is_readable(const char *filename);//0: not readable, 1: regular file, 2: folder
 char*			load_text(const char *filename, size_t *len);//don't forget to free string
+int				save_text(const char *filename, const char *text, size_t len);
 
 
 //array
@@ -82,8 +83,8 @@ typedef const ArrayHeader *ArrayConstHandle;
 #endif
 ArrayHandle		array_construct(const void *src, size_t esize, size_t count, size_t rep, size_t pad, void (*destructor)(void*));
 ArrayHandle		array_copy(ArrayHandle *arr);//shallow
-void			array_free(ArrayHandle *arr);
 void			array_clear(ArrayHandle *arr);//keeps allocation
+void			array_free(ArrayHandle *arr);
 void			array_fit(ArrayHandle *arr, size_t pad);
 
 void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t count, size_t rep, size_t pad);//cannot be nullptr
@@ -95,8 +96,8 @@ const void*		array_at_const(ArrayConstHandle *arr, int idx);
 void*			array_back(ArrayHandle *arr);
 const void*		array_back_const(ArrayHandle const *arr);
 
-#define			ARRAY_ALLOC(ELEM_TYPE, ARR, COUNT, PAD, DESTRUCTOR)	ARR=array_construct(0, sizeof(ELEM_TYPE), COUNT, 1, PAD, DESTRUCTOR)
-#define			ARRAY_APPEND(ARR, DATA, COUNT, REP, PAD)			array_insert(&(ARR), (ARR)->count, DATA, COUNT, REP, PAD)
+#define			ARRAY_ALLOC(ELEM_TYPE, ARR, DATA, COUNT, PAD, DESTRUCTOR)	ARR=array_construct(DATA, sizeof(ELEM_TYPE), COUNT, 1, PAD, DESTRUCTOR)
+#define			ARRAY_APPEND(ARR, DATA, COUNT, REP, PAD)					array_insert(&(ARR), (ARR)->count, DATA, COUNT, REP, PAD)
 #define			ARRAY_DATA(ARR)			(ARR)->data
 #define			ARRAY_I(ARR, IDX)		*(int*)array_at(&ARR, IDX)
 #define			ARRAY_U(ARR, IDX)		*(unsigned*)array_at(&ARR, IDX)
@@ -120,11 +121,18 @@ const void*		array_back_const(ArrayHandle const *arr);
 
 //double-linked list of identical size arrays,		append-only, no mid-insertion
 #if 1
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4200)//no default-constructor for struct with zero-length array
+#endif
 typedef struct DNodeStruct
 {
 	struct DNodeStruct *prev, *next;
 	unsigned char data[];
 } DNodeHeader, *DNodeHandle;
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 typedef struct DListStruct
 {
 	DNodeHandle i, f;
@@ -217,6 +225,7 @@ void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNode
 
 
 //acc
+extern char		*currentdate, *currenttime, *currenttimestamp;
 #define			CASE_MASK			0xDF
 #define			BETWEEN(LO, X, HI)	((unsigned)((X)-LO)<(unsigned)(HI+1-LO))
 typedef enum CTokenTypeEnum//should include cpp,		separate enum for asm
@@ -255,7 +264,7 @@ typedef struct TokenStruct//32 bytes
 		unsigned long long u;
 		double f64;	//lossy
 		float f32;	//lossy
-		char *str;
+		char *str;	//see strlib
 		int *wstr;
 	};
 } Token;
@@ -270,6 +279,7 @@ typedef struct MacroStruct
 	ArrayHandle tokens;
 } Macro;
 int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int count);//tokens points at after '#define', undef macro on error
+
 extern Map	strlib;//don't clear strlib until the program quits		TODO: pass as argument
 char*		strlib_insert(const char *str, int len);
 void		strlib_debugprint();

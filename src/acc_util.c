@@ -245,6 +245,7 @@ int				acme_isdigit(char c, char base)
 	case 10:	return BETWEEN('0', c, '9');
 	case 16:	return BETWEEN('0', c, '9')||BETWEEN('A', c&0xDF, 'F');
 	}
+	return 0;
 }
 
 double			time_ms()
@@ -290,16 +291,37 @@ int				log_error(const char *file, int line, const char *format, ...)
 }
 int				valid(const void *p)
 {
-	switch((size_t)p)
+	size_t val=(size_t)p;
+
+	if(sizeof(size_t)==4)
 	{
-	case 0:
-	case 0xCCCCCCCC:
-	case 0xFEEEFEEE:
-	case 0xEEFEEEFE:
-	case 0xCDCDCDCD:
-	case 0xFDFDFDFD:
-	case 0xBAAD0000:
-		return 0;
+		switch(val)
+		{
+		case 0:
+		case 0xCCCCCCCC:
+		case 0xFEEEFEEE:
+		case 0xEEFEEEFE:
+		case 0xCDCDCDCD:
+		case 0xFDFDFDFD:
+		case 0xBAADF00D:
+		case 0xBAAD0000:
+			return 0;
+		}
+	}
+	else
+	{
+		if(val==0xCCCCCCCCCCCCCCCC)
+			return 0;
+		if(val==0xFEEEFEEEFEEEFEEE)
+			return 0;
+		if(val==0xEEFEEEFEEEFEEEFE)
+			return 0;
+		if(val==0xCDCDCDCDCDCDCDCD)
+			return 0;
+		if(val==0xBAADF00DBAADF00D)
+			return 0;
+		if(val==0xADF00DBAADF00DBA)
+			return 0;
 	}
 	return 1;
 }
@@ -341,6 +363,15 @@ char*			load_text(const char *filename, size_t *len)
 	if(len)
 		*len=readbytes;
 	return str;
+}
+int				save_text(const char *filename, const char *text, size_t len)
+{
+	FILE *f=fopen(filename, "w");
+	if(!f)
+		return 0;
+	fwrite(text, 1, len, f);
+	fclose(f);
+	return 1;
 }
 
 //C array
@@ -405,16 +436,6 @@ ArrayHandle		array_copy(ArrayHandle *arr)
 	memcpy(a2, *arr, bytesize);
 	return a2;
 }
-void			array_free(ArrayHandle *arr)//can be nullptr
-{
-	if(*arr&&arr[0]->destructor)
-	{
-		for(size_t k=0;k<arr[0]->count;++k)
-			arr[0]->destructor(array_at(arr, k));
-	}
-	free(*arr);
-	*arr=0;
-}
 void			array_clear(ArrayHandle *arr)//can be nullptr
 {
 	if(*arr)
@@ -426,6 +447,16 @@ void			array_clear(ArrayHandle *arr)//can be nullptr
 		}
 		arr[0]->count=0;
 	}
+}
+void			array_free(ArrayHandle *arr)//can be nullptr
+{
+	if(*arr&&arr[0]->destructor)
+	{
+		for(size_t k=0;k<arr[0]->count;++k)
+			arr[0]->destructor(array_at(arr, k));
+	}
+	free(*arr);
+	*arr=0;
 }
 void			array_fit(ArrayHandle *arr, size_t pad)//can be nullptr
 {
@@ -804,10 +835,7 @@ BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key, 
 		{
 			temp=node[0]->right;
 			if(map->destructor&&call_destructor)
-			//{
-			//	printf("DESTROYING %p %p\n", node, node?*node:0);//MARKER
 				map->destructor(node[0]->data);
-			//}
 			free(*node);
 			*node=temp;
 			--map->nnodes;
@@ -817,10 +845,7 @@ BSTNodeHandle*	map_erase_r(MapHandle map, BSTNodeHandle *node, const void *key, 
 		{
 			temp=node[0]->left;
 			if(map->destructor&&call_destructor)
-			//{
-			//	printf("DESTROYING %p %p\n", node, node?*node:0);//MARKER
 				map->destructor(node[0]->data);
-			//}
 			free(*node);
 			*node=temp;
 			--map->nnodes;
