@@ -287,6 +287,11 @@ typedef struct LexedFileStruct
 	int filename_len;
 } LexedFile;
 
+typedef enum MacroArgCountEnum
+{
+	MACRO_NO_ARGLIST=-1,
+	MACRO_EMPTY_ARGLIST=0,
+} MacroArgCount;
 typedef struct MacroStruct
 {
 	char *name;//THE KEY, should be the first attribute, belongs to strlib

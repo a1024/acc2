@@ -16,8 +16,12 @@ PreDef		predefs[]=
 	{"__STDC__", T_VAL_I32, (const char*)1},
 
 	{"__ACC__", T_VAL_I32, (const char*)1},
+
 //	{"__GNUC__", T_VAL_I32, (const char*)11},//__builtin_...
+
 	{"_MSC_VER", T_VAL_I32, (const char*)1800},
+	{"_M_AMD64", T_VAL_I32, (const char*)100},//x86-64		TODO: target option
+//	{"_M_IX86", T_VAL_I32, (const char*)600},//x86
 
 	{"_WIN32", T_VAL_I32, (const char*)1},//TODO: make _WIN32 optional
 };

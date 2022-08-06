@@ -1713,11 +1713,6 @@ void		macros_debugprint(MapHandle macros)
 	printf("\n");
 }
 
-typedef enum MacroArgCountEnum
-{
-	MACRO_NO_ARGLIST=-1,
-	MACRO_EMPTY_ARGLIST=0,
-} MacroArgCount;
 typedef struct MacroArgStruct
 {
 	const char *name;//key
@@ -1958,17 +1953,14 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 	int ntokens=(int)tokens->count;
 	if(start+1>=ntokens)
 	{
-		token=start<ntokens?TOKENS_AT(tokens, start):0;
-		pp_error(token, "Macro \'%s\' needs %d arguments, got EOF.", macro->name, macro->nargs);
 		*ret_len=1;
-		return 0;
+		return 2;//macro has an arglist, called without an arglist, not an error, simply leave the identifier as it is
 	}
 	token=TOKENS_AT(tokens, start+1);
 	if(token->type!=T_LPR)
 	{
-		pp_error(token, "Macro \'%s\' needs %d arguments, missing argument list.", macro->name, macro->nargs);
 		*ret_len=1;
-		return 0;
+		return 2;//macro has an arglist, called without an arglist, not an error, simply leave the identifier as it is
 	}
 	int k0=start+2, end=k0, nargs=0, level=1;
 	for(;end<ntokens&&level>0;++end)
@@ -2008,7 +2000,7 @@ static int	macro_find_call_extent(Macro *macro, ArrayHandle tokens, int start, i
 		if(nargs<macro->nargs)
 		{
 			token=TOKENS_AT(tokens, start);
-			pp_error(token, "Variadic macro \'%s\' needs at least %d arguments, got %d.", macro->name, macro->nargs, nargs);
+			pp_error(token, "Macro \'%s\' needs >= %d args, got %d.", macro->name, macro->nargs, nargs);
 			return 0;
 		}
 	}
@@ -2101,7 +2093,9 @@ static void	macro_paste(Token const *t_left, Macro *macro, int *kt, ArrayHandle 
 typedef struct MacroCallStruct
 {
 	Macro *macro;
-	ArrayHandle args;//array of arrays of tokens
+	ArrayHandle
+		args,//array of arrays of tokens
+		remainder;//array of tokens appended to dst after expansion
 	int kt,//macro definition index
 		kt2,//macro call argument index, use on args when macrodefinition[kt] is an arg
 		expansion_start,//dst index
@@ -2110,7 +2104,8 @@ typedef struct MacroCallStruct
 static void macrocall_destructor(void *data)
 {
 	MacroCall *call=(MacroCall*)data;
-	array_free(&call->args);//macro_arg_destructor
+	array_free(&call->args);
+	array_free(&call->remainder);
 }
 static void macro_expand_file		(Token const *src, Token *dst)
 {
@@ -2152,6 +2147,7 @@ static void macro_expand_timestamp	(Token const *src, Token *dst)
 static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks, ArrayHandle *dst)//returns ntokens in call
 {
 	int len;//initial macro call length
+	int success;
 	DList context;//a stack of macro calls
 	MacroCall *topcall;
 	Macro *m2;
@@ -2160,10 +2156,18 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 	dlist_init(&context, sizeof(MacroCall), 4, macrocall_destructor);
 	topcall=(MacroCall*)dlist_push_back(&context, 0);
 	topcall->macro=macro;
-	if(!macro_find_call_extent(macro, src, *ks, &len, &topcall->args))
+	success=macro_find_call_extent(macro, src, *ks, &len, &topcall->args);
+	if(!success)
 	{
 		*ks+=len;
-		//error_pp(TOKENS_AT(src, *ks), "Invalid macro call.");//redundant error message
+		dlist_clear(&context);
+		return len;
+	}
+	if(success==2)
+	{
+		token=TOKENS_AT(src, *ks);
+		ARRAY_APPEND(*dst, token, 1, 1, 0);
+		*ks+=len;
 		dlist_clear(&context);
 		return len;
 	}
@@ -2276,7 +2280,13 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 								Macro *macro3=(Macro*)result[0]->data;
 								int len2=0;
 								ArrayHandle args=0;
-								if(macro_find_call_extent(macro3, *arg, topcall->kt2, &len2, &args))
+								success=macro_find_call_extent(macro3, *arg, topcall->kt2, &len2, &args);
+								if(success==2)
+								{
+									array_free(&args);
+									ARRAY_APPEND(*dst, token, 1, 1, 0);
+								}
+								else if(success)
 								{
 									if(macro3->tokens)
 										ARRAY_APPEND(*dst, 0, 0, 1, macro3->tokens->count);
@@ -2290,8 +2300,6 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 								
 									goto macro_expand_again;//should resume here after macro is expanded
 								}
-								//else
-								//	error_pp(TOKENS_AT(*dst, kd2-1), "Invalid macro call.");//redundant error message
 							}
 						}
 						token=TOKENS_AT(*arg, topcall->kt2);
@@ -2308,6 +2316,10 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 				++topcall->kt;
 			}
 		}//end while
+
+		if(topcall->remainder)
+			ARRAY_APPEND(*dst, topcall->remainder->data, topcall->remainder->count, 1, 0);
+
 		for(int kd2=topcall->expansion_start;kd2<(int)dst[0]->count;++kd2)//check the new expansion for macro calls with recursion guard
 		{
 			token=TOKENS_AT(*dst, kd2);
@@ -2318,11 +2330,11 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 					BSTNodeHandle *result=MAP_FIND(macros, &token->str);
 					if(result)
 					{
-						Macro *macro3=(Macro*)result[0]->data;
-						int level, kd3, len2=0;
+						Macro *macro3;
 						DListIterator it;
 						MacroCall *call;
 
+						macro3=(Macro*)result[0]->data;
 						dlist_last(&context, &it);//recursion guard: iterate through previous unfinished calls, if macro appeared before: don't expand macro
 						while(dlist_it_dec(&it))//start with previous call
 						{
@@ -2334,36 +2346,40 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 							}
 						}
 
-						//complete parens in dst
-						level=0;
-						kd3=0;
-						for(;kd3<(int)dst[0]->count;++kd3)
+						if(macro3->nargs!=MACRO_NO_ARGLIST)//write to dst from src till matching closing parenthesis
 						{
-							Token *token3=TOKENS_AT(*dst, kd3);
-							level+=(token3->type==T_LPR)-(token3->type==T_RPR);
-						}
-						if(level>0)
-						{
-							for(;*ks+len<(int)src->count;++len, ++kd3)
+							int level, kd3;
+
+							level=0, kd3=0;
+							for(;kd3<(int)dst[0]->count;++kd3)
 							{
-								Token *token3=TOKENS_AT(src, *ks+len);
+								Token *token3=TOKENS_AT(*dst, kd3);
 								level+=(token3->type==T_LPR)-(token3->type==T_RPR);
-								ARRAY_APPEND(*dst, token3, 1, 1, 0);
-								if(!level)//should be below the loop body, for 'do while' behavior
+							}
+							if(level>0)
+							{
+								for(;*ks+len<(int)src->count;++len, ++kd3)
 								{
-									++kd3;//skip RPR
-									break;
+									Token *token3=TOKENS_AT(src, *ks+len);
+									level+=(token3->type==T_LPR)-(token3->type==T_RPR);
+									ARRAY_APPEND(*dst, token3, 1, 1, 0);
+									if(!level)//should be below the loop body, for a 'do while' behavior
+									{
+										++kd3;//skip RPR
+										break;
+									}
 								}
 							}
 						}
 						
 						ArrayHandle args=0;
-						if(macro_find_call_extent(macro3, *dst, kd2, &len2, &args))//X  what if the rest is in src?
+						int len2;
+						success=macro_find_call_extent(macro3, *dst, kd2, &len2, &args);
+						if(success==1)
 						{
 							if(macro3->tokens)
 								ARRAY_APPEND(*dst, 0, 0, 1, macro3->tokens->count);
-							dst[0]->count=kd2;//go back
-							topcall->done=1;//this keeps track of previous macro calls, to guard against infinite cyclic expansion
+							topcall->done=1;//keep previous macro calls, to guard against infinite cyclic expansion
 
 							topcall=dlist_push_back(&context, 0);//request to expand this argument
 							topcall->macro=macro3;
@@ -2371,6 +2387,13 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 							topcall->kt2=0;
 							topcall->expansion_start=dst[0]->count;
 
+							kd2+=len2;
+							if(kd2<(int)dst[0]->count)//go back and save remainder
+							{
+								token=TOKENS_AT(*dst, kd2);
+								ARRAY_ALLOC(Token, topcall->remainder, token, dst[0]->count-kd2, 0, 0);
+								dst[0]->count=kd2-len2;
+							}
 							goto macro_expand_again;
 						}
 					macro_expand_skip:
@@ -2428,10 +2451,11 @@ again:
 	case T_ID://must be a macro
 		{
 			BSTNodeHandle *node;
+			Macro *macro;
 			ArrayHandle dst;
 			
-			if(!strcmp(currentfile->filename, "D:/Programs/msys2/mingw64/include/_mingw.h"))//MARKER
-				eval_token=eval_token;
+			//if(!strcmp(currentfile->filename, "D:/Programs/msys2/mingw64/include/_mingw.h"))//MARKER
+			//	eval_token=eval_token;
 
 			node=MAP_FIND(eval_macros, &eval_token->str);
 			if(!node)//undefined macros evaluate to zero
@@ -2441,7 +2465,8 @@ again:
 			}
 			ARRAY_ALLOC(Token, dst, 0, 0, 0, 0);
 			eval_idx-=eval_idx>0;//eval_idx points at next token
-			macro_expand(eval_macros, (Macro*)node[0]->data, eval_tokens, &eval_idx, &dst);
+			macro=(Macro*)node[0]->data;
+			macro_expand(eval_macros, macro, eval_tokens, &eval_idx, &dst);
 			if(eval_idx<eval_end)
 			{
 				eval_token=EVAL_DEREF();
@@ -2475,6 +2500,9 @@ again:
 		break;
 	case T_LPR:
 		{
+			//Token const *t2=eval_token;//MARKER
+			//int idx=eval_idx;
+
 			eval_next();//skip LPR
 			long long result=eval_ternary();
 			if(!eval_token||eval_token->type!=T_RPR)
@@ -2962,8 +2990,15 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 		{
 			token=TOKENS_AT(lf->tokens, bm->ks);
 
-			//if(currentfile->filename==DEBUG_filename&&token->line==641)//MARKER
-			//	token=token;
+			//if(currentfile->filename==DEBUG_filename)//MARKER
+			//{
+			//	if(token->type==T_HASH)
+			//	{
+			//		Token *t2=TOKENS_AT(lf->tokens, bm->ks+1);
+			//		if(t2->type==T_ERROR)
+			//			token=token;
+			//	}
+			//}
 
 			switch(token->type)
 			{
@@ -3003,8 +3038,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 								pp_error(token, "Macro \'%s\' redefined.", token->str);
 							macro_define(macro, currentfile, token, k-bm->ks);
 						}
-						token=TOKENS_AT(lf->tokens, bm->ks);
-						bm->ks=k+(token->type==T_NEWLINE);//skip possible newline
+						bm->ks=k+(k<ntokens);//skip newline
 					}
 					PROF(DEFINE);
 					map_rebalance(macros);
@@ -3097,7 +3131,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 					{
 						++bm->ks;//skip ENDIF
 						if(!bm->iflevel)
-							pp_error(token, "Enedpected #endif.");
+							pp_error(token, "Unexpected #endif.");
 						else
 							--bm->iflevel;
 						int start=bm->ks;
@@ -3111,7 +3145,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 
 				case T_INCLUDE:
 					{
-						char *inc=0;
+						char *inc, custom;
 						int k;
 						++bm->ks;//skip INCLUDE
 						if(bm->ks>=ntokens)
@@ -3121,6 +3155,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 						}
 						token=TOKENS_AT(lf->tokens, bm->ks);
 
+						inc=0;
 						if(token->type==T_ID)
 						{
 							BSTNodeHandle *result=MAP_FIND(macros, &token->str);
@@ -3139,7 +3174,10 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 									if(t2->type!=T_INCLUDENAME_STD&&t2->type!=T_VAL_STR)
 										pp_error(t2, "Expected include file name.");
 									else
+									{
 										inc=t2->str;
+										custom=t2->type==T_VAL_STR;
+									}
 								}
 								array_free(&dst);
 							}
@@ -3149,8 +3187,11 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							if(token->type!=T_INCLUDENAME_STD&&token->type!=T_VAL_STR)
 								pp_error(token, "Expected include file name.");
 							else
+							{
 								inc=token->str;
-							bm->ks+=k<ntokens;//skip include name
+								custom=token->type==T_VAL_STR;
+							}
+							bm->ks+=bm->ks<ntokens;//skip include name
 						}
 
 						k=skip_till_newline(lf->tokens, bm->ks);//skip include preprocessor directive
@@ -3160,9 +3201,9 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 
 						if(inc)
 						{
-							char *filename2=find_include(inc, token->type==T_VAL_STR, includepaths);
+							char *filename2=find_include(inc, custom, includepaths);
 						
-							//if(!strcmp(inc, "crtdefs.h"))//MARKER
+							//if(!strcmp(inc, "vadefs.h"))//MARKER
 							//	DEBUG_filename=filename2;
 
 							if(!filename2)
@@ -3222,6 +3263,16 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 						token=TOKENS_AT(lf->tokens, bm->ks);
 						if(bm->ks<ntokens&&token->type==T_VAL_STR)
 						{
+						/*	{
+								ArrayHandle text=0;//MARKER
+								ret=0;
+								dlist_appendtoarray(&tokens, &ret);
+								tokens2text(ret, &text);
+								array_free(&ret);
+								printf("%s", text->data);
+								array_free(&text);
+							}//*/
+
 							pp_error(token, "%s", token->str);//error message may contain '%'
 							bm->ks=skip_till_newline(lf->tokens, bm->ks);
 							bm->ks+=bm->ks<ntokens;
