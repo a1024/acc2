@@ -8,6 +8,8 @@
 const char *std_includes[]=//hardcoded: a temporary measure		//folders end with slash
 {
 	"D:/Programs/msys2/mingw64/include/",
+	"D:/Programs/msys2/mingw64/lib/gcc/x86_64-w64-mingw32/11.3.0/include/",
+
 //	"C:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include/",
 //	"C:/Program Files (x86)/Windows Kits/8.1/Include/um/",
 };

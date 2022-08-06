@@ -1,5 +1,4 @@
-#define		ACC_HEADER	"acc.h"
-#include	ACC_HEADER
+#include	"acc.h"
 #include	<stdio.h>
 #include	<stdlib.h>
 #include	<stdarg.h>
@@ -1403,11 +1402,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				if(p[k]=='<'&&p[k2]=='>')
 					lex_push_string(&tokens, T_INCLUDENAME_STD, STR_LITERAL, p, len, k+1, k2-(k+1), linestart, lineno);
 				else
-				{
-					//error: unmatched chevron
-					lex_error(p, len, k, "Unmatched include chevron: [%d]: %s, [%d] %s\n", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
-					//printf("Lexer: line %d: unmatched include chevron: [%d]: %s, [%d] %s\n", lineno+1, k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
-				}
+					lex_error(p, len, k, "Unmatched #include chevron: [%d]: %s, [%d] %s\n", k+1-linestart, describe_char(p[k]), k2-linestart, describe_char(p[k2]));
 				k=k2+1;
 			}
 			else
@@ -1439,9 +1434,12 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 
 	dlist_appendtoarray(&tokens, &lf->tokens);
 	dlist_clear(&tokens);
-	BM_FINISH("Lex \'%s\':\t%lfms\n", lf->filename, bm_t1);
+	if(lf->filename)
+	{
+		BM_FINISH("Lex \'%s\':\t%lfms\n", lf->filename, bm_t1);
 
-	BM_START();
+		BM_START();
+	}
 	map_rebalance(&strlib);
 	BM_FINISH("Rebalance strlib:\t%lfms\n", bm_t1);
 	return 1;
@@ -2095,7 +2093,7 @@ typedef struct MacroCallStruct
 	Macro *macro;
 	ArrayHandle
 		args,//array of arrays of tokens
-		remainder;//array of tokens appended to dst after expansion
+		remainder;//array of tokens, appended to dst after expansion
 	int kt,//macro definition index
 		kt2,//macro call argument index, use on args when macrodefinition[kt] is an arg
 		expansion_start,//dst index
@@ -2339,7 +2337,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 						while(dlist_it_dec(&it))//start with previous call
 						{
 							call=(MacroCall*)dlist_it_deref(&it);
-							if(call->macro->name==macro3->name)
+							if(!call->done&&call->macro->name==macro3->name)//https://www.open-std.org/jtc1/sc22/wg21/docs/cwg_active.html#268
 							{
 								pp_error(token, "Stopped expanding cyclic macro \'%s\'", token->str);
 								goto macro_expand_skip;
@@ -2379,21 +2377,22 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 						{
 							if(macro3->tokens)
 								ARRAY_APPEND(*dst, 0, 0, 1, macro3->tokens->count);
-							topcall->done=1;//keep previous macro calls, to guard against infinite cyclic expansion
+							topcall->done=1;//keep previous macro calls, to guard against infinite cyclic expansion		X  the recursion guard now ignores these
 
 							topcall=dlist_push_back(&context, 0);//request to expand this argument
 							topcall->macro=macro3;
 							topcall->args=args;
 							topcall->kt2=0;
-							topcall->expansion_start=dst[0]->count;
+							topcall->expansion_start=kd2;
 
-							kd2+=len2;
-							if(kd2<(int)dst[0]->count)//go back and save remainder
+							int kd_end=kd2+len2;
+							if(kd_end<(int)dst[0]->count)//save remainder
 							{
-								token=TOKENS_AT(*dst, kd2);
-								ARRAY_ALLOC(Token, topcall->remainder, token, dst[0]->count-kd2, 0, 0);
-								dst[0]->count=kd2-len2;
+								token=TOKENS_AT(*dst, kd_end);
+								ARRAY_ALLOC(Token, topcall->remainder, token, dst[0]->count-kd_end, 0, 0);
 							}
+							dst[0]->count=kd2;//go back
+
 							goto macro_expand_again;
 						}
 					macro_expand_skip:
@@ -3331,7 +3330,8 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 						ARRAY_ALLOC(Token, dst, 0, 0, 0, 0);
 						macro=(Macro*)result[0]->data;
 
-						//if(!strcmp(macro->name, "_In_opt_z_"))//MARKER
+						//if(!strcmp(macro->name, "_In_opt_z_"))
+						//if(!strcmp(macro->name, "LOL"))//MARKER
 						//	macro=macro;
 
 						macro_expand(macros, macro, lf->tokens, &bm->ks, &dst);
@@ -3470,7 +3470,7 @@ void		tokens2text(ArrayHandle tokens, ArrayHandle *str)
 	for(int k=0;k<ntokens;++k)
 	{
 		token=(Token*)array_at(&tokens, k);
-		if(!spaceprinted&&token->ws_before)
+		if(k&&!spaceprinted&&token->ws_before)
 			STR_APPEND(*str, " ", 1, 1);
 		spaceprinted=0;
 		token_append2str(str, token);

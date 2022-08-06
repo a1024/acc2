@@ -669,13 +669,13 @@ void			dlist_appendtoarray(DListHandle list, ArrayHandle *dst)
 	}
 	it=list->i;
 	payloadsize=list->objpernode*list->objsize;
-	for(size_t offset=0;it;)
+	for(size_t offset=dst[0]->count;it;)
 	{
 		memcpy(dst[0]->data+offset*list->objsize, it->data, payloadsize);
 		offset+=list->objpernode;
 		it=it->next;
 	}
-	dst[0]->count=list->nobj;
+	dst[0]->count+=list->nobj;
 }
 
 void*			dlist_push_back(DListHandle list, const void *obj)
