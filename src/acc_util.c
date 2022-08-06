@@ -342,10 +342,11 @@ int				file_is_readable(const char *filename)//0: not readable, 1: regular file,
 		return 1+!S_ISREG(info.st_mode);
 	return 0;
 }
-char*			load_text(const char *filename, size_t *len)
+ArrayHandle		load_text(const char *filename, int pad)
 {
 	struct stat info={0};
 	FILE *f;
+	ArrayHandle str;
 
 	int error=stat(filename, &info);
 	if(error)
@@ -356,12 +357,11 @@ char*			load_text(const char *filename, size_t *len)
 	f=fopen(filename, "r");
 	//f=fopen(filename, "rb");
 	//f=fopen(filename, "r, ccs=UTF-8");//gets converted to UTF-16 on Windows
-	char *str=(char*)malloc(info.st_size+1);
-	size_t readbytes=fread(str, 1, info.st_size, f);
+
+	str=array_construct(0, 1, info.st_size, 1, pad+1, 0);
+	str->count=fread(str->data, 1, info.st_size, f);
 	fclose(f);
-	str[readbytes]=0;
-	if(len)
-		*len=readbytes;
+	memset(str->data+str->count, 0, str->cap-str->count);
 	return str;
 }
 int				save_text(const char *filename, const char *text, size_t len)
@@ -496,7 +496,7 @@ void*			array_erase(ArrayHandle *arr, size_t idx, size_t count)
 		LOG_ERROR("array_erase() out of bounds: idx=%lld count=%lld size=%lld", (long long)idx, (long long)count, (long long)arr[0]->count);
 		if(arr[0]->count<idx)
 			return 0;
-		count=arr[0]->count-idx;//erase till end of array if OOB
+		count=arr[0]->count-idx;//erase till end of array if just idx+count is OOB
 	}
 	if(arr[0]->destructor)
 	{
@@ -506,6 +506,44 @@ void*			array_erase(ArrayHandle *arr, size_t idx, size_t count)
 	memmove(arr[0]->data+idx*arr[0]->esize, arr[0]->data+(idx+count)*arr[0]->esize, (arr[0]->count-(idx+count))*arr[0]->esize);
 	arr[0]->count-=count;
 	return arr[0]->data+idx*arr[0]->esize;
+}
+void*			array_replace(ArrayHandle *arr, size_t idx, size_t rem_count, const void *data, size_t ins_count, size_t rep, size_t pad)
+{
+	size_t k, c0, c1, start, srcsize, dstsize;
+
+	ASSERT_P(*arr);
+	if(arr[0]->count<idx+rem_count)
+	{
+		LOG_ERROR("array_replace() out of bounds: idx=%lld rem_count=%lld size=%lld ins_count=%lld", (long long)idx, (long long)rem_count, (long long)arr[0]->count, (long long)ins_count);
+		if(arr[0]->count<idx)
+			return 0;
+		rem_count=arr[0]->count-idx;//erase till end of array if just idx+count is OOB
+	}
+	if(arr[0]->destructor)
+	{
+		for(k=0;k<rem_count;++k)//destroy removed objects
+			arr[0]->destructor(array_at(arr, idx+k));
+	}
+	start=idx*arr[0]->esize;
+	srcsize=ins_count*arr[0]->esize;
+	dstsize=rep*srcsize;
+	c0=arr[0]->count;//copy original count
+	c1=arr[0]->count+rep*ins_count-rem_count;//calculate new count
+
+	if(ins_count!=rem_count||(c1+pad)*arr[0]->esize>arr[0]->cap)//resize array
+		array_realloc(arr, c1, pad);
+
+	if(ins_count!=rem_count)//shift objects
+		memmove(arr[0]->data+(idx+ins_count)*arr[0]->esize, arr[0]->data+(idx+rem_count)*arr[0]->esize, (c0-(idx+rem_count))*arr[0]->esize);
+
+	if(dstsize)//initialize inserted range
+	{
+		if(data)
+			memfill(arr[0]->data+start, data, dstsize, srcsize);
+		else
+			memset(arr[0]->data+start, 0, dstsize);
+	}
+	return arr[0]->data+start;//return start of inserted range
 }
 
 size_t			array_size(ArrayHandle const *arr)//can be nullptr
@@ -613,23 +651,31 @@ void			dlist_clear(DListHandle list)
 		list->nobj=list->nnodes=0;
 	}
 }
-ArrayHandle		dlist_toarray(DListHandle list)
+void			dlist_appendtoarray(DListHandle list, ArrayHandle *dst)
 {
-	ArrayHandle arr;
 	DNodeHandle it;
 	size_t payloadsize;
 
-	arr=array_construct(0, list->objsize, 0, 0, list->nnodes*list->objpernode, list->destructor);
+	if(!*dst)
+		*dst=array_construct(0, list->objsize, 0, 0, list->nnodes*list->objpernode, list->destructor);
+	else
+	{
+		if(dst[0]->esize!=list->objsize)
+		{
+			LOG_ERROR("dlist_appendtoarray(): dst->esize=%d, list->objsize=%d", dst[0]->esize, list->objsize);
+			return;
+		}
+		ARRAY_APPEND(*dst, 0, 0, 0, list->nnodes*list->objpernode);
+	}
 	it=list->i;
 	payloadsize=list->objpernode*list->objsize;
 	for(size_t offset=0;it;)
 	{
-		memcpy(arr->data+offset*list->objsize, it->data, payloadsize);
+		memcpy(dst[0]->data+offset*list->objsize, it->data, payloadsize);
 		offset+=list->objpernode;
 		it=it->next;
 	}
-	arr->count=list->nobj;
-	return arr;
+	dst[0]->count=list->nobj;
 }
 
 void*			dlist_push_back(DListHandle list, const void *obj)
@@ -700,7 +746,7 @@ void			dlist_last(DListHandle list, DListItHandle it)
 {
 	it->list=list;
 	it->node=list->f;
-	it->obj_idx=list->nobj-1;
+	it->obj_idx=(list->nobj-1)%list->objpernode;
 }
 void*			dlist_it_deref(DListItHandle it)
 {
@@ -710,28 +756,32 @@ void*			dlist_it_deref(DListItHandle it)
 		LOG_ERROR("dlist_it_deref() node == nullptr");
 	return it->node->data+it->obj_idx%it->list->objpernode*it->list->objsize;
 }
-void			dlist_it_inc(DListItHandle it)
+int				dlist_it_inc(DListItHandle it)
 {
 	++it->obj_idx;
 	if(it->obj_idx>=it->list->objpernode)
 	{
 		it->obj_idx=0;
-		if(!it->node)
-			LOG_ERROR("dlist_it_inc() attempting to read node == nullptr");
+		if(!it->node||!it->node->next)
+			return 0;
+			//LOG_ERROR("dlist_it_inc() attempting to read node == nullptr");
 		it->node=it->node->next;
 	}
+	return 1;
 }
-void			dlist_it_dec(DListItHandle it)
+int				dlist_it_dec(DListItHandle it)
 {
 	if(it->obj_idx)
 		--it->obj_idx;
 	else
 	{
-		if(!it->node)
-			LOG_ERROR("dlist_it_dec() attempting to read node == nullptr");
+		if(!it->node||!it->node->prev)
+			return 0;
+			//LOG_ERROR("dlist_it_dec() attempting to read node == nullptr");
 		it->node=it->node->prev;
 		it->obj_idx=it->list->objpernode-1;
 	}
+	return 1;
 }
 #endif
 

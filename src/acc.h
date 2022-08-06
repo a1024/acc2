@@ -1,3 +1,4 @@
+#pragma once
 #ifndef ACC_H
 #define ACC_H
 #ifdef _MSC_VER
@@ -14,7 +15,7 @@ extern "C"
 //utility
 #define			SIZEOF(ARR)		(sizeof(ARR)/sizeof(*(ARR)))
 #ifndef _MSC_VER
-#define	sprintf_s	snprintf
+#define			sprintf_s	snprintf
 #endif
 #define			G_BUF_SIZE	2048
 extern char		g_buf[G_BUF_SIZE];
@@ -54,11 +55,6 @@ int				valid(const void *p);
 #define			ASSERT(SUCCESS)			((SUCCESS)!=0||log_error(file, __LINE__, #SUCCESS))
 #define			ASSERT_P(POINTER)		(valid(POINTER)||log_error(file, __LINE__, #POINTER " == 0"))
 
-//file I/O
-int				file_is_readable(const char *filename);//0: not readable, 1: regular file, 2: folder
-char*			load_text(const char *filename, size_t *len);//don't forget to free string
-int				save_text(const char *filename, const char *text, size_t len);
-
 
 //array
 #if 1
@@ -89,6 +85,7 @@ void			array_fit(ArrayHandle *arr, size_t pad);
 
 void*			array_insert(ArrayHandle *arr, size_t idx, const void *data, size_t count, size_t rep, size_t pad);//cannot be nullptr
 void*			array_erase(ArrayHandle *arr, size_t idx, size_t count);
+void*			array_replace(ArrayHandle *arr, size_t idx, size_t rem_count, const void *data, size_t ins_count, size_t rep, size_t pad);
 
 size_t			array_size(ArrayHandle const *arr);
 void*			array_at(ArrayHandle *arr, size_t idx);
@@ -146,7 +143,7 @@ typedef struct DListStruct
 void			dlist_init(DListHandle list, size_t objsize, size_t objpernode, void (*destructor)(void*));
 void			dlist_copy(DListHandle dst, DListHandle src);
 void			dlist_clear(DListHandle list);
-ArrayHandle		dlist_toarray(DListHandle list);
+void			dlist_appendtoarray(DListHandle list, ArrayHandle *dst);
 
 void*			dlist_push_back(DListHandle list, const void *obj);//shallow copy of obj	TODO dlist_push_back(array)
 void*			dlist_back(DListHandle list);//returns address of last object
@@ -162,8 +159,8 @@ typedef struct DListIteratorStruct
 void			dlist_first(DListHandle list, DListItHandle it);
 void			dlist_last(DListHandle list, DListItHandle it);
 void*			dlist_it_deref(DListItHandle it);
-void			dlist_it_inc(DListItHandle it);
-void			dlist_it_dec(DListItHandle it);
+int				dlist_it_inc(DListItHandle it);
+int				dlist_it_dec(DListItHandle it);
 #endif
 
 //stack - a single-linked list		USE DLIST INSTEAD
@@ -224,6 +221,12 @@ void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNode
 #endif
 
 
+//file I/O
+int				file_is_readable(const char *filename);//0: not readable, 1: regular file, 2: folder
+ArrayHandle		load_text(const char *filename, int pad);//don't forget to free string
+int				save_text(const char *filename, const char *text, size_t len);
+
+
 //acc
 extern char		*currentdate, *currenttime, *currenttimestamp;
 #define			CASE_MASK			0xDF
@@ -255,7 +258,7 @@ typedef struct TokenStruct//32 bytes
 				ws_after:1, nl_after:1,
 				synth:1,
 				base:2,//NumberBase
-				lexme:1;
+				lexme:1;//FIXME: remove this flag
 		};
 	};
 	union
@@ -269,16 +272,30 @@ typedef struct TokenStruct//32 bytes
 	};
 } Token;
 
+typedef enum LexFlagsEnum
+{
+	LEX_NORMAL,
+	LEX_INCLUDE_ONCE,
+} LexFlags;
+typedef struct LexedFileStruct
+{
+	char *filename;//belongs to strlib
+	ArrayHandle
+		text,//string, must be over-allocated by 16 bytes
+		tokens;//array of tokens
+	LexFlags flags;
+	int filename_len;
+} LexedFile;
+
 typedef struct MacroStruct
 {
-	const char
-		*name,			//THE KEY, should be the first attribute, belongs to strlib
-		*srcfilename;	//belongs to strlib
+	char *name;//THE KEY, should be the first attribute, belongs to strlib
+	LexedFile *srcfile;//check for nullptr (in pre-defined macros)
 	int nargs,//enum MacroArgCount
 		is_va;
 	ArrayHandle tokens;
 } Macro;
-int macro_define(Macro *dst, const char *srcfilename, Token const *tokens, int count);//tokens points at after '#define', undef macro on error
+//int macro_define(Macro *dst, LexedFile *srcfile, Token const *tokens, int count);//tokens points at after '#define', undef macro on error
 
 extern Map	strlib;//don't clear strlib until the program quits		TODO: pass as argument
 char*		strlib_insert(const char *str, int len);

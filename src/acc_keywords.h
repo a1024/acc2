@@ -164,8 +164,8 @@
 	TOKEN("//", T_LINECOMMENTMARK) TOKEN("/*", T_BLOCKCOMMENTMARK)
 
 	//preprocessor
-	TOKEN(0, T_LEXME)
 	TOKEN(0, T_MACRO_ARG)
+	//TOKEN(0, T_LEXME)//X  lexing is context-free
 
 	TOKEN(0, T_NTOKENS)
 

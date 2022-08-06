@@ -5,19 +5,19 @@
 #include	<Windows.h>
 #endif
 
-const char *std_includes[]=//hardcoded: a temporary measure
+const char *std_includes[]=//hardcoded: a temporary measure		//folders end with slash
 {
-	"C:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include/",//ENDS WITH SLASH BECAUSE IT'S A FOLDER
-	"C:/Program Files (x86)/Windows Kits/8.1/Include/um/",
+	"D:/Programs/msys2/mingw64/include/",
+//	"C:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include/",
+//	"C:/Program Files (x86)/Windows Kits/8.1/Include/um/",
 };
 PreDef		predefs[]=
 {
-	//{"__DATE__", T_VAL_STR, 0},//first 3 predefs are date, time & timestamp	X
-	//{"__TIME__", T_VAL_STR, 0},
-	//{"__TIMESTAMP__", T_VAL_STR, 0},
-
 	{"__STDC__", T_VAL_I32, (const char*)1},
+
 	{"__ACC__", T_VAL_I32, (const char*)1},
+//	{"__GNUC__", T_VAL_I32, (const char*)11},//__builtin_...
+	{"_MSC_VER", T_VAL_I32, (const char*)1800},
 
 	{"_WIN32", T_VAL_I32, (const char*)1},//TODO: make _WIN32 optional
 };
