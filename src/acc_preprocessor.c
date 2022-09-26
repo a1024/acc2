@@ -1,11 +1,16 @@
-#include	"acc.h"
-#include	<stdio.h>
-#include	<stdlib.h>
-#include	<stdarg.h>
-#include	<string.h>
-#include	<ctype.h>
-#include	<math.h>
-#include	<time.h>
+#include"acc.h"
+#include<stdio.h>
+#include<stdlib.h>
+#include<stdarg.h>
+#include<string.h>
+#include<ctype.h>
+#include<math.h>
+#include<time.h>
+#ifdef __linux__
+#include<x86intrin.h>
+#else
+#include<intrin.h>
+#endif
 static const char file[]=__FILE__;
 
 //	#define	PRINT_LEX
@@ -78,14 +83,17 @@ void			prof_end()
 #endif
 
 
+//maintained by preprocess:				not by l e x because l e x is also used by t o k e n   p a s t e
 const char	*str_va_args=0, *str_pragma_once=0;
 LexedFile	*currentfile=0;
+
 char		*currentdate=0, *currenttime=0, *currenttimestamp=0;
+
 void		lex_error(const char *text, int len, int pos, const char *format, ...);
 
 //string library
 Map			strlib={0};
-static void	strlib_printcallback(BSTNodeHandle *node, int depth)
+static void	strlib_printcallback(RBNodeHandle *node, int depth)
 {
 	char *str=*(char**)node[0]->data;
 	printf("%4d %*s%s\n", depth, depth, "", str);
@@ -124,22 +132,24 @@ void		strlib_destructor(void *data)
 char*		strlib_insert(const char *str, int len)
 {
 	String s2={str, len?len:strlen(str)};//str is not always null-terminated, but is sometimes of length 'len' instead
-	char *key;
+	char *key, **target;
 	int found;
-	BSTNodeHandle *node;
+	RBNodeHandle *node;
 
-	if(!strlib.cmp_key)
-		map_init(&strlib, sizeof(char*), 0, strlib_cmp, strlib_destructor);
+	if(!strlib.comparator)
+		map_init(&strlib, sizeof(char*), strlib_cmp, strlib_destructor);
 
-	node=MAP_INSERT(&strlib, &s2, 0, &found);		//search first then allocate
+	node=map_insert(&strlib, &s2, &found);		//search first then allocate
+	ASSERT(node&&*node);
+	target=(char**)node[0]->data;
 	if(!found)
 	{
 		key=(char*)malloc(s2.len+1);
 		memcpy(key, str, s2.len);
 		key[s2.len]=0;
-		*(char**)node[0]->data=key;
+		*target=key;
 	}
-	return *(char**)node[0]->data;
+	return *target;
 }
 
 
@@ -1440,8 +1450,8 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 
 		BM_START();
 	}
-	map_rebalance(&strlib);
-	BM_FINISH("Rebalance strlib:\t%lfms\n", bm_t1);
+	//map_rebalance(&strlib);//TODO: implement red-black tree	IN PROGRESS
+	//BM_FINISH("Rebalance strlib:\t%lfms\n", bm_t1);
 	return 1;
 }
 
@@ -1699,7 +1709,7 @@ static void macro_destructor(void *data)
 	Macro *macro=(Macro*)data;
 	array_free(&macro->tokens);
 }
-static void macros_debugprint_callback(BSTNodeHandle *node, int depth)
+static void macros_debugprint_callback(RBNodeHandle *node, int depth)
 {
 	Macro const *macro=(Macro const*)node[0]->data;
 	printf("%4d %*s%p %s\n", depth, depth, "", macro->name, macro->name);
@@ -1865,7 +1875,7 @@ int macro_define(Macro *dst, LexedFile *srcfile, Token const *tokens, int count)
 		isort(argnames->data, argnames->count, argnames->esize, macro_arg_sort_threeway);//sort args by name pointer value for fast lookup of arg index
 		for(kt=0;kt<count;++kt)
 		{
-			int idx;
+			size_t idx;
 			MacroArg *arg;
 
 			token2=(Token*)array_at(&dst->tokens, kt);
@@ -1927,8 +1937,8 @@ exit:
 
 
 //macro expansion
-#define	TOKENS_AT(TOKENS, IDX)			((Token*)array_at(&(TOKENS), IDX))
-#define	TOKENS_AT_CONST(TOKENS, IDX)	((Token const*)array_at_const(&(TOKENS), IDX))
+#define		TOKENS_AT(TOKENS, IDX)			((Token*)array_at(&(TOKENS), IDX))
+//#define	TOKENS_AT_CONST(TOKENS, IDX)	((Token const*)array_at_const(&(TOKENS), IDX))
 static void macro_arg_destructor(void *data)
 {
 	ArrayHandle *tokens=(ArrayHandle*)data;
@@ -2272,7 +2282,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 						token=TOKENS_AT(*arg, topcall->kt2);
 						if(token->type==T_ID)
 						{
-							BSTNodeHandle *result=MAP_FIND(macros, &token->str);
+							RBNodeHandle *result=map_find(macros, &token->str);
 							if(result)
 							{
 								Macro *macro3=(Macro*)result[0]->data;
@@ -2325,7 +2335,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 			{
 			case T_ID:
 				{
-					BSTNodeHandle *result=MAP_FIND(macros, &token->str);
+					RBNodeHandle *result=map_find(macros, &token->str);
 					if(result)
 					{
 						Macro *macro3;
@@ -2333,16 +2343,20 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 						MacroCall *call;
 
 						macro3=(Macro*)result[0]->data;
+
+#if 1
 						dlist_last(&context, &it);//recursion guard: iterate through previous unfinished calls, if macro appeared before: don't expand macro
 						while(dlist_it_dec(&it))//start with previous call
 						{
 							call=(MacroCall*)dlist_it_deref(&it);
-							if(!call->done&&call->macro->name==macro3->name)//https://www.open-std.org/jtc1/sc22/wg21/docs/cwg_active.html#268
+							//if(!call->done&&call->macro->name==macro3->name)//gets stuck	https://www.open-std.org/jtc1/sc22/wg21/docs/cwg_active.html#268
+							if(call->macro->name==macro3->name)
 							{
 								pp_error(token, "Stopped expanding cyclic macro \'%s\'", token->str);
 								goto macro_expand_skip;
 							}
 						}
+#endif
 
 						if(macro3->nargs!=MACRO_NO_ARGLIST)//write to dst from src till matching closing parenthesis
 						{
@@ -2423,7 +2437,7 @@ static int
 	eval_syntharray=0;//set to true after macro expansion (means the tokens array was replaced, and needs to be freed at the end)
 static Token const *eval_token=0;//current token, check for nullptr before reading
 static CTokenType eval_type=T_IGNORED;
-#define EVAL_DEREF()	TOKENS_AT_CONST(eval_tokens, eval_idx)
+#define EVAL_DEREF()	TOKENS_AT(eval_tokens, eval_idx)
 static void eval_next()//check if eval_token == nullptr
 {
 	int inc=eval_idx<eval_end;
@@ -2449,14 +2463,14 @@ again:
 	{
 	case T_ID://must be a macro
 		{
-			BSTNodeHandle *node;
+			RBNodeHandle *node;
 			Macro *macro;
 			ArrayHandle dst;
 			
 			//if(!strcmp(currentfile->filename, "D:/Programs/msys2/mingw64/include/_mingw.h"))//MARKER
 			//	eval_token=eval_token;
 
-			node=MAP_FIND(eval_macros, &eval_token->str);
+			node=map_find(eval_macros, &eval_token->str);
 			if(!node)//undefined macros evaluate to zero
 			{
 				eval_next();//skip ID
@@ -2512,7 +2526,7 @@ again:
 		break;
 	case T_DEFINED:
 		{
-			BSTNodeHandle *node;
+			RBNodeHandle *node;
 			int nparens=0;
 			eval_next();//skip DEFINED
 			while(eval_token&&eval_token->type==T_LPR)//skip and count opening parentheses
@@ -2525,7 +2539,7 @@ again:
 				pp_error(eval_token, "Expected an identifier.");
 				return 0;
 			}
-			node=MAP_FIND(eval_macros, &eval_token->str);
+			node=map_find(eval_macros, &eval_token->str);
 			eval_next();//skip ID
 			if(nparens>0)
 			{
@@ -2757,7 +2771,7 @@ static long long eval_expr(ArrayHandle tokens, int start, int end, MapHandle mac
 	{
 		Token const *token=0;
 		if(start<(int)tokens->count)
-			token=(Token const*)array_at_const(&tokens, start);
+			token=(Token const*)array_at(&tokens, start);
 		pp_error(token, "Expected an expression.");
 		return 0;
 	}
@@ -2830,9 +2844,9 @@ static char*	find_include(const char *includename, int custom, ArrayHandle inclu
 	//}
 	return 0;
 }
-static int		skip_till_newline(ArrayConstHandle tokens, int k)
+static int		skip_till_newline(ArrayHandle tokens, int k)
 {
-	for(;k<(int)tokens->count&&((Token const*)array_at_const(&tokens, k))->type!=T_NEWLINE;++k);
+	for(;k<(int)tokens->count&&((Token const*)array_at(&tokens, k))->type!=T_NEWLINE;++k);
 	return k;
 }
 static int		skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblock)
@@ -2845,11 +2859,11 @@ static int		skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblo
 	level=1;
 	while(*k<ntokens)
 	{
-		token=(Token const*)array_at_const(&tokens, *k);
+		token=(Token const*)array_at(&tokens, *k);
 		if(token->type==T_HASH)
 		{
 			++*k;
-			token=(Token const*)array_at_const(&tokens, *k);
+			token=(Token const*)array_at(&tokens, *k);
 			++*k;//k points at next token
 			switch(token->type)
 			{
@@ -2903,7 +2917,7 @@ static int		skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblo
 	}
 	if(*k>=ntokens)
 	{
-		token=(Token const*)array_at_const(&tokens, k0);
+		token=(Token const*)array_at(&tokens, k0);
 		pp_error(token, "Missing #endif");
 	}
 	return 0;
@@ -2913,7 +2927,6 @@ static int		skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblo
 //char *DEBUG_filename=0;//MARKER
 ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle includepaths, MapHandle lexlib)
 {
-	LexedFile *lf;
 	char *unique_fn;
 	DList tokens, bookmarks;
 	Bookmark *bm;
@@ -2921,7 +2934,8 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 	Macro *macro;
 	ArrayHandle ret;
 	long long bytes_processed;
-	int success;
+	int success, found;
+	RBNodeHandle *node;
 	BM_DECL;
 	
 	BM_START();
@@ -2934,41 +2948,53 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 	if(!str_pragma_once)
 		str_pragma_once=strlib_insert("once", 0);
 
-	if(!macros->cmp_key)
-		MAP_INIT(macros, char*, Macro, macro_cmp, macro_destructor);
+	if(!macros->comparator)
+		MAP_INIT(macros, Macro, macro_cmp, macro_destructor);
 
 	if(!includepaths)
 		ARRAY_ALLOC(ArrayHandle, includepaths, 0, 0, 0, 0);
 
-	if(!lexlib->key_size)
-		MAP_INIT(lexlib, const char*, LexedFile, lexlib_cmp, lexlib_destructor);
+	if(!lexlib->comparator)
+		MAP_INIT(lexlib, LexedFile, lexlib_cmp, lexlib_destructor);
 
 	unique_fn=strlib_insert(filename, 0);
-	BSTNodeHandle *result=MAP_FIND(lexlib, &unique_fn);
-	if(!result)
+	found=0;
+	node=map_insert(lexlib, &unique_fn, &found);
+	if(!node)
 	{
-		result=MAP_INSERT(lexlib, &unique_fn, 0, 0);
-		lf=(LexedFile*)result[0]->data;
-		lf->filename_len=(int)strlen(lf->filename);
-		success=lex(lf);
-		if(success)
-		{
-			currentfile=lf;
-			bytes_processed=lf->text->count;
-		}
+		LOG_ERROR("Internal data structure error: node=%p", node);
+		return 0;
 	}
+	if(!*node)
+	{
+		LOG_ERROR("Internal data structure error: *node=%p", *node);
+		return 0;
+	}
+	currentfile=(LexedFile*)node[0]->data;
+	if(found)
+		bytes_processed=0;
 	else
 	{
-		lf=(LexedFile*)result[0]->data;
-		bytes_processed=0;
+		currentfile->filename=unique_fn;
+		currentfile->filename_len=(int)strlen(unique_fn);
+		success=lex(currentfile);
+		if(success)
+			bytes_processed=currentfile->text->count;
+		else
+		{
+			LOG_ERROR("Failed to lex \'%s\'", unique_fn);
+			return 0;
+		}
 	}
-
-	if(!lf||!lf->tokens)
+	if(!currentfile->tokens)
+	{
+		LOG_ERROR("Failed to lex \'%s\'", unique_fn);
 		return 0;
+	}
 
 	dlist_init(&bookmarks, sizeof(Bookmark), 16, 0);//no destructor
 	bm=(Bookmark*)dlist_push_back(&bookmarks, 0);
-	bm->lf=lf;
+	bm->lf=currentfile;
 	bm->ks=0;
 	bm->iflevel=0;
 
@@ -2979,21 +3005,21 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 	{
 	preprocess_start:
 		bm=(Bookmark*)dlist_back(&bookmarks);
-		currentfile=lf=bm->lf;
+		currentfile=bm->lf;
 
 		//if(currentfile->filename==DEBUG_filename)//MARKER
 		//	token=0;
 
-		int ntokens=lf->tokens->count;
+		int ntokens=currentfile->tokens->count;
 		while(bm->ks<ntokens)
 		{
-			token=TOKENS_AT(lf->tokens, bm->ks);
+			token=TOKENS_AT(currentfile->tokens, bm->ks);
 
 			//if(currentfile->filename==DEBUG_filename)//MARKER
 			//{
 			//	if(token->type==T_HASH)
 			//	{
-			//		Token *t2=TOKENS_AT(lf->tokens, bm->ks+1);
+			//		Token *t2=TOKENS_AT(currentfile->tokens, bm->ks+1);
 			//		if(t2->type==T_ERROR)
 			//			token=token;
 			//	}
@@ -3008,7 +3034,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 					pp_error(token, "Unexpected end of file. Expected a preprocessor directive.");
 					continue;
 				}
-				token=TOKENS_AT(lf->tokens, bm->ks);
+				token=TOKENS_AT(currentfile->tokens, bm->ks);
 
 				//if(currentfile->filename==DEBUG_filename&&token->line>=2145)//MARKER
 				//	token=token;
@@ -3024,14 +3050,15 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							pp_error(token, "Unexpected end of file.");
 							break;
 						}
-						token=TOKENS_AT(lf->tokens, bm->ks);
-						k=skip_till_newline(lf->tokens, bm->ks);
+						token=TOKENS_AT(currentfile->tokens, bm->ks);
+						k=skip_till_newline(currentfile->tokens, bm->ks);
 						if(token->type!=T_ID)
 							pp_error(token, "Expected an identifier.");
 						else
 						{
 							redefinition=0;
-							BSTNodeHandle *node=MAP_INSERT(macros, &token->str, 0, &redefinition);//insert can return null only if comparator is ill-defined
+							node=map_insert(macros, &token->str, &redefinition);//insert can return null only if comparator is ill-defined
+							ASSERT(node&&*node);
 							macro=(Macro*)node[0]->data;
 							if(redefinition)
 								pp_error(token, "Macro \'%s\' redefined.", token->str);
@@ -3040,8 +3067,8 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 						bm->ks=k+(k<ntokens);//skip newline
 					}
 					PROF(DEFINE);
-					map_rebalance(macros);
-					PROF(REBALANCE);
+					//map_rebalance(macros);//TODO: implement red-black tree
+					//PROF(REBALANCE);
 					break;
 				case T_UNDEF:
 					++bm->ks;//skip UNDEF
@@ -3050,12 +3077,12 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 						pp_error(token, "Unexpected end of file.");
 						break;
 					}
-					token=TOKENS_AT(lf->tokens, bm->ks);
+					token=TOKENS_AT(currentfile->tokens, bm->ks);
 					if(token->type!=T_ID)
 						pp_error(token, "Expected an identifier.");
 					else
 					{
-						MAP_ERASE(macros, &token->str);
+						MAP_ERASE_DATA(macros, &token->str);
 						++bm->ks;//skip ID
 					}
 					PROF(UNDEF);
@@ -3070,20 +3097,20 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							pp_error(token, "Unexpected end of file.");
 							break;
 						}
-						token=TOKENS_AT(lf->tokens, bm->ks);
+						token=TOKENS_AT(currentfile->tokens, bm->ks);
 						if(token->type!=T_ID)
 							pp_error(token, "Expected an identifier.");
 						else
 						{
-							BSTNodeHandle *result=MAP_FIND(macros, &token->str);
+							node=map_find(macros, &token->str);
 							bm->ks+=bm->ks<ntokens;
-							if((!result)!=ndef)
-								bm->iflevel+=skip_block(macros, lf->tokens, &bm->ks, 0);
+							if((!node)!=ndef)
+								bm->iflevel+=skip_block(macros, currentfile->tokens, &bm->ks, 0);
 							else
 							{
 								++bm->iflevel;
 								int start=bm->ks;
-								bm->ks=skip_till_newline(lf->tokens, bm->ks);
+								bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
 								if(start<bm->ks)
 									pp_error(token, "Expected a single token after #ifdef/ifndef.");
 								bm->ks+=bm->ks<ntokens;
@@ -3096,13 +3123,13 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 					{
 						++bm->ks;//skip IF
 						int start=bm->ks;
-						bm->ks=skip_till_newline(lf->tokens, bm->ks);
-						long long result=eval_expr(lf->tokens, start, bm->ks, macros);
+						bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
+						long long result=eval_expr(currentfile->tokens, start, bm->ks, macros);
 						bm->ks+=bm->ks<ntokens;//skip newline
 						if(result)
 							++bm->iflevel;
 						else
-							bm->iflevel+=skip_block(macros, lf->tokens, &bm->ks, 0);//skip till #elif true/else/endif
+							bm->iflevel+=skip_block(macros, currentfile->tokens, &bm->ks, 0);//skip till #elif true/else/endif
 					}
 					break;
 				case T_ELIF:
@@ -3110,17 +3137,17 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 					{
 						++bm->ks;
 						int start=bm->ks;
-						bm->ks=skip_till_newline(lf->tokens, bm->ks);
+						bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
 						int extratokens=start<bm->ks, expected=bm->iflevel>0, lastblock=token->type==T_ELSE;
 						if(expected)
 						{
-							skip_block(macros, lf->tokens, &bm->ks, lastblock);//just skip till #endif
+							skip_block(macros, currentfile->tokens, &bm->ks, lastblock);//just skip till #endif
 							--bm->iflevel;
 						}
 						else//no else/elif expected
 							pp_error(token, "Unexpected #else/elif.");
 						if(lastblock&&extratokens)
-							pp_error(TOKENS_AT(lf->tokens, start), "Unexpected tokens after #else.");
+							pp_error(TOKENS_AT(currentfile->tokens, start), "Unexpected tokens after #else.");
 						if(!expected)
 							bm->ks+=bm->ks<ntokens;//skip newline
 					}
@@ -3134,9 +3161,9 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 						else
 							--bm->iflevel;
 						int start=bm->ks;
-						bm->ks=skip_till_newline(lf->tokens, bm->ks);
+						bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
 						if(start<bm->ks)
-							pp_error(TOKENS_AT(lf->tokens, start), "Unexpected tokens after #endif.");
+							pp_error(TOKENS_AT(currentfile->tokens, start), "Unexpected tokens after #endif.");
 						bm->ks+=bm->ks<ntokens;
 					}
 					PROF(ENDIF);
@@ -3152,19 +3179,19 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							pp_error(token, "Unexpected end of file.");
 							break;
 						}
-						token=TOKENS_AT(lf->tokens, bm->ks);
+						token=TOKENS_AT(currentfile->tokens, bm->ks);
 
 						inc=0;
 						if(token->type==T_ID)
 						{
-							BSTNodeHandle *result=MAP_FIND(macros, &token->str);
-							if(result)
+							node=map_find(macros, &token->str);
+							if(node)
 							{
 								ArrayHandle dst;
 
 								ARRAY_ALLOC(Token, dst, 0, 0, 0, 0);
-								macro=(Macro*)result[0]->data;
-								macro_expand(macros, macro, lf->tokens, &bm->ks, &dst);
+								macro=(Macro*)node[0]->data;
+								macro_expand(macros, macro, currentfile->tokens, &bm->ks, &dst);
 								if(!dst||dst->count!=1)
 									pp_error(token, "Expected include file name.");
 								else
@@ -3193,7 +3220,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							bm->ks+=bm->ks<ntokens;//skip include name
 						}
 
-						k=skip_till_newline(lf->tokens, bm->ks);//skip include preprocessor directive
+						k=skip_till_newline(currentfile->tokens, bm->ks);//skip include preprocessor directive
 						if(bm->ks<k)
 							pp_error(token, "Text after #include directive.");
 						bm->ks+=k<ntokens;//skip newline
@@ -3209,16 +3236,18 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 								pp_error(token, "Cannot open include file \'%s\'.", inc);
 							else//found the include file
 							{
-								int found=0;
-								BSTNodeHandle *result=MAP_INSERT(lexlib, &filename2, 0, &found);
-								LexedFile *lf2=(LexedFile*)result[0]->data;
+								found=0;
+								node=map_insert(lexlib, &filename2, &found);
+								//TODO pause_abort if !node||!*node
+								LexedFile *lf2=(LexedFile*)node[0]->data;
 								if(!found)//not lexed before
 								{
-									lf2->filename_len=(int)strlen(lf2->filename);
+									lf2->filename=filename2;
+									lf2->filename_len=(int)strlen(filename2);
 									success=lex(lf2);
 									if(success)
 									{
-										//currentfile=lf2;
+										currentfile=lf2;
 										bytes_processed+=lf2->text->count;
 									}
 								}
@@ -3241,13 +3270,13 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 						pp_error(token, "Unexpected end of file.");
 						break;
 					}
-					token=TOKENS_AT(lf->tokens, bm->ks);
+					token=TOKENS_AT(currentfile->tokens, bm->ks);
 					if(token->type==T_ID)
 					{
 						if(token->str==str_pragma_once)//'#pragma once': header is included once per source
-							lf->flags|=LEX_INCLUDE_ONCE;
+							currentfile->flags|=LEX_INCLUDE_ONCE;
 					}
-					bm->ks=skip_till_newline(lf->tokens, bm->ks);
+					bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
 					bm->ks+=bm->ks<ntokens;
 					PROF(PRAGMA);
 					break;
@@ -3259,7 +3288,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							pp_error(token, "Unexpected end of file.");
 							break;
 						}
-						token=TOKENS_AT(lf->tokens, bm->ks);
+						token=TOKENS_AT(currentfile->tokens, bm->ks);
 						if(bm->ks<ntokens&&token->type==T_VAL_STR)
 						{
 						/*	{
@@ -3273,14 +3302,14 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							}//*/
 
 							pp_error(token, "%s", token->str);//error message may contain '%'
-							bm->ks=skip_till_newline(lf->tokens, bm->ks);
+							bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
 							bm->ks+=bm->ks<ntokens;
 						}
 						else
 						{
 							int start=bm->ks;
-							bm->ks=skip_till_newline(lf->tokens, bm->ks);
-							pp_error(TOKENS_AT(lf->tokens, start-1), "%.*s", bm->ks-start, (char*)currentfile->text->data+start);
+							bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
+							pp_error(TOKENS_AT(currentfile->tokens, start-1), "%.*s", bm->ks-start, (char*)currentfile->text->data+start);
 							bm->ks+=bm->ks<ntokens;//skip newline
 						}
 					}
@@ -3288,7 +3317,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 					break;
 				default:
 					pp_error(token, "Expected a preprocessor directive.");
-					bm->ks=skip_till_newline(lf->tokens, bm->ks);
+					bm->ks=skip_till_newline(currentfile->tokens, bm->ks);
 					bm->ks+=bm->ks<ntokens;
 					PROF(ERROR);
 					break;
@@ -3321,20 +3350,20 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 				break;
 			case T_ID:
 				{
-					BSTNodeHandle *result=MAP_FIND(macros, &token->str);
+					node=map_find(macros, &token->str);
 					PROF(IDENTIFIER_LOOKUP);
-					if(result)
+					if(node)
 					{
 						ArrayHandle dst;
 
 						ARRAY_ALLOC(Token, dst, 0, 0, 0, 0);
-						macro=(Macro*)result[0]->data;
+						macro=(Macro*)node[0]->data;
 
 						//if(!strcmp(macro->name, "_In_opt_z_"))
 						//if(!strcmp(macro->name, "LOL"))//MARKER
 						//	macro=macro;
 
-						macro_expand(macros, macro, lf->tokens, &bm->ks, &dst);
+						macro_expand(macros, macro, currentfile->tokens, &bm->ks, &dst);
 						if(dst&&dst->count)
 						{
 							token=TOKENS_AT(dst, dst->count-1);
@@ -3359,9 +3388,13 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 				}
 				break;
 			case T_NEWLINE:
-			case T_NEWLINE_ESC:
+				token=(Token*)dlist_back(&tokens);
+				if(token)
+					token->nl_after=1;
 				++bm->ks;
 				PROF(TOKEN);
+				break;
+			case T_NEWLINE_ESC:
 				break;
 			default:
 				if(token->type>T_IGNORED)
@@ -3373,7 +3406,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 		}//end file loop
 		if(bm->iflevel>0)
 		{
-			token=(Token*)array_back(&lf->tokens);
+			token=(Token*)array_back(&currentfile->tokens);
 			pp_error(token, "End of file reached. Expected %d #endif\'s.", bm->iflevel);
 		}
 		dlist_pop_back(&bookmarks);//no destructor
@@ -3415,17 +3448,18 @@ void		init_dateNtime()
 }
 void		macros_init(MapHandle macros, PreDef *preDefs, int nPreDefs)
 {
-	BSTNodeHandle *node;
+	RBNodeHandle *node;
 	Macro *macro;
 	int tokenCount;
 	Token *token;
 
-	MAP_INIT(macros, char*, Macro, macro_cmp, macro_destructor);
+	MAP_INIT(macros, Macro, macro_cmp, macro_destructor);
 	for(int k=0;k<nPreDefs;++k)
 	{
 		int found=0;
 		char *unique_name=strlib_insert(preDefs[k].name, strlen(preDefs[k].name));
-		node=MAP_INSERT(macros, &unique_name, 0, &found);
+		node=map_insert(macros, &unique_name, &found);
+		ASSERT(node&&*node);
 		macro=(Macro*)node[0]->data;
 		macro->srcfile=0;//pre-defined macro
 		macro->nargs=MACRO_NO_ARGLIST;

@@ -41,7 +41,7 @@
 	TOKEN("mutable", T_MUTABLE)
 #endif
 	TOKEN("const", T_CONST) TOKEN("volatile", T_VOLATILE)
-	TOKEN("register", T_REGISTER)
+	//TOKEN("register", T_REGISTER)
 #ifdef ACC_CPP
 	TOKEN("auto", T_AUTO) TOKEN("decltype", T_DECLTYPE)
 #endif

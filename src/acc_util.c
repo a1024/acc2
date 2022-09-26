@@ -13,7 +13,9 @@
 #include		<time.h>//clock_gettime
 #define			sprintf_s	snprintf
 #define			vsprintf_s	vsnprintf
+#ifndef _HUGE
 #define			_HUGE		HUGE_VAL
+#endif
 #endif
 static const char file[]=__FILE__;
 
@@ -127,6 +129,52 @@ void 			isort(void *base, size_t count, size_t esize, int (*threeway)(const void
 			memrotate(buf+idx*esize, (k-idx)*esize, (k+1-idx)*esize, temp);
 	}
 	free(temp);
+}
+int				acme_getopt(int argc, char **argv, int *start, const char **keywords, int kw_count)
+{
+	int k, len;
+	const char *arg, *cand;
+
+	if(*start>=argc)
+		return OPT_ENDOFARGS;
+	
+	arg=argv[*start];
+	len=strlen(arg);
+	if(len<=0)
+		return OPT_INVALIDARG;
+	//len>=1
+	if(arg[0]!='-')
+		return OPT_NOMATCH;
+	++arg, --len;
+	if(len<=0)
+		return OPT_INVALIDARG;
+	//len>=1
+	if(arg[0]!='-')//short form (single dash followed by one character)
+	{
+		if(len!=1)
+			return OPT_INVALIDARG;
+		//len==1
+		for(k=0;k<kw_count;++k)
+		{
+			cand=keywords[k];
+			if(cand[0]==arg[0])
+				return k;
+		}
+	}
+	else//long form (double dash followed by a word)
+	{
+		++arg, --len;
+		if(len<=0)
+			return OPT_INVALIDARG;
+		//len>=1
+		for(k=0;k<kw_count;++k)
+		{
+			cand=keywords[k];
+			if(!strcmp(arg, cand+1))
+				return k;
+		}
+	}
+	return OPT_NOMATCH;
 }
 
 int				floor_log2(unsigned n)
@@ -325,13 +373,31 @@ int				valid(const void *p)
 	}
 	return 1;
 }
+void			pause()
+{
+	int k;
+
+	printf("Enter 0 to continue: ");
+	scanf("%d", &k);
+}
+int				pause_abort(const char *file, int lineno, const char *extraInfo)
+{
+	printf("INTERNAL ERROR %s(%d)\nABORTING\n", file, lineno);
+	if(extraInfo)
+		printf("%s\n\n", extraInfo);
+	pause();
+	abort();
+	return 0;
+}
 
 #if !defined __linux__
-#if _MSC_VER<1800
+#if defined _MSC_VER && _MSC_VER<1800
 #define	S_IFMT		00170000//octal
 #define	S_IFREG		 0100000
 #endif
+#ifndef S_ISREG
 #define	S_ISREG(m)	(((m)&S_IFMT)==S_IFREG)
+#endif
 #endif
 int				file_is_readable(const char *filename)//0: not readable, 1: regular file, 2: folder
 {
@@ -560,24 +626,24 @@ void*			array_at(ArrayHandle *arr, size_t idx)
 		return 0;
 	return arr[0]->data+idx*arr[0]->esize;
 }
-const void*		array_at_const(ArrayConstHandle *arr, int idx)
-{
-	if(!arr[0])
-		return 0;
-	return arr[0]->data+idx*arr[0]->esize;
-}
+//const void*		array_at_const(ArrayConstHandle *arr, int idx)
+//{
+//	if(!arr[0])
+//		return 0;
+//	return arr[0]->data+idx*arr[0]->esize;
+//}
 void*			array_back(ArrayHandle *arr)
 {
 	if(!*arr||!arr[0]->count)
 		return 0;
 	return arr[0]->data+(arr[0]->count-1)*arr[0]->esize;
 }
-const void*		array_back_const(ArrayHandle const *arr)
-{
-	if(!*arr||!arr[0]->count)
-		return 0;
-	return arr[0]->data+(arr[0]->count-1)*arr[0]->esize;
-}
+//const void*		array_back_const(ArrayConstHandle const *arr)
+//{
+//	if(!*arr||!arr[0]->count)
+//		return 0;
+//	return arr[0]->data+(arr[0]->count-1)*arr[0]->esize;
+//}
 #endif
 
 //double-linked array list
@@ -711,7 +777,10 @@ void*			dlist_back(DListHandle list)
 	size_t obj_idx;
 
 	if(!list->nobj)
+	{
 		LOG_ERROR("dlist_back() called on empty list");
+		return 0;
+	}
 	obj_idx=(list->nobj-1)%list->objpernode;
 	return list->f->data+obj_idx*list->objsize;
 }
@@ -786,7 +855,7 @@ int				dlist_it_dec(DListItHandle it)
 #endif
 
 //BST-map
-#if 1
+#if 0
 void			map_init(MapHandle map, size_t key_size, size_t val_size, CmpFn cmp_key, void (*destructor)(void*))
 {
 	map->key_size=key_size;
@@ -984,6 +1053,547 @@ void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNode
 		map_debugprint_r(&node[0]->left, depth+1, callback);
 		callback(node, depth);
 		map_debugprint_r(&node[0]->right, depth+1, callback);
+	}
+}
+#endif
+
+//red-black tree map
+#if 1
+void			map_init(MapHandle map, size_t esize, MapCmpFn comparator, void (*destructor)(void*))
+{
+	map->esize=esize;
+	map->nnodes=0;
+	map->root=0;
+	map->comparator=comparator;
+	map->destructor=destructor;
+}
+void			map_clear_r(MapHandle map, RBNodeHandle node)
+{
+	if(node)
+	{
+		map_clear_r(map, node->left);
+		map_clear_r(map, node->right);
+		if(map->destructor)
+			map->destructor(node->data);
+		free(node);
+	}
+}
+static RBNodeHandle* get_node_addr(MapHandle map, RBNodeHandle node)
+{
+	if(!node->parent)
+		return &map->root;
+	if(node==node->parent->left)
+		return &node->parent->left;
+	if(node==node->parent->right)
+		return &node->parent->right;
+	return 0;//inconsistent, should be unreachable
+}
+RBNodeHandle*	map_find(MapHandle map, const void *key)
+{
+	RBNodeHandle node;
+	CmpRes result;
+
+	for(node=map->root;node;)
+	{
+		result=map->comparator(key, node->data);
+		switch(result)
+		{
+		case RESULT_LESS:
+			node=node->left;
+			break;
+		case RESULT_GREATER:
+			node=node->right;
+			break;
+		case RESULT_EQUAL://found: return node address
+			return get_node_addr(map, node);
+		}
+	}
+	return 0;//not found
+}
+static void		rb_rotateleft(MapHandle map, RBNodeHandle x)
+{
+	RBNodeHandle y;
+
+	y=x->right;
+	x->right=y->left;
+	if(y->left)
+		y->left->parent=x;
+	y->parent=x->parent;
+	if(map->root==x)
+		map->root=y;
+	else if(x==x->parent->left)
+		x->parent->left=y;
+	else
+		x->parent->right=y;
+	y->left=x;
+	x->parent=y;
+}
+static void		rb_rotateright(MapHandle map, RBNodeHandle x)
+{
+	RBNodeHandle y;
+
+	y=x->left;
+	x->left=y->right;
+	if(y->right)
+		y->right->parent=x;
+	y->parent=x->parent;
+	if(map->root==x)
+		map->root=y;
+	else if(x==x->parent->right)
+		x->parent->right=y;
+	else
+		x->parent->left=y;
+	y->right=x;
+	x->parent=y;
+}
+RBNodeHandle*	map_insert(MapHandle map, const void *key, int *found)
+{
+	RBNodeHandle x, y, z;
+	CmpRes result;
+
+	//rb-insert - Cormen page 315
+	x=map->root;
+	y=0;
+	while(x)
+	{
+		y=x;
+		result=map->comparator(key, x->data);
+		switch(result)
+		{
+		case RESULT_LESS:
+			x=x->left;
+			break;
+		case RESULT_GREATER:
+			x=x->right;
+			break;
+		case RESULT_EQUAL:
+			if(found)
+				*found=1;
+			return get_node_addr(map, x);
+		default:
+			return 0;
+		}
+	}
+	if(found)
+		*found=0;
+
+	z=(RBNodeHandle)malloc(sizeof(RBNodeHeader)+map->esize);
+	z->parent=y;
+	z->left=z->right=0;
+	z->is_red=1;
+	memset(z->data, 0, map->esize);
+	//memcpy(z->data, key, map->esize);//X  what if sizeof(key) != sizeof(data)
+	x=z;
+
+	if(!y)
+		map->root=z;
+	else
+	{
+		result=map->comparator(key, y->data);
+		switch(result)
+		{
+		case RESULT_LESS:
+			y->left=z;
+			break;
+		case RESULT_GREATER:
+			y->right=z;
+			break;
+		default:
+			free(z);
+			return 0;
+		}
+	}
+
+	//rb-fixup - Cormen page 316
+	//https://github.com/gcc-mirror/gcc/blob/master/libstdc%2B%2B-v3/src/c%2B%2B98/tree.cc		line 195
+	while(x!=map->root&&x->parent->is_red)//all nullptr's are black
+	{
+		RBNodeHandle xpp;
+
+		xpp=x->parent->parent;
+		if(xpp)
+		{
+			if(x->parent==xpp->left)
+			{
+				y=xpp->right;//uncle
+				if(y&&y->is_red)//case 1
+				{
+					x->parent->is_red=0;
+					y->is_red=0;
+					xpp->is_red=1;
+					x=xpp;
+				}
+				else//cases 2 & 3
+				{
+					if(x==x->parent->right)//case 2
+					{
+						x=x->parent;
+						rb_rotateleft(map, x);
+					}
+					x->parent->is_red=0;
+					xpp->is_red=1;
+					rb_rotateright(map, xpp);
+				}
+			}
+			else
+			{
+				y=xpp->left;//uncle
+				if(y&&y->is_red)//case 1
+				{
+					x->parent->is_red=0;
+					y->is_red=0;
+					xpp->is_red=1;
+					x=xpp;
+				}
+				else//cases 2 & 3
+				{
+					if(x==x->parent->left)//case 2
+					{
+						x=x->parent;
+						rb_rotateright(map, x);
+					}
+					x->parent->is_red=0;
+					xpp->is_red=1;
+					rb_rotateleft(map, xpp);
+				}
+			}
+		}
+	}
+	map->root->is_red=0;
+
+	++map->nnodes;
+	return get_node_addr(map, z);
+}
+static void		rb_transplant(MapHandle map, RBNodeHandle u, RBNodeHandle v)
+{
+	if(!u->parent)
+		map->root=v;
+	else if(u==u->parent->left)
+		u->parent->left=v;
+	else
+		u->parent->right=v;
+	v->parent=u->parent;
+}
+static RBNodeHandle tree_minimum(RBNodeHandle root)
+{
+	if(!root)
+		return 0;
+	while(root->left)
+		root=root->left;
+	return root;
+}
+static RBNodeHandle tree_maximum(RBNodeHandle root)
+{
+	if(!root)
+		return 0;
+	while(root->right)
+		root=root->right;
+	return root;
+}
+static void		rb_deletefixup(MapHandle map, RBNodeHandle x)
+{
+	RBNodeHandle w;
+
+	while(x!=map->root&&!x->is_red)
+	{
+		if(x==x->parent->left)
+		{
+			w=x->parent->right;
+			if(w->is_red)
+			{
+				w->is_red=0;
+				x->parent->is_red=1;
+				rb_rotateleft(map, x->parent);
+				w=x->parent->right;
+			}
+			if(!w->left->is_red&&!w->right->is_red)
+			{
+				w->is_red=1;
+				x=x->parent;
+			}
+			else
+			{
+				if(!w->right->is_red)
+				{
+					w->left->is_red=0;
+					w->is_red=1;
+					rb_rotateright(map, w);
+					w=x->parent->right;
+				}
+				w->is_red=x->parent->is_red;
+				x->parent->is_red=0;
+				w->right->is_red=0;
+				rb_rotateleft(map, x->parent);
+				x=map->root;
+			}
+		}
+		else
+		{
+			w=x->parent->left;
+			if(w->is_red)
+			{
+				w->is_red=0;
+				x->parent->is_red=1;
+				rb_rotateright(map, x->parent);
+				w=x->parent->left;
+			}
+			if(!w->right->is_red&&!w->left->is_red)
+			{
+				w->is_red=1;
+				x=x->parent;
+			}
+			else
+			{
+				if(!w->left->is_red)
+				{
+					w->right->is_red=0;
+					w->is_red=1;
+					rb_rotateleft(map, w);
+					w=x->parent->left;
+				}
+				w->is_red=x->parent->is_red;
+				x->parent->is_red=0;
+				w->left->is_red=0;
+				rb_rotateright(map, x->parent);
+				x=map->root;
+			}
+		}
+	}
+}
+int				map_erase(MapHandle map, const void *data, RBNodeHandle node)
+{
+	//https://github.com/gcc-mirror/gcc/blob/master/libstdc%2B%2B-v3/src/c%2B%2B98/tree.cc		line 286
+#if 1
+	RBNodeHandle *root, *leftmost, *rightmost, x, xp, y, z, *r2;
+	size_t y_is_red;
+
+	if(node)
+		z=node;
+	else if(data)
+	{
+		r2=map_find(map, data);
+		if(!r2)
+			return 0;
+		z=*r2;
+	}
+	else
+	{
+		LOG_ERROR("map_erase() usage error: nullptr args");
+		return 0;
+	}
+	
+	root=&map->root->parent;
+	leftmost=&map->root->left;
+	rightmost=&map->root->right;
+	y=z;
+	x=0;
+	xp=0;
+	if(!y->left)		//z has at most one non-null child. y == z.
+		x=y->right;		//x might be null
+	else if(!y->right)	//z has exactly one non-null child. y == z.
+		x=y->left;		//x is not null
+	else
+	{
+		y=y->right;//z has two non-null children. Set y to z's successor.  x might be null
+		while(y->left)
+			y=y->left;
+		x=y->right;
+	}
+	if(y!=z)
+	{
+		//relink y in place of z.  y is z's successor
+		z->left->parent=y;
+		y->left=z->left;
+		if(y!=z->right)
+		{
+			xp=y->parent;
+			if(x)
+				x->parent=y->parent;
+			y->parent->left=x;//y must be a child of left
+			y->right=z->right;
+			z->right->parent=y;
+		}
+		else
+			xp=y;
+		if(map->root==z)
+			map->root=y;
+		else if(z->parent->left==z)
+			z->parent->left=y;
+		else
+			z->parent->right=y;
+		y->parent=z->parent;
+		y_is_red=y->is_red, y->is_red=z->is_red, z->is_red=y_is_red;
+		y=z;
+		//y now points to node to be actually deleted
+	}
+	else//y==z
+	{
+		xp=y->parent;
+
+		if(x)
+			x->parent=y->parent;
+
+		if(map->root==z)
+			map->root=x;
+		else if(z->parent->left==z)
+			z->parent->left=x;
+		else
+			z->parent->right=x;
+
+		if(*leftmost==z)
+		{
+			if(!z->right)//z->left must be null also
+				leftmost=&z->parent;//makes __leftmost == _M_header if __z == __root
+			else
+				leftmost=get_node_addr(map, tree_minimum(x));
+		}
+		if(*rightmost==z)
+		{
+			if(!z->left)//z->right must be null also
+				rightmost=&z->parent;//makes __rightmost == _M_header if __z == __root
+			else//x == z->left
+				rightmost=get_node_addr(map, tree_maximum(x));
+		}
+	}
+	if(!y->is_red)
+	{
+		RBNodeHandle w;
+
+		while(x!=map->root&&(!x||!x->is_red))
+		{
+			if(x==xp->left)
+			{
+				w=xp->right;
+				if(w->is_red)
+				{
+					w->is_red=0;
+					xp->is_red=1;
+					rb_rotateleft(map, xp);
+					w=xp->right;
+				}
+				if((!w->left||!w->left->is_red)&&(!w->right||!w->right->is_red))
+				{
+					w->is_red=1;
+					x=xp;
+					xp=xp->parent;
+				}
+				else
+				{
+					if(!w->right||!w->right->is_red)
+					{
+						w->left->is_red=0;
+						w->is_red=1;
+						rb_rotateright(map, w);
+						w=xp->right;
+					}
+					w->is_red=xp->is_red;
+					xp->is_red=0;
+					if(w->right)
+						w->right->is_red=0;
+					rb_rotateleft(map, xp);
+					break;
+				}
+			}
+			else//same as above with right <-> left
+			{
+				w=xp->left;
+				if(w->is_red)
+				{
+					w->is_red=0;
+					xp->is_red=1;
+					rb_rotateright(map, xp);
+					w=xp->left;
+				}
+				if((!w->right||!w->right->is_red)&&(!w->left||!w->left->is_red))
+				{
+					w->is_red=1;
+					x=xp;
+					xp=xp->parent;
+				}
+				else
+				{
+					if(!w->left||!w->left->is_red)
+					{
+						w->right->is_red=0;
+						w->is_red=1;
+						rb_rotateleft(map, w);
+						w=xp->left;
+					}
+					w->is_red=xp->is_red;
+					xp->is_red=0;
+					if(w->left)
+						w->left->is_red=0;
+					rb_rotateright(map, xp);
+					break;
+				}
+			}
+		}
+		if(x)
+			x->is_red=0;
+	}
+	//return y;
+	return 1;
+#endif
+
+	//Cormen page 324
+#if 0
+	RBNodeHandle x, y, z, *r2;
+	int y_is_red;
+
+	if(node)
+		z=node;
+	else if(data)
+	{
+		r2=map_find(map, data);
+		if(!r2)
+			return 0;
+		z=*r2;
+	}
+	else
+		return 0;
+
+	y=z;
+	y_is_red=y->is_red;
+	if(!z->left)
+	{
+		x=z->right;
+		rb_transplant(map, z, z->right);
+	}
+	else if(!z->right)
+	{
+		x=z->left;
+		rb_transplant(map, z, z->left);
+	}
+	else
+	{
+		y=tree_minimum(z->right);
+		y_is_red=y->is_red;
+		x=y->right;
+		if(y->parent==z)
+			x->parent=y;
+		else
+		{
+			rb_transplant(map, y, y->right);
+			y->right=z->right;
+			y->right->parent=y;
+		}
+		rb_transplant(map, z, y);
+		y->left=z->left;
+		y->left->parent=y;
+		y->is_red=z->is_red;
+	}
+	if(!y_is_red)
+		rb_deletefixup(map, x);
+	return 1;
+#endif
+}
+void			map_debugprint_r(RBNodeHandle *node, int depth, void (*printer)(RBNodeHandle *node, int depth))
+{
+	if(*node)
+	{
+		map_debugprint_r(&node[0]->left, depth+1, printer);
+		printer(node, depth);
+		map_debugprint_r(&node[0]->right, depth+1, printer);
 	}
 }
 #endif

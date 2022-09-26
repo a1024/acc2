@@ -13,7 +13,7 @@ extern "C"
 	#define		BENCHMARK_LEXER
 
 //utility
-#define			SIZEOF(ARR)		(sizeof(ARR)/sizeof(*(ARR)))
+#define			COUNTOF(ARR)		(sizeof(ARR)/sizeof(*(ARR)))		//stdlib defines _countof
 #ifndef _MSC_VER
 #define			sprintf_s	snprintf
 #endif
@@ -27,6 +27,14 @@ void			memreverse(void *p, size_t count, size_t esize);//calls memswap
 void 			memrotate(void *p, size_t byteoffset, size_t bytesize, void *temp);//temp buffer is min(byteoffset, bytesize-byteoffset)
 int 			binary_search(const void *base, size_t count, size_t esize, int (*threeway)(const void*, const void*), const void *val, size_t *idx);//returns true if found, otherwise the idx is where val should be inserted, standard bsearch doesn't do this
 void 			isort(void *base, size_t count, size_t esize, int (*threeway)(const void*, const void*));//binary insertion sort
+
+typedef enum GetOptRetEnum
+{
+	OPT_ENDOFARGS=-3,
+	OPT_INVALIDARG,
+	OPT_NOMATCH,
+} GetOptRet;
+int				acme_getopt(int argc, char **argv, int *start, const char **keywords, int kw_count);//keywords[i]: shortform char, followed by longform null-terminated string, returns 
 
 int				floor_log2(unsigned n);
 int				floor_log10(double x);
@@ -49,20 +57,18 @@ double			time_ms();
 #endif
 
 //error handling
-int				log_error(const char *file, int line, const char *format, ...);
-int				valid(const void *p);
+int				log_error(const char *file, int line, const char *format, ...);//doesn't stop execution
 #define			LOG_ERROR(format, ...)	log_error(file, __LINE__, format, ##__VA_ARGS__)
-#define			ASSERT(SUCCESS)			((SUCCESS)!=0||log_error(file, __LINE__, #SUCCESS))
-#define			ASSERT_P(POINTER)		(valid(POINTER)||log_error(file, __LINE__, #POINTER " == 0"))
+int				valid(const void *p);
+void			pause();
+int				pause_abort(const char *file, int lineno, const char *extraInfo);
+#define			PANIC()					pause_abort(file, __LINE__, 0)
+#define			ASSERT(SUCCESS)			((SUCCESS)!=0||pause_abort(file, __LINE__, #SUCCESS))
+#define			ASSERT_P(POINTER)		(valid(POINTER)||pause_abort(file, __LINE__, #POINTER " == 0"))
 
 
 //array
 #if 1
-#ifdef DEBUG_INFO_STR
-typedef const char *DebugInfo;
-#else
-typedef size_t DebugInfo;
-#endif
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable:4200)//no default-constructor for struct with zero-length array
@@ -73,7 +79,7 @@ typedef struct ArrayHeaderStruct
 	void (*destructor)(void*);
 	unsigned char data[];
 } ArrayHeader, *ArrayHandle;
-typedef const ArrayHeader *ArrayConstHandle;
+//typedef const ArrayHeader *ArrayConstHandle;
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
@@ -89,9 +95,9 @@ void*			array_replace(ArrayHandle *arr, size_t idx, size_t rem_count, const void
 
 size_t			array_size(ArrayHandle const *arr);
 void*			array_at(ArrayHandle *arr, size_t idx);
-const void*		array_at_const(ArrayConstHandle *arr, int idx);
+//const void*	array_at_const(ArrayConstHandle *arr, int idx);
 void*			array_back(ArrayHandle *arr);
-const void*		array_back_const(ArrayHandle const *arr);
+//const void*	array_back_const(ArrayConstHandle const *arr);
 
 #define			ARRAY_ALLOC(ELEM_TYPE, ARR, DATA, COUNT, PAD, DESTRUCTOR)	ARR=array_construct(DATA, sizeof(ELEM_TYPE), COUNT, 1, PAD, DESTRUCTOR)
 #define			ARRAY_APPEND(ARR, DATA, COUNT, REP, PAD)					array_insert(&(ARR), (ARR)->count, DATA, COUNT, REP, PAD)
@@ -178,7 +184,7 @@ typedef struct StackStruct
 #endif
 
 //ordered BST-map
-#if 1
+#if 0
 typedef struct BSTNodeStruct
 {
 	struct BSTNodeStruct *left, *right;
@@ -220,6 +226,46 @@ void			map_debugprint_r(BSTNodeHandle *node, int depth, void (*callback)(BSTNode
 #define			MAP_DEBUGPRINT(MAP, CALLBACK)		map_debugprint_r(&(MAP)->root, 0, CALLBACK)
 #endif
 
+//ordered red-black tree (self-balancing) map
+#if 1
+typedef struct RBNodeStruct
+{
+	struct RBNodeStruct *parent, *left, *right;
+	size_t is_red;
+	unsigned char data[];//key then value
+} RBNodeHeader, *RBNodeHandle;
+typedef enum CmpResEnum
+{
+	RESULT_LESS=-1,
+	RESULT_EQUAL,
+	RESULT_GREATER,
+} CmpRes;
+typedef CmpRes (*MapCmpFn)(const void *key, const void *candidate);//the search key is always on left
+typedef struct MapStruct
+{
+	size_t
+		esize,	//object size in bytes
+		nnodes;	//object count
+	RBNodeHandle root;
+	MapCmpFn comparator;
+	void (*destructor)(void*);//key and value are packed consequtively
+} Map, *MapHandle;
+typedef Map const *MapConstHandle;
+void			map_init(MapHandle map, size_t esize, MapCmpFn comparator, void (*destructor)(void*));
+RBNodeHandle*	map_find(MapHandle map, const void *key);
+RBNodeHandle*	map_insert(MapHandle map, const void *data, int *found);//the map doesn't know where the object->key member(s) is/are, initialize entire object yourself, including the passed key
+int				map_erase(MapHandle map, const void *data, RBNodeHandle node);//either pass data object or node
+
+void			map_clear_r(MapHandle map, RBNodeHandle node);
+void			map_debugprint_r(RBNodeHandle *node, int depth, void (*printer)(RBNodeHandle *node, int depth));
+
+#define			MAP_INIT(MAP, ETYPE, CMP, DESTRUCTOR)	map_init(MAP, sizeof(ETYPE), CMP, DESTRUCTOR)
+#define			MAP_ERASE_DATA(MAP, DATA)				map_erase(MAP, DATA, 0)
+#define			MAP_ERASE_NODE(MAP, NODE)				map_erase(MAP, 0, NODE)
+#define			MAP_CLEAR(MAP)							map_clear_r(MAP, (MAP)->root), (MAP)->root=0, (MAP)->nnodes=0
+#define			MAP_DEBUGPRINT(MAP, PRINTER)			map_debugprint_r(&(MAP)->root, 0, PRINTER)
+#endif
+
 
 //file I/O
 int				file_is_readable(const char *filename);//0: not readable, 1: regular file, 2: folder
@@ -251,10 +297,11 @@ typedef struct TokenStruct//32 bytes
 	int pos, len, line, col;
 	union
 	{
-		int flags;//lexme<<7|base<<5|synth<<4|nl_after<<3|ws_after<<2|nl_before<<1|ws_before
+		unsigned flags;//lexme<<7|base<<5|synth<<4|nl_after<<3|ws_after<<2|nl_before<<1|ws_before
 		struct
 		{
-			int ws_before:1, nl_before:1,
+			unsigned
+				ws_before:1, nl_before:1,
 				ws_after:1, nl_after:1,
 				synth:1,
 				base:2,//NumberBase
@@ -300,7 +347,6 @@ typedef struct MacroStruct
 		is_va;
 	ArrayHandle tokens;
 } Macro;
-//int macro_define(Macro *dst, LexedFile *srcfile, Token const *tokens, int count);//tokens points at after '#define', undef macro on error
 
 extern Map	strlib;//don't clear strlib until the program quits		TODO: pass as argument
 char*		strlib_insert(const char *str, int len);
@@ -324,6 +370,61 @@ typedef struct PreDefStruct//FIXME pre-defined macros cannot have arguments and 
 } PreDef;
 void		macros_init(MapHandle macros, PreDef *preDefs, int nPreDefs);
 ArrayHandle preprocess(const char *filename, MapHandle macros, ArrayHandle includepaths, MapHandle lexlib);
+
+
+#if 0
+typedef enum DataTypeEnum
+{
+	TYPE_UNASSIGNED,
+	TYPE_VOID,
+	TYPE_CHAR,
+	TYPE_INT,
+	TYPE_UINT,
+	TYPE_FLOAT,
+	TYPE_ENUM,
+	TYPE_ENUM_CONST,
+	TYPE_STRUCT,
+	TYPE_UNION,
+	TYPE_ARRAY,
+	TYPE_POINTER,
+	TYPE_FUNC,
+	TYPE_ELLIPSIS,
+} DataType;
+typedef enum CallTypeEnum
+{
+	CALL_CDECL,
+	CALL_STDCALL,
+} CallType;
+struct IRNodeStruct;
+typedef struct TypeInfoStruct
+{
+	union
+	{
+		struct
+		{
+			unsigned char
+				datatype,
+				lgbytealign:4,//selects from {1, 2, 4, 8, 16, 32, 64, 128} bytes align
+				is_const:1,
+				is_volatile:1,
+				is_winapi:1,//false: __cdecl, true: __stdcall
+				is_extern:1;//false: static, true: extern
+		};
+		unsigned flags;
+	};
+	size_t size;
+	struct IRNodeStruct *body;
+} TypeInfo;
+#endif
+typedef struct IRNodeStruct
+{
+	Token token;
+	int nNodes;
+	struct IRNodeStruct *nodes[];
+} IRNode, *IRHandle;
+IRHandle	parse(ArrayHandle tokens);
+
+
 void		acc_cleanup(MapHandle lexlib, MapHandle strings);
 
 void		tokens2text(ArrayHandle tokens, ArrayHandle *str);
