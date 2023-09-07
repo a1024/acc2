@@ -66,12 +66,12 @@ void			prof_end()
 	printf("\nPROFILER\nLabel\tvisited\tcycles\tpercentage\tcycles_per_call\n");
 	for(int k=0;k<PROF_COUNT;++k)
 	{
-		int len=strlen(prof_labels[k]);
+		int len=(int)strlen(prof_labels[k]);
 		if(longestLabel<len)
 			longestLabel=len;
 	}
 	for(int k=0;k<PROF_COUNT;++k)
-		printf("%s%*s:\t%d\t%lld\t%.2lf%%\t%lf\n", prof_labels[k], longestLabel-strlen(prof_labels[k]), "", prof_count[k], prof_cycles[k], 100.*prof_cycles[k]/sum, (double)prof_cycles[k]/prof_count[k]);
+		printf("%s%*s:\t%d\t%lld\t%.2lf%%\t%lf\n", prof_labels[k], longestLabel-(int)strlen(prof_labels[k]), "", prof_count[k], prof_cycles[k], 100.*prof_cycles[k]/sum, (double)prof_cycles[k]/prof_count[k]);
 	printf("\n");
 	memset(prof_cycles, 0, sizeof(prof_cycles));
 	memset(prof_count, 0, sizeof(prof_count));
@@ -685,7 +685,7 @@ ArrayHandle		str2esc(const char *s, int size)
 		return 0;
 	}
 	if(!size)
-		size=strlen(s);
+		size=(int)strlen(s);
 
 	ret=array_construct(0, 1, 0, 1, size+1, 0);
 	for(int ks=0;ks<size;++ks)
@@ -824,7 +824,7 @@ void			lex_token2buf(Token *token)
 			char str[9]={0};
 
 			memcpy(str, &token->i, 8);
-			int len=strlen(str);
+			int len=(int)strlen(str);
 			len+=!len;
 			if(len>1)
 				memreverse(str, len, 1);
@@ -857,7 +857,7 @@ void			lex_token2buf(Token *token)
 			sprintf_s(g_buf, G_BUF_SIZE, "%s:nullptr", lex_tokentype2str(token->type));
 		else
 		{
-			ArrayHandle proc=str2esc(token->str, strlen(token->str));
+			ArrayHandle proc=str2esc(token->str, (int)strlen(token->str));
 			sprintf_s(g_buf, G_BUF_SIZE, "\"%s\"", (char*)proc->data);
 			array_free(&proc);
 		}
@@ -959,7 +959,7 @@ static void	lexer_init()
 			opt=(LexOption*)ARRAY_APPEND(*slot, 0, 1, 1, 0);
 
 			opt->token=kt;
-			opt->len=strlen(kw);
+			opt->len=(int)strlen(kw);
 			memcpy(opt->val.text, kw, opt->len);
 			for(int k2=0;k2<opt->len;++k2)
 				opt->mask.text[k2]=0xFF;
@@ -1057,7 +1057,7 @@ static void	lex_push_tok(DListHandle tokens, LexOption *opt, const char *p, int 
 	Token *token;
 	char c0=k>0?p[k-1]:0, c1=p[k+opt->len];
 
-	token=dlist_push_back(tokens, 0);
+	token=dlist_push_back1(tokens, 0);
 	token->type=opt->token;
 	token->pos=k;
 	token->len=opt->len;
@@ -1093,7 +1093,7 @@ static void lex_push_string(DListHandle tokens, CTokenType toktype, StringType s
 		len=(int)str->count;
 	}
 
-	token=dlist_push_back(tokens, 0);
+	token=dlist_push_back1(tokens, 0);
 
 	c0=k>0?p[k-1]:0, c1=p[k+len];
 	if((c0=='\''||c0=='\"')&&k>1)
@@ -1183,7 +1183,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 		if(lf->text)
 			LOG_ERROR("lex() warning: file was probably already lexed: filename=%p, text=%p", lf->filename, lf->text);
 		else
-			lf->text=load_text(lf->filename, 16);//look-ahead padding
+			lf->text=load_file(lf->filename, 0, 16);//look-ahead padding
 	}
 	if(!lf->text)
 	{
@@ -1221,7 +1221,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 		ArrayHandle slot=lex_slots[(unsigned char)p[k]];
 		if(slot)
 		{
-			int nslots=array_size(&slot);
+			int nslots=(int)slot->count;
 			if(nslots)
 			{
 				for(int ko=0;ko<nslots;++ko)
@@ -1250,7 +1250,7 @@ static int	lex(LexedFile *lf)//returns 1 if succeeded
 				int success=acme_read_number(p, len, &k, &val);
 				if(success)
 				{
-					Token *token=dlist_push_back(&tokens, 0);
+					Token *token=dlist_push_back1(&tokens, 0);
 					switch(val.type)
 					{
 					case NUM_I8:	token->type=T_VAL_C8,	token->i=val.i64;break;
@@ -1547,7 +1547,7 @@ static void token_append2str(ArrayHandle *dst, Token const *token)
 				kw="T_ILLEGAL";
 				break;
 			}
-			len=strlen(kw);
+			len=(int)strlen(kw);
 			STR_APPEND(*dst, kw, len, 1);
 		}
 	}
@@ -1735,7 +1735,7 @@ static int macro_arg_new(ArrayHandle *argnames, const char *name)
 {
 	MacroArg *arg;
 	int duplicate=0;
-	int nargs=argnames[0]->count;
+	int nargs=(int)argnames[0]->count;
 	for(int k=0;k<nargs;++k)
 	{
 		arg=(MacroArg*)array_at(argnames, k);
@@ -1753,7 +1753,7 @@ static int macro_arg_new(ArrayHandle *argnames, const char *name)
 	}
 	return duplicate;
 }
-static int macro_arg_search_threeway(const void *left, const void *right)
+static int cmp_macro_arg_search(const void *left, const void *right)
 {
 	MacroArg const *a1=(MacroArg const*)left;
 	const char **a2=(const char**)right;
@@ -1881,7 +1881,7 @@ int macro_define(Macro *dst, LexedFile *srcfile, Token const *tokens, int count)
 			token2=(Token*)array_at(&dst->tokens, kt);
 			if(token2->type==T_ID)
 			{
-				if(binary_search(argnames->data, argnames->count, argnames->esize, macro_arg_search_threeway, &token2->str, &idx))
+				if(binary_search(argnames->data, argnames->count, argnames->esize, cmp_macro_arg_search, &token2->str, &idx))
 				{
 					token2->type=T_MACRO_ARG;
 					arg=(MacroArg*)array_at(&argnames, idx);
@@ -1890,7 +1890,7 @@ int macro_define(Macro *dst, LexedFile *srcfile, Token const *tokens, int count)
 			}
 			else if(token2->type==T_VA_ARGS)
 			{
-				if(!binary_search(argnames->data, argnames->count, argnames->esize, macro_arg_search_threeway, &str_va_args, &idx))
+				if(!binary_search(argnames->data, argnames->count, argnames->esize, cmp_macro_arg_search, &str_va_args, &idx))
 				{
 					pp_error(token2, "__VA_ARGS__ is reserved for variadic macros.");
 					ret=0;
@@ -2057,7 +2057,7 @@ static int	macro_stringize(Macro *macro, int kt, ArrayHandle args2, Token *out)
 	}
 	ArrayHandle *arg=(ArrayHandle*)array_at(&args2, (size_t)next->i);
 	token=(Token*)arg[0]->data;
-	token_stringize(token, arg[0]->count, 0, arg[0]->count, srctext, srctext_len, out);//TODO: inline call
+	token_stringize(token, (int)arg[0]->count, 0, (int)arg[0]->count, srctext, srctext_len, out);//TODO: inline call
 	return 1;
 }
 //token paste '##': concatenate tokens
@@ -2078,7 +2078,7 @@ static void	macro_paste(Token const *t_left, Macro *macro, int *kt, ArrayHandle 
 			token_paste(t_left, (Token*)callarg[0]->data, srctext, dst);
 			if(callarg[0]->count>1)
 			{
-				int count=callarg[0]->count-1;
+				int count=(int)callarg[0]->count-1;
 				ARRAY_APPEND(*dst, 0, count, 1, 0);
 				Token *tsrc=TOKENS_AT(*callarg, 1), *tdst=TOKENS_AT(*dst, dst[0]->count-1);
 				memcpy(tdst, tsrc, count*sizeof(Token));
@@ -2119,7 +2119,7 @@ static void macro_expand_file		(Token const *src, Token *dst)
 {
 	memcpy(dst, src, sizeof(Token));
 	dst->type=T_VAL_STR;
-	dst->len=strlen(currentfile->filename);
+	dst->len=(int)strlen(currentfile->filename);
 	//dst->str=strlib_insert(currentfile->filename, dst->len);//currentfilename should already be in strlib
 	dst->str=currentfile->filename;
 	dst->synth=1;
@@ -2162,7 +2162,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 	Token *token;
 
 	dlist_init(&context, sizeof(MacroCall), 4, macrocall_destructor);
-	topcall=(MacroCall*)dlist_push_back(&context, 0);
+	topcall=(MacroCall*)dlist_push_back1(&context, 0);
 	topcall->macro=macro;
 	success=macro_find_call_extent(macro, src, *ks, &len, &topcall->args);
 	if(!success)
@@ -2188,14 +2188,14 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 		topcall=(MacroCall*)dlist_back(&context);
 		if(topcall->done)
 		{
-			dlist_pop_back(&context);
+			dlist_pop_back1(&context);
 			continue;
 		}
 		m2=topcall->macro;
 		ArrayHandle definition=m2->tokens;
 		if(!definition)
 		{
-			dlist_pop_back(&context);
+			dlist_pop_back1(&context);
 			continue;
 		}
 		while(topcall->kt<(int)definition->count)
@@ -2224,7 +2224,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 					{
 						if(callarg2[0]->count>1)
 						{
-							int count=callarg2[0]->count-1;
+							int count=(int)callarg2[0]->count-1;
 							ARRAY_APPEND(*dst, callarg2[0]->data, count, 1, 0);
 						}
 						if(callarg2[0]->count>0)
@@ -2258,7 +2258,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 					pp_error(token, "Token paste operator cannot be at the end of macro.");//error in definition
 					break;
 				}
-				int kd2=dst[0]->count-1;
+				int kd2=(int)dst[0]->count-1;
 				CTokenType temp;
 				for(;kd2>=topcall->expansion_start&&((temp=TOKENS_AT(*dst, kd2)->type)<=T_IGNORED||temp==T_NEWLINE);--kd2);
 				if(kd2>=topcall->expansion_start)
@@ -2300,11 +2300,11 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 										ARRAY_APPEND(*dst, 0, 0, 1, macro3->tokens->count);
 									topcall->kt2+=len2;//advance top.kt2 by call length because it will return here
 
-									topcall=dlist_push_back(&context, 0);//request to expand this argument
+									topcall=dlist_push_back1(&context, 0);//request to expand this argument
 									topcall->macro=macro3;
 									topcall->args=args;
 									topcall->kt2=0;
-									topcall->expansion_start=dst[0]->count;
+									topcall->expansion_start=(int)dst[0]->count;
 								
 									goto macro_expand_again;//should resume here after macro is expanded
 								}
@@ -2393,7 +2393,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 								ARRAY_APPEND(*dst, 0, 0, 1, macro3->tokens->count);
 							topcall->done=1;//keep previous macro calls, to guard against infinite cyclic expansion		X  the recursion guard now ignores these
 
-							topcall=dlist_push_back(&context, 0);//request to expand this argument
+							topcall=dlist_push_back1(&context, 0);//request to expand this argument
 							topcall->macro=macro3;
 							topcall->args=args;
 							topcall->kt2=0;
@@ -2421,7 +2421,7 @@ static int	macro_expand(MapHandle macros, Macro *macro, ArrayHandle src, int *ks
 			case T_MACRO_TIMESTAMP:	macro_expand_timestamp(token, (Token*)ARRAY_APPEND(*dst, 0, 1, 1, 0));	break;
 			}
 		}//end for (post expansion loop)
-		dlist_pop_back(&context);
+		dlist_pop_back1(&context);
 	}//end while (big expansion loop)
 	*ks+=len;
 	return len;
@@ -2489,7 +2489,7 @@ again:
 				array_free(&eval_tokens);
 			eval_tokens=dst;
 			eval_idx=0;
-			eval_end=dst->count;
+			eval_end=(int)dst->count;
 			eval_syntharray=1;
 			eval_next();
 			return eval_unary();
@@ -2802,9 +2802,9 @@ static char*	test_include(const char *searchpath, int pathlen, const char *inclu
 	STR_ALLOC(filename, pathlen+inclen);
 	memcpy(filename->data, searchpath, pathlen);
 	memcpy(filename->data+pathlen, includename, inclen);
-	int ret=file_is_readable((char*)filename->data);
-	if(ret==1)
-		str=strlib_insert((char*)filename->data, filename->count);
+	ptrdiff_t ret=get_filesize((char*)filename->data);
+	if(ret>0)
+		str=strlib_insert((char*)filename->data, (int)filename->count);
 	else
 		str=0;
 	array_free(&filename);
@@ -2813,10 +2813,10 @@ static char*	test_include(const char *searchpath, int pathlen, const char *inclu
 static char*	find_include(const char *includename, int custom, ArrayHandle includepaths)
 {
 	char *filename=0;
-	int inclen=strlen(includename);
+	int inclen=(int)strlen(includename);
 	if(custom)
 	{
-		int size=strlen(currentfile->filename);//relative path
+		int size=(int)strlen(currentfile->filename);//relative path
 		int k=size-1;
 		for(;k>=0;--k)
 		{
@@ -2832,7 +2832,7 @@ static char*	find_include(const char *includename, int custom, ArrayHandle inclu
 	for(int ki=0;ki<(int)includepaths->count;++ki)
 	{
 		ArrayHandle const *path=(ArrayHandle const*)array_at(&includepaths, ki);
-		filename=test_include(path[0]->data, path[0]->count, includename, inclen);
+		filename=test_include(path[0]->data, (int)path[0]->count, includename, inclen);
 		if(filename)
 			return filename;
 	}
@@ -2855,7 +2855,7 @@ static int		skip_block(MapHandle macros, ArrayHandle tokens, int *k, int lastblo
 	Token const *token;
 
 	k0=*k;
-	ntokens=tokens->count;
+	ntokens=(int)tokens->count;
 	level=1;
 	while(*k<ntokens)
 	{
@@ -2993,7 +2993,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 	}
 
 	dlist_init(&bookmarks, sizeof(Bookmark), 16, 0);//no destructor
-	bm=(Bookmark*)dlist_push_back(&bookmarks, 0);
+	bm=(Bookmark*)dlist_push_back1(&bookmarks, 0);
 	bm->lf=currentfile;
 	bm->ks=0;
 	bm->iflevel=0;
@@ -3010,7 +3010,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 		//if(currentfile->filename==DEBUG_filename)//MARKER
 		//	token=0;
 
-		int ntokens=currentfile->tokens->count;
+		int ntokens=(int)currentfile->tokens->count;
 		while(bm->ks<ntokens)
 		{
 			token=TOKENS_AT(currentfile->tokens, bm->ks);
@@ -3254,7 +3254,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 								//if(!found&&success||!(lf2->flags&LEX_INCLUDE_ONCE))//not found or not marked with '#pragma once',	the 'not found' part can be removed, since it's the preprocessor that reads #pragma once
 								if(!(lf2->flags&LEX_INCLUDE_ONCE))//not marked with '#pragma once' by a previous preprocessor pass
 								{
-									bm=dlist_push_back(&bookmarks, 0);
+									bm=dlist_push_back1(&bookmarks, 0);
 									bm->lf=lf2;
 									goto preprocess_start;
 								}
@@ -3325,27 +3325,27 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 				break;//case T_HASH		#...
 			case T_MACRO_FILE:
 				++bm->ks;//skip __FILE__
-				macro_expand_file(token, (Token*)dlist_push_back(&tokens, 0));
+				macro_expand_file(token, (Token*)dlist_push_back1(&tokens, 0));
 				PROF(MACRO_FILE);
 				break;
 			case T_MACRO_LINE:
 				++bm->ks;//skip __LINE__
-				macro_expand_line(token, (Token*)dlist_push_back(&tokens, 0));
+				macro_expand_line(token, (Token*)dlist_push_back1(&tokens, 0));
 				PROF(MACRO_LINE);
 				break;
 			case T_MACRO_DATE:
 				++bm->ks;//skip __DATE__
-				macro_expand_date(token, (Token*)dlist_push_back(&tokens, 0));
+				macro_expand_date(token, (Token*)dlist_push_back1(&tokens, 0));
 				PROF(MACRO_DATE);
 				break;
 			case T_MACRO_TIME:
 				++bm->ks;//skip __TIME__
-				macro_expand_time(token, (Token*)dlist_push_back(&tokens, 0));
+				macro_expand_time(token, (Token*)dlist_push_back1(&tokens, 0));
 				PROF(MACRO_TIME);
 				break;
 			case T_MACRO_TIMESTAMP:
 				++bm->ks;//skip __TIMESTAMP__
-				macro_expand_timestamp(token, (Token*)dlist_push_back(&tokens, 0));
+				macro_expand_timestamp(token, (Token*)dlist_push_back1(&tokens, 0));
 				PROF(MACRO_TIMESTAMP);
 				break;
 			case T_ID:
@@ -3373,7 +3373,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 							for(int kt=0;kt<(int)dst->count;++kt)//TODO dlist_push_back(array)
 							{
 								token=TOKENS_AT(dst, kt);
-								dlist_push_back(&tokens, token);
+								dlist_push_back1(&tokens, token);
 							}
 						}
 						array_free(&dst);
@@ -3381,7 +3381,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 					}
 					else
 					{
-						dlist_push_back(&tokens, token);
+						dlist_push_back1(&tokens, token);
 						++bm->ks;
 						PROF(IDENTIFIER);
 					}
@@ -3398,7 +3398,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 				break;
 			default:
 				if(token->type>T_IGNORED)
-					dlist_push_back(&tokens, token);
+					dlist_push_back1(&tokens, token);
 				++bm->ks;
 				PROF(TOKEN);
 				break;
@@ -3409,7 +3409,7 @@ ArrayHandle		preprocess(const char *filename, MapHandle macros, ArrayHandle incl
 			token=(Token*)array_back(&currentfile->tokens);
 			pp_error(token, "End of file reached. Expected %d #endif\'s.", bm->iflevel);
 		}
-		dlist_pop_back(&bookmarks);//no destructor
+		dlist_pop_back1(&bookmarks);//no destructor
 	}//end preprocess loop
 
 	ret=0;
@@ -3457,7 +3457,7 @@ void		macros_init(MapHandle macros, PreDef *preDefs, int nPreDefs)
 	for(int k=0;k<nPreDefs;++k)
 	{
 		int found=0;
-		char *unique_name=strlib_insert(preDefs[k].name, strlen(preDefs[k].name));
+		char *unique_name=strlib_insert(preDefs[k].name, (int)strlen(preDefs[k].name));
 		node=map_insert(macros, &unique_name, &found);
 		ASSERT(node&&*node);
 		macro=(Macro*)node[0]->data;
@@ -3473,7 +3473,7 @@ void		macros_init(MapHandle macros, PreDef *preDefs, int nPreDefs)
 			switch(preDefs[k].type)
 			{
 			case T_VAL_STR:
-				token->str=strlib_insert(preDefs[k].str, strlen(preDefs[k].str));
+				token->str=strlib_insert(preDefs[k].str, (int)strlen(preDefs[k].str));
 				break;
 			case T_VAL_I32:
 				token->i=preDefs[k].i;
@@ -3499,7 +3499,7 @@ void		tokens2text(ArrayHandle tokens, ArrayHandle *str)
 
 	if(!*str)
 		STR_ALLOC(*str, 0);
-	ntokens=(int)array_size(&tokens);
+	ntokens=(int)tokens->count;
 	spaceprinted=0;
 	for(int k=0;k<ntokens;++k)
 	{

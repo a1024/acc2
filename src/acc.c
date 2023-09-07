@@ -76,7 +76,7 @@ void		set_console_buffer_size(short w, short h)
 #define		set_console_buffer_size(...)
 #endif
 
-static void	free_incpath(void *data)
+static void	free_str(void *data)
 {
 	ArrayHandle *str=(ArrayHandle*)data;
 	array_free(str);
@@ -161,10 +161,17 @@ int			main(int argc, char **argv)
 	ArrayHandle infilenames;
 	const char *outfilename;
 
-	set_console_buffer_size(120, 9001);
-
+	//set_console_buffer_size(120, 9001);
 	//rb_test();
 
+#ifdef _DEBUG
+	const char *_input="C:/Projects/acc/input.c";
+	outfilename="C:/Projects/acc/out.c";
+
+	ARRAY_ALLOC(ArrayHandle, infilenames, 0, 0, 1, free_str);
+	ArrayHandle *_fn=(ArrayHandle*)ARRAY_APPEND(infilenames, 0, 1, 1, 0);
+	STR_COPY(*_fn, _input, strlen(_input));
+#else
 	infilenames=0;
 	outfilename=0;
 	for(argidx=1;;++argidx)
@@ -181,9 +188,12 @@ int			main(int argc, char **argv)
 			);
 			continue;
 		case OPT_NOMATCH:
-			if(!infilenames)
-				ARRAY_ALLOC(char*, infilenames, 0, 0, 1, 0);
-			ARRAY_APPEND(infilenames, argv+argidx, 1, 1, 0);
+			{
+				if(!infilenames)
+					ARRAY_ALLOC(ArrayHandle, infilenames, 0, 0, 1, 0);
+				ArrayHandle *fn=(ArrayHandle*)ARRAY_APPEND(infilenames, argv+argidx, 1, 1, 0);
+				STR_COPY(*fn, argv[argidx], strlen(argv[argidx]));
+			}
 			continue;
 		case 0://help
 			printf(
@@ -212,6 +222,7 @@ int			main(int argc, char **argv)
 		printf("Error: ACC is still in development. Multiple files not supported yet.\n");
 		return 1;
 	}
+#endif
 #if 0
 	if(argc!=2)
 	{
@@ -239,7 +250,7 @@ int			main(int argc, char **argv)
 
 	//initialize includepaths
 	const int nStdIncludes=COUNTOF(std_includes);
-	ARRAY_ALLOC(ArrayHandle, includepaths, 0, nStdIncludes, 0, free_incpath);
+	ARRAY_ALLOC(ArrayHandle, includepaths, 0, nStdIncludes, 0, free_str);
 	for(int k=0;k<nStdIncludes;++k)
 	{
 		ArrayHandle *includepath=(ArrayHandle*)array_at(&includepaths, k);
@@ -251,9 +262,9 @@ int			main(int argc, char **argv)
 	init_dateNtime();
 	macros_init(&macros, predefs, COUNTOF(predefs));
 
-	const char *infilename=*(const char**)array_at(&infilenames, 0);
-	printf("Preprocessing %s\n", infilename);
-	ArrayHandle tokens=preprocess(infilename, &macros, includepaths, &lexlib);
+	ArrayHandle *infilename=(ArrayHandle*)array_at(&infilenames, 0);
+	printf("Preprocessing %s\n", (char*)infilename[0]->data);
+	ArrayHandle tokens=preprocess((char*)infilename[0]->data, &macros, includepaths, &lexlib);
 	if(!tokens)
 	{
 		printf("Preprocess failed\n");
@@ -289,10 +300,10 @@ int			main(int argc, char **argv)
 		}
 		printf("Save preprocessor output as \'%s\'? [Y/N] ", filename->data);
 		char c=0;
-		scanf("%c", &c);
+		while(scanf(" %c", &c)<1);
 		if((c&0xDF)=='Y')
 		{
-			int success=save_text((char*)filename->data, (char*)text->data, text->count);
+			int success=(int)save_file((char*)filename->data, (char*)text->data, text->count, 0);
 			if(success)
 				printf("Saved\n");
 			else
