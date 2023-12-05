@@ -789,7 +789,7 @@ ArrayHandle lex(const char *text, int len)
 			int matched=0;
 			for(int k2=0;k2<KT_COUNT;++k2)
 			{
-				if(match(text, k, len, keyword_str[k2]))
+				if(match(text, k, len, keyword_str[k2])&&k+keyword_len[k2]<len&&!isalnum(text[k+keyword_len[k2]]))
 				{
 					matched=1;
 					token.type=TT_KEYWORD;
@@ -905,6 +905,36 @@ ArrayHandle lex(const char *text, int len)
 	dlist_clear(&list);
 	return arr;
 }
+void print_token(Token *t)
+{
+	switch(t->type)
+	{
+	case TT_KEYWORD:
+		printf("%s", keyword_str[t->keyword_type]);
+		break;
+	case TT_SYMBOL:
+		printf("%s", symbol_str[t->symbol_type]);
+		break;
+	case TT_ID:
+		printf("%s", t->val_str);
+		break;
+	case TT_STRING_LITERAL:
+	case TT_CHAR_LITERAL:
+		{
+			ArrayHandle t2=str2esc(t->val_str, (int)strlen(t->val_str));
+			char quote=t->type==TT_STRING_LITERAL?'\"':'\'';
+			printf("%c%s%c", quote, t2->data, quote);
+			array_free(&t2);
+		}
+		break;
+	case TT_INT_LITERAL:
+		printf("%lld", t->val_int);
+		break;
+	case TT_FLOAT_LITERAL:
+		printf("%lf", t->val_float);
+		break;
+	}
+}
 void print_tokens(Token *tokens, int count)
 {
 	for(int k=0;k<count;++k)
@@ -912,33 +942,7 @@ void print_tokens(Token *tokens, int count)
 		Token *t=tokens+k;
 		if(k&&t->lineno>tokens[k-1].lineno)
 			printf("\n");
-		switch(t->type)
-		{
-		case TT_KEYWORD:
-			printf("%s", keyword_str[t->keyword_type]);
-			break;
-		case TT_SYMBOL:
-			printf("%s", symbol_str[t->symbol_type]);
-			break;
-		case TT_ID:
-			printf("%s", t->val_str);
-			break;
-		case TT_STRING_LITERAL:
-		case TT_CHAR_LITERAL:
-			{
-				ArrayHandle t2=str2esc(t->val_str, (int)strlen(t->val_str));
-				char quote=t->type==TT_STRING_LITERAL?'\"':'\'';
-				printf("%c%s%c", quote, t2->data, quote);
-				array_free(&t2);
-			}
-			break;
-		case TT_INT_LITERAL:
-			printf("%lld", t->val_int);
-			break;
-		case TT_FLOAT_LITERAL:
-			printf("%lf", t->val_float);
-			break;
-		}
+		print_token(t);
 		if(k+1<count)
 			printf(" ");
 	}
@@ -957,7 +961,7 @@ int compile_error(Token *t, int level, const char *format, ...)
 	case 2:levelstr="WARNING";break;
 	case 3:levelstr="ERROR";break;
 	}
-	printf("(%d) %s: ", t->lineno, levelstr);
+	printf("(%d) %s: ", t->lineno+1, levelstr);
 	va_start(args, format);
 	vprintf(format, args);
 	va_end(format);
@@ -976,6 +980,8 @@ typedef enum ASTNodeTypeEnum
 	NT_PROGRAM,
 	NT_TYPE,
 	NT_FUNCHEADER,
+	NT_ARGDECL,
+	NT_ARGDECL_ELLIPSIS,
 	NT_FUNCBODY,
 	NT_SCOPE,
 	NT_STMT_IF,
@@ -1009,14 +1015,15 @@ typedef enum ASTNodeTypeEnum
 typedef struct ASTNodeStruct
 {
 	ASTNodeType type;
-	int nch;
+	short nch;
+	short indirection_count;//for pointers
 	union
 	{
 		Token t;
 		struct
 		{
 			int nbits;
-			char is_unsigned, is_const, is_float, storage;//storage: 1: extern, 2: static
+			char is_unsigned, is_const, is_float, is_extern, is_static;
 		};
 	};
 	struct ASTNodeStruct *ch[];
@@ -1032,6 +1039,16 @@ static ASTNode* node_alloc(ASTNodeType type)
 	memset(n, 0, sizeof(ASTNode));
 	n->type=type;
 	return n;
+}
+static void node_free(ASTNode **root)
+{
+	if(*root)
+	{
+		for(int k=0;k<root[0]->nch;++k)
+			node_free(root[0]->ch+k);
+		free(*root);
+		*root=0;
+	}
 }
 static int node_append_ch(ASTNode **root, ASTNode *ch)//as an array
 {
@@ -1164,7 +1181,8 @@ static ASTNode* parse_type(Token *tokens, int *idx, int count)
 	n->is_unsigned=is_unsigned==1;
 	n->is_const=is_const;
 	n->is_float=is_float;
-	n->storage=is_extern?1:2;
+	n->is_extern=is_extern;
+	n->is_static=is_static;
 	return n;
 }
 static ASTNode* parse_funcheader(Token *tokens, int *idx, int count)
@@ -1185,23 +1203,51 @@ static ASTNode* parse_funcheader(Token *tokens, int *idx, int count)
 	}
 	while(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
 	{
-		ASTNode *n_type=parse_type(tokens, idx, count);
-		node_append_ch(&n_header, n_type);
-		CHECKIDX(n_header)
-		t=tokens+*idx;
-
-		if(t->type==TT_ID)
+		if(t->type==TT_SYMBOL&&t->symbol_type==ST_ELLIPSIS)
 		{
-			ASTNode *n_name=node_alloc(NT_TOKEN);
-			n_name->t=*t;
-			node_append_ch(n_header->ch+n_header->nch-1, n_name);
+			ASTNode *n_name=node_alloc(NT_ARGDECL_ELLIPSIS);
+			node_append_ch(&n_header, n_name);
 			++*idx;
+
 			CHECKIDX(n_header)
 			t=tokens+*idx;
+			if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
+			{
+				COMPE(t, "Ellipsis must terminate function header");
+				return n_header;
+			}
 		}
-		if(t->type==TT_SYMBOL&&t->symbol_type==ST_LPR)//funcpointer
+		else
 		{
-			//...
+			ASTNode *n_type=parse_type(tokens, idx, count);
+			node_append_ch(&n_header, n_type);
+			CHECKIDX(n_header)
+			t=tokens+*idx;
+			
+			ASTNode *n_name=node_alloc(NT_ARGDECL);
+			int indirection_count=0;
+			while(t->type==TT_SYMBOL&&t->symbol_type==ST_ASTERISK)//TODO parse pointer to array/funcptr	int (*x)[10];
+			{
+				++indirection_count;
+				++*idx;
+
+				CHECKIDX(n_type)
+				t=tokens+*idx;
+			}
+			n_name->indirection_count=indirection_count;
+			if(t->type==TT_ID)
+			{
+				n_name->t=*t;
+				++*idx;
+
+				CHECKIDX(n_header)
+				t=tokens+*idx;
+			}
+			if(t->type==TT_SYMBOL&&t->symbol_type==ST_LPR)//TODO funcpointer
+			{
+				//...
+			}
+			node_append_ch(n_header->ch+n_header->nch-1, n_name);
 		}
 
 		if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_COMMA))
@@ -1277,7 +1323,7 @@ static int is_prefix_op(Token *tokens, int idx, int count)
 }
 static ASTNode* parse_postfix(Token *tokens, int *idx, int count)//check if postfix before calling
 {
-	ASTNode *n_expr=0;
+	ASTNode *n_root=0;
 	Token *t;
 	t=tokens+*idx;
 	switch(t->type)//handle main expression
@@ -1288,14 +1334,14 @@ static ASTNode* parse_postfix(Token *tokens, int *idx, int count)//check if post
 			++*idx;
 
 			CHECKIDX(0);
-			n_expr=parse_expr_commalist(tokens, idx, count);
+			n_root=parse_expr_commalist(tokens, idx, count);
 			
-			CHECKIDX(n_expr)
+			CHECKIDX(n_root)
 			t=tokens+*idx;
 			if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
 			{
 				COMPE(t, "Expected \')\'");
-				return n_expr;
+				return n_root;
 			}
 			++*idx;
 		}
@@ -1305,21 +1351,20 @@ static ASTNode* parse_postfix(Token *tokens, int *idx, int count)//check if post
 	case TT_CHAR_LITERAL:
 	case TT_INT_LITERAL:
 	case TT_FLOAT_LITERAL:
-		n_expr=node_alloc(NT_TOKEN);
-		n_expr->t=*t;
+		n_root=node_alloc(NT_TOKEN);
+		n_root->t=*t;
 		++*idx;
 		break;
 	}
-	if(!n_expr)
+	if(!n_root)
 	{
 		COMPE(t, "Expected an expression");
 		return 0;
 	}
 
 	//handle postfix
-	CHECKIDX(n_expr)
+	CHECKIDX(n_root)
 	t=tokens+*idx;
-	ASTNode *n_root=0;
 	while(t->type==TT_SYMBOL&&is_postfix_op(t->symbol_type))
 	{
 		ASTNode *n_post;
@@ -1328,8 +1373,7 @@ static ASTNode* parse_postfix(Token *tokens, int *idx, int count)//check if post
 		case ST_INC://postfix increment
 		case ST_DEC://postfix decrement
 			n_post=node_alloc(t->symbol_type==ST_INC?NT_OP_POST_INC:NT_OP_POST_DEC);
-			if(n_root)
-				node_append_ch(&n_post, n_root);
+			node_append_ch(&n_post, n_root);
 			n_root=n_post;
 			++*idx;
 			break;
@@ -1341,8 +1385,7 @@ static ASTNode* parse_postfix(Token *tokens, int *idx, int count)//check if post
 			//AST: funccall -> func commalist
 			//AST: subscript -> id commalist
 			n_post=node_alloc(t->symbol_type==ST_LPR?NT_OP_FUNCCALL:NT_OP_SUBSCRIPT);
-			if(n_root)
-				node_append_ch(&n_post, n_root);
+			node_append_ch(&n_post, n_root);
 			n_root=n_post;
 			++*idx;
 
@@ -1373,8 +1416,7 @@ static ASTNode* parse_postfix(Token *tokens, int *idx, int count)//check if post
 		case ST_PERIOD://struct member
 		case ST_ARROW://pointer member
 			n_post=node_alloc(t->symbol_type==ST_PERIOD?NT_OP_MEMBER:NT_OP_ARROW);
-			if(n_root)
-				node_append_ch(&n_post, n_root);
+			node_append_ch(&n_post, n_root);
 			n_root=n_post;
 			++*idx;
 			
@@ -1395,98 +1437,6 @@ static ASTNode* parse_postfix(Token *tokens, int *idx, int count)//check if post
 		t=tokens+*idx;
 	}
 	return n_root;
-
-#if 0
-	Token *t;
-	
-	t=tokens+*idx;
-	ASTNodeType type=NT_TOKEN;
-	switch(t->symbol_type)
-	{
-	case ST_INC:		type=NT_OP_POST_INC;	break;
-	case ST_DEC:		type=NT_OP_PRE_INC;	break;
-	case ST_LPR:		type=NT_OP_FUNCCALL;	break;
-	case ST_LBRACKET:	type=NT_OP_SUBSCRIPT;	break;
-	case ST_PERIOD:		type=NT_OP_MEMBER;	break;
-	case ST_ARROW:		type=NT_OP_ARROW;	break;
-	}
-	ASTNode *n_post=node_alloc(type);
-	++*idx;
-	switch(type)
-	{
-	case NT_OP_FUNCCALL:
-		{
-			//LPR commalist RPR
-
-			//AST: funccall -> arg*
-			CHECKIDX(n_post)
-			t=tokens+*idx;
-			if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
-			{
-				ASTNode *n_args=parse_expr_commalist(tokens, idx, count);
-				node_append_ch(&n_post, n_args);
-				
-				CHECKIDX(n_post)
-				t=tokens+*idx;
-			}
-			if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
-			{
-				COMPE(t, "Expected \')\'");
-				return n_post;
-			}
-			++*idx;
-		}
-		break;
-	case NT_OP_SUBSCRIPT:
-		{
-			//LBRACKET commalist RBRACKET
-
-			//AST: funccall -> arg*
-			CHECKIDX(n_post)
-			t=tokens+*idx;
-			if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RBRACKET))
-			{
-				ASTNode *n_args=parse_expr_commalist(tokens, idx, count);
-				node_append_ch(&n_post, n_args);
-				
-				CHECKIDX(n_post)
-				t=tokens+*idx;
-			}
-			if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RBRACKET))
-			{
-				COMPE(t, "Expected \']\'");
-				return n_post;
-			}
-			++*idx;
-		}
-		break;
-	case NT_OP_MEMBER:
-	case NT_OP_ARROW:
-		{
-			//MEMBER id [op_postfix]
-
-			//AST: dot_or_arrow -> struct_or_ptr member_id postfix*		SWAP PROBLEM
-			CHECKIDX(n_post)
-			t=tokens+*idx;
-			if(t->type!=TT_ID)
-			{
-				COMPE(t, "Expected an identifier");
-				return n_post;
-			}
-		}
-		break;
-	}
-
-	CHECKIDX(n_post)
-	t=tokens+*idx;
-	if(t->type==TT_SYMBOL&&is_postfix_op(t->symbol_type))
-	{
-		ASTNode *n_next=parse_postfix(tokens, idx, count);
-		node_append_ch(&n_next, n_post);
-		return n_next;
-	}
-	return n_post;
-#endif
 }
 static ASTNode* parse_prefix(Token *tokens, int *idx, int count)
 {
@@ -1536,134 +1486,6 @@ static ASTNode* parse_prefix(Token *tokens, int *idx, int count)
 		return n_post;
 	node_append_ch(n_leaf, n_post);
 	return n_root;
-
-#if 0
-	Token *t;
-
-	t=tokens+*idx;
-	if(t->type==TT_SYMBOL&&is_prefix_op(t->symbol_type))
-	{
-		ASTNodeType type=NT_TOKEN;
-		switch(t->symbol_type)
-		{
-		case ST_INC:		type=NT_OP_PRE_INC;	break;
-		case ST_DEC:		type=NT_OP_PRE_DEC;	break;
-		case ST_PLUS:		type=NT_OP_POS;		break;
-		case ST_MINUS:		type=NT_OP_NEG;		break;
-		case ST_EXCLAMATION:	type=NT_OP_BITWISE_NOT;	break;
-		case ST_TILDE:		type=NT_OP_LOGIC_NOT;	break;
-		case ST_ASTERISK:	type=NT_OP_DEREFERENCE;	break;
-		case ST_AMPERSAND:	type=NT_OP_ADDRESS_OF;	break;
-		}
-		ASTNode *n_pre=node_alloc(type);
-		++*idx;
-
-		CHECKIDX(n_pre)
-		ASTNode *n_expr=parse_prefix(tokens, idx, count);
-		node_append_ch(&n_pre, n_expr);
-		return n_pre;
-	}
-	t=tokens+*idx;
-	switch(t->type)
-	{
-	case TT_SYMBOL:
-		if(t->symbol_type==ST_LPR)
-		{
-			++*idx;
-			CHECKIDX(0)
-			if(t->type==TT_KEYWORD&&is_type(t->keyword_type))//cast operator
-			{
-				//LPR type RPR prefix_expr
-
-				//AST: cast -> type expr
-				ASTNode *n_cast=node_alloc(NT_OP_CAST);
-				ASTNode *n_type=parse_type(tokens, idx, count);
-				node_append_ch(&n_cast, n_type);
-				
-				CHECKIDX(n_cast)
-				t=tokens+*idx;
-				if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
-				{
-					COMPE(t, "Expected \')\'");
-					return n_cast;
-				}
-				++*idx;
-
-				ASTNode *n_expr=parse_prefix(tokens, idx, count);
-				node_append_ch(&n_cast, n_expr);
-
-				return n_cast;
-			}
-
-			//LPR expr RPR [op_postfix]
-			ASTNode *n_list=parse_expr_commalist(tokens, idx, count);
-
-			CHECKIDX(n_list)
-			t=tokens+*idx;
-			if(t->type==TT_SYMBOL&&is_postfix_op(t->symbol_type))
-			{
-				ASTNode *n_post=parse_postfix(tokens, idx, count);
-				node_append_ch(&n_post, n_list);
-				return n_post;
-			}
-			return n_list;
-		}
-#if 0
-		if(t->symbol_type==ST_LPR)
-		{
-			ASTNode *n_parens=node_alloc(NT_TOKEN);
-			n_parens->t=*t;
-			++*idx;
-			
-			CHECKIDX(n_parens)
-			t=tokens+*idx;
-			if(t->type==TT_KEYWORD&&is_type(t->keyword_type))
-			{
-				ASTNode *n_type=parse_type(tokens, idx, count);
-				n_parens->type=NT_OP_CAST;
-				node_append_ch(&n_parens, n_type);
-			}
-			else
-			{
-			}
-
-			CHECKIDX(n_parens)
-			t=tokens+*idx;
-			if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
-			{
-				COMPE(t, "Expected \')\'");
-				return n_parens;
-			}
-			++*idx;
-
-			return n_parens;
-		}
-#endif
-		break;
-	case TT_ID:
-	case TT_STRING_LITERAL:
-	case TT_CHAR_LITERAL:
-	case TT_INT_LITERAL:
-	case TT_FLOAT_LITERAL:
-		{
-			ASTNode *n_id=node_alloc(NT_TOKEN);
-			n_id->t=*t;
-			++*idx;
-
-			CHECKIDX(n_id)
-			t=tokens+*idx;
-			if(t->type==TT_SYMBOL&&is_postfix_op(t->symbol_type))
-			{
-				ASTNode *n_post=parse_postfix(tokens, idx, count);
-				node_append_ch(&n_post, n_id);
-				return n_post;
-			}
-			return n_id;
-		}
-		break;
-	}
-	return 0;
-#endif
 }
 static ASTNode* parse_multiplicative(Token *tokens, int *idx, int count)
 {
@@ -2409,7 +2231,7 @@ static ASTNode* parse_statement(Token *tokens, int *idx, int count)
 				++*idx;
 
 				CHECKIDX(n_case)
-				ASTNode *n_body=parse_expr_commalist(tokens, idx, count);
+				ASTNode *n_body=parse_expr_ternary(tokens, idx, count);
 				
 				CHECKIDX(n_case)
 				t=tokens+*idx;
@@ -2552,11 +2374,20 @@ static ASTNode* parse_statement(Token *tokens, int *idx, int count)
 static ASTNode* parse_code(Token *tokens, int *idx, int count)
 {
 	ASTNode *n_code=node_alloc(NT_FUNCBODY);
-	for(int idx=0;idx<count;)
+	while(*idx<count)
 	{
-		ASTNode *n_decl=parse_statement(tokens, &idx, count);
+		Token *t=tokens+*idx;
+		if(t->type==TT_SYMBOL&&t->symbol_type==ST_RBRACE)
+			break;
+		int idx0=*idx;
+		ASTNode *n_decl=parse_statement(tokens, idx, count);
 		if(n_decl)
 			node_append_ch(&n_code, n_decl);
+		if(idx==idx0)
+		{
+			COMPE(tokens+*idx, "INTERNAL ERROR: PARSER STUCK");
+			++*idx;
+		}
 	}
 	return n_code;
 }
@@ -2568,16 +2399,27 @@ static ASTNode* parse_declaration(Token *tokens, int *idx, int count, int global
 
 	//AST: type -> funcdef | declaration*		TODO func ptr
 	
+	short indirection_count=0;
 	Token *t;
 	ASTNode *n_type=parse_type(tokens, idx, count);
+
 	CHECKIDX(n_type)
 	t=tokens+*idx;
+	while(t->type==TT_SYMBOL&&t->symbol_type==ST_ASTERISK)//TODO parse pointer to array/funcptr	int (*x)[10];
+	{
+		++indirection_count;
+		++*idx;
+
+		CHECKIDX(n_type)
+		t=tokens+*idx;
+	}
 	if(t->type!=TT_ID)
 	{
 		COMPE(t, "Expected an identifier");
 		return n_type;
 	}
 	ASTNode *n_name=node_alloc(NT_TOKEN);
+	n_name->indirection_count=indirection_count;
 	n_name->t=*t;
 	node_append_ch(&n_type, n_name);
 	++*idx;
@@ -2593,17 +2435,21 @@ static ASTNode* parse_declaration(Token *tokens, int *idx, int count, int global
 		t=tokens+*idx;
 		if(!(t->type==TT_SYMBOL&&t->symbol_type==ST_RPR))
 		{
-			COMPE(t, "Expeted a closing parenthesis");
+			COMPE(t, "Expeted \')\'");
 			return n_type;
 		}
 		++*idx;
 		CHECKIDX(n_type)
 		t=tokens+*idx;
-		if(!global&&t->type==TT_SYMBOL&&t->symbol_type==ST_LBRACE)//funcbody
+		if(global&&t->type==TT_SYMBOL&&t->symbol_type==ST_LBRACE)//funcbody
 		{
+			n_type->indirection_count=n_name->indirection_count;//move indirection_count from funcname to return_type
+			n_name->indirection_count=0;
+			++*idx;
+
+			CHECKIDX(n_type)
 			ASTNode *n_body=parse_code(tokens, idx, count);
 			node_append_ch(n_type->ch+n_type->nch-1, n_body);
-			++*idx;
 
 			CHECKIDX(n_type)
 			t=tokens+*idx;
@@ -2619,18 +2465,30 @@ static ASTNode* parse_declaration(Token *tokens, int *idx, int count, int global
 		CHECKIDX(n_type)
 		ASTNode *n_init=parse_expr_ternary(tokens, idx, count);
 		node_append_ch(n_type->ch+n_type->nch-1, n_init);
+
+		CHECKIDX(n_type)
+		t=tokens+*idx;
 	}
 	while(t->type==TT_SYMBOL&&t->symbol_type==ST_COMMA)
 	{
 		++*idx;
 		CHECKIDX(n_type)
 		t=tokens+*idx;
+		while(t->type==TT_SYMBOL&&t->symbol_type==ST_ASTERISK)//TODO parse pointer to array/funcptr	int (*x)[10];
+		{
+			++indirection_count;
+			++*idx;
+
+			CHECKIDX(n_type)
+			t=tokens+*idx;
+		}
 		if(t->type!=TT_ID)
 		{
 			COMPE(t, "Expected an identifier");
 			break;
 		}
 		ASTNode *n_name=node_alloc(NT_TOKEN);
+		n_name->indirection_count=indirection_count;
 		n_name->t=*t;
 		node_append_ch(&n_type, n_name);
 		++*idx;
@@ -2673,13 +2531,264 @@ ASTNode* parse_program(Token *tokens, int count)//program := declaration*
 	ASTNode *n_prog=node_alloc(NT_PROGRAM);
 	for(int idx=0;idx<count;)
 	{
+		int idx0=idx;
 		ASTNode *n_decl=parse_declaration(tokens, &idx, count, 1);
 		if(n_decl)
 			node_append_ch(&n_prog, n_decl);
+		if(idx==idx0)
+		{
+			COMPE(tokens+idx, "INTERNAL ERROR: PARSER STUCK");
+			++idx;
+		}
 	}
 	return n_prog;
 }
 
+void print_ast(ASTNode *root, int depth)
+{
+	if(!root)
+		return;
+	printf("%*s@", depth<<1, "");//indentation
+	switch(root->type)
+	{
+	case NT_TOKEN:
+		for(int k=0;k<root->indirection_count;++k)
+			printf("*");
+		print_token(&root->t);
+		break;
+	case NT_PROGRAM:
+		printf("program");
+		break;
+	case NT_TYPE:
+		if(root->is_extern)
+			printf("extern ");
+		if(root->is_static)
+			printf("static ");
+		if(root->is_const)
+			printf("const ");
+		if(root->is_float)
+		{
+			if(root->nbits==32)
+				printf("float");
+			else
+				printf("double");
+		}
+		else
+		{
+			if(root->is_unsigned)
+				printf("unsigned ");
+			switch(root->nbits)
+			{
+			case  0:printf("void");break;
+			case  8:printf("char");break;
+			case 16:printf("short");break;
+			case 32:printf("int");break;
+			case 64:printf("long");break;
+			default:printf("bitfield:%d", root->nbits);break;
+			}
+		}
+		break;
+	case NT_FUNCHEADER:
+		printf("funcheader");
+		break;
+	case NT_ARGDECL:
+		for(int k=0;k<root->indirection_count;++k)
+			printf("*");
+		print_token(&root->t);
+		printf(" (funcarg)");
+		break;
+	case NT_ARGDECL_ELLIPSIS:
+		printf("... (ellipsis_arg)");
+		break;
+	case NT_FUNCBODY:
+		printf("funcbody");
+		break;
+	case NT_SCOPE:
+		printf("scope{}");
+		break;
+	case NT_STMT_IF:
+		printf("if");
+		break;
+	case NT_STMT_FOR:
+		printf("for");
+		break;
+	case NT_STMT_DO_WHILE:
+		printf("doWhile");
+		break;
+	case NT_STMT_WHILE:
+		printf("while");
+		break;
+	case NT_STMT_CONTINUE:
+		printf("continue");
+		break;
+	case NT_STMT_BREAK:
+		printf("break");
+		break;
+	case NT_STMT_SWITCH:
+		printf("switch");
+		break;
+	case NT_LABEL_CASE:
+		printf("case");
+		break;
+	case NT_LABEL_DEFAULT:
+		printf("default");
+		break;
+	case NT_STMT_GOTO:
+		printf("goto");
+		break;
+	case NT_LABEL_TOGO:
+		printf("label:");
+		break;
+	case NT_STMT_RETURN:
+		printf("return");
+		break;
+	case NT_OP_ARROW:
+		printf("->");
+		break;
+	case NT_OP_MEMBER:
+		printf(". (member)");
+		break;
+	case NT_OP_SUBSCRIPT:
+		printf("[]");
+		break;
+	case NT_OP_FUNCCALL:
+		printf("funccall");
+		break;
+	case NT_OP_POST_INC:
+		printf("post++");
+		break;
+	case NT_OP_POST_DEC:
+		printf("post--");
+		break;
+	case NT_OP_ADDRESS_OF:
+		printf("&address_of");
+		break;
+	case NT_OP_DEREFERENCE:
+		printf("*dereference");
+		break;
+	case NT_OP_CAST:
+		printf("(cast)...");
+		break;
+	case NT_OP_LOGIC_NOT:
+		printf("!logic_not");
+		break;
+	case NT_OP_BITWISE_NOT:
+		printf("~bitwise_not");
+		break;
+	case NT_OP_POS:
+		printf("+pos");
+		break;
+	case NT_OP_NEG:
+		printf("-neg");
+		break;
+	case NT_OP_PRE_INC:
+		printf("pre++");
+		break;
+	case NT_OP_PRE_DEC:
+		printf("pre--");
+		break;
+	case NT_OP_MUL:
+		printf("a*b (mul)");
+		break;
+	case NT_OP_DIV:
+		printf("a/b (div)");
+		break;
+	case NT_OP_MOD:
+		printf("a%%b (mod)");
+		break;
+	case NT_OP_ADD:
+		printf("a+b (add)");
+		break;
+	case NT_OP_SUB:
+		printf("a-b (sub)");
+		break;
+	case NT_OP_SHIFT_LEFT:
+		printf("a<<b (shift_left)");
+		break;
+	case NT_OP_SHIFT_RIGHT:
+		printf("a>>b (shift_right)");
+		break;
+	case NT_OP_LESS:
+		printf("a<b (less)");
+		break;
+	case NT_OP_LESS_EQUAL:
+		printf("a<=b (less_equal)");
+		break;
+	case NT_OP_GREATER:
+		printf("a>b (greater)");
+		break;
+	case NT_OP_GREATER_EQUAL:
+		printf("a>=b (greater_equal)");
+		break;
+	case NT_OP_EQUAL:
+		printf("a==b (equal)");
+		break;
+	case NT_OP_NOT_EQUAL:
+		printf("a!=b (not_equal)");
+		break;
+	case NT_OP_BITWISE_AND:
+		printf("a&b (bitwise_and)");
+		break;
+	case NT_OP_BITWISE_XOR:
+		printf("a^b (bitwise_xor)");
+		break;
+	case NT_OP_BITWISE_OR:
+		printf("a|b (bitwise_or)");
+		break;
+	case NT_OP_LOGIC_AND:
+		printf("a&&b (logic_and)");
+		break;
+	case NT_OP_LOGIC_OR:
+		printf("a||b (logic_or)");
+		break;
+	case NT_OP_TERNARY:
+		printf("a?b:c (ternary)");
+		break;
+	case NT_OP_ASSIGN:
+		printf("a=b (assign)");
+		break;
+	case NT_OP_ASSIGN_ADD:
+		printf("a+=b (assign_add)");
+		break;
+	case NT_OP_ASSIGN_SUB:
+		printf("a-=b (assign_sub)");
+		break;
+	case NT_OP_ASSIGN_MUL:
+		printf("a*=b (assign_mul)");
+		break;
+	case NT_OP_ASSIGN_DIV:
+		printf("a/=b (assign_div)");
+		break;
+	case NT_OP_ASSIGN_MOD:
+		printf("a%%=b (assign_mod)");
+		break;
+	case NT_OP_ASSIGN_SL:
+		printf("a<<=b (assign_sl)");
+		break;
+	case NT_OP_ASSIGN_SR:
+		printf("a>>=b (assign_sr)");
+		break;
+	case NT_OP_ASSIGN_AND:
+		printf("a&=b (assign_and)");
+		break;
+	case NT_OP_ASSIGN_XOR:
+		printf("a^=b (assign_xor)");
+		break;
+	case NT_OP_ASSIGN_OR:
+		printf("a|=b (assign_or)");
+		break;
+	case NT_OP_COMMA:
+		printf("a,b (comma)");
+		break;
+	default:
+		printf("UNRECOGNIZED NODETYPE: %d", root->type);
+		break;
+	}
+	printf("\n");
+	++depth;
+	for(int k=0;k<root->nch;++k)
+		print_ast(root->ch[k], depth);
+}
 
 int main(int argc, char **argv)
 {
@@ -2695,9 +2804,19 @@ int main(int argc, char **argv)
 	const char *fn="C:/Projects/acc/input.c";
 #endif
 	ArrayHandle text=load_file(fn, 0, 0, 1);
+
+	printf("\nLexing %s\n", fn);
 	ArrayHandle tokens=lex((char*)text->data, (int)text->count);
+	printf("Lex result:\n");//
 	print_tokens((Token*)tokens->data, (int)tokens->count);//
-	
+
+	printf("\nParsing...\n");
+	ASTNode *ast=parse_program((Token*)tokens->data, (int)tokens->count);
+	printf("Parse result (AST):\n");//
+	print_ast(ast, 0);//
+	printf("\n");
+
+	node_free(&ast);
 	array_free(&tokens);
 	array_free(&text);
 #ifdef _DEBUG
