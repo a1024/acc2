@@ -205,4 +205,37 @@ int node_append_ch(ASTNode **root, ASTNode *ch);
 int node_attach_ch(ASTNode **root, ASTNode ***p_leaf, ASTNode *ch);
 
 
+//bytecode
+typedef enum InstructionTypeEnum
+{
+	IT_LOAD, IT_STORE,
+	IT_ADD, IT_SUB,
+	IT_MUL, IT_DIV, IT_MOD,
+	IT_SLL, IT_SRL, IT_SRA,
+	IT_LT, IT_LE, IT_GT, IT_GE, IT_EQ, IT_NE,
+	IT_AND, IT_XOR, IT_OR,
+	IT_JMP, IT_BLT, ITBLE, IT_BGT, IT_BGE, IT_BEQ, IT_BNE,
+	IT_PUSH, IT_POP,
+} InstructionType;
+//typedef enum ArgTypeEnum
+//{
+//	ARG_IMM,
+//	ARG_REG,
+//} ArgType;
+//typedef struct EmuArgStruct
+//{
+//	long long value;
+//	short indirection_count;
+//	char is_immediate;
+//} EmuArg;
+typedef struct InstructionStruct
+{
+	long long val[4];
+	InstructionType type;
+	short indirection_count[4];
+	char is_immediate[4], is_unsigned[4];
+} Instruction;
+ArrayHandle translate(ASTNode *c_code);
+
+
 #endif//ACC2_H

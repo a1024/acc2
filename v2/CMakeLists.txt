@@ -3,7 +3,9 @@
 # Add source to this project's executable.
 add_executable(acc2
 	acc2.c
+	codegen.c
 	parser.c
+	translate.c
 	util.c
 )
 

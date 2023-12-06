@@ -141,6 +141,7 @@ int str_append(ArrayHandle *str, const char *format, ...);//requires C99, prints
 #define ARRAY_ALLOC(ELEM_TYPE, ARR, DATA, COUNT, PAD, DESTRUCTOR) ARR=array_construct(DATA, sizeof(ELEM_TYPE), COUNT, 1, PAD, DESTRUCTOR)
 #define ARRAY_APPEND(ARR, DATA, COUNT, REP, PAD)  array_insert(&(ARR), (ARR)->count, DATA, COUNT, REP, PAD)
 #define ARRAY_APPEND_OFFSET(ARR, DATA, COUNT, REP, PAD) (((char*)array_insert(&(ARR), (ARR)->count, DATA, COUNT, REP, PAD)-(ARR)->data)/(ARR)->esize)
+#define ARRAY_LAST(ARR) ((ARR)->data+((ARR)->count-1)*(ARR)->esize)
 //#define ARRAY_DATA(ARR) (ARR)->data
 //#define ARRAY_I(ARR, IDX) *(int*)array_at(&ARR, IDX)
 //#define ARRAY_U(ARR, IDX) *(unsigned*)array_at(&ARR, IDX)

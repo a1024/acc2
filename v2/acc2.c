@@ -84,6 +84,7 @@ char* strlib_insert(const char *str, int len)
 }
 
 
+//numbers
 static unsigned long long acme_read_int_base10(const char *text, int len, int *idx, int *ret_ndigits)
 {
 	unsigned long long val;
