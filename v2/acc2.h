@@ -19,7 +19,7 @@ typedef enum TokenTypeEnum
 	KEYWORD(extern, 6) KEYWORD(static, 6)\
 	KEYWORD(const, 5)\
 	KEYWORD(signed, 5) KEYWORD(unsigned, 8)\
-	KEYWORD(void, 4) KEYWORD(char, 4) KEYWORD(short, 5) KEYWORD(int, 3) KEYWORD(long, 3) KEYWORD(float, 5) KEYWORD(double, 6)\
+	KEYWORD(void, 4) KEYWORD(char, 4) KEYWORD(short, 5) KEYWORD(int, 3) KEYWORD(long, 4) KEYWORD(float, 5) KEYWORD(double, 6)\
 	KEYWORD(if, 2) KEYWORD(else, 4)\
 	KEYWORD(for, 3)\
 	KEYWORD(do, 2) KEYWORD(while, 5)\

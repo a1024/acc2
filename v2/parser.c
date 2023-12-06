@@ -1,6 +1,7 @@
 #include"acc2.h"
 #include<stdio.h>
 #include<stdlib.h>
+#include<string.h>
 static const char file[]=__FILE__;
 
 //parser

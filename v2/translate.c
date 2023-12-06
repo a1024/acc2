@@ -12,7 +12,7 @@ static CmpRes symbol_cmp(const void *key, const void *candidate)
 
 	p1=(const char*)key;
 	p2=(const char*)candidate;
-	return (p1>p2)-(p1<2);
+	return (p1>p2)-(p1<p2);
 }
 typedef struct ContextStruct
 {
@@ -32,7 +32,7 @@ static void translate_rec(Context *ctx, ASTNode *code)
 		return;
 	case NT_TYPE:
 		{
-			Map *symboltable=(Map*)array_at(ctx->symboltables, ctx->symboltables->count-1);
+			Map *symboltable=(Map*)array_at(&ctx->symboltables, ctx->symboltables->count-1);
 			for(int k=0;k<code->nch;++k)
 			{
 				ASTNode *n=code->ch[k];

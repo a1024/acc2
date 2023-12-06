@@ -71,11 +71,21 @@ char* strlib_insert(const char *str, int len)
 		map_init(&strlib, sizeof(char*), strlib_cmp, strlib_destructor);
 
 	node=map_insert(&strlib, &s2, &found);		//search first then allocate
-	ASSERT(node&&*node);
+	if(!node)
+	{
+		LOG_ERROR("Allocation error");
+		return 0;
+	}
+	//ASSERT(node&&*node);
 	target=(char**)node[0]->data;
 	if(!found)
 	{
 		key=(char*)malloc(s2.len+1);
+		if(!key)
+		{
+			LOG_ERROR("Allocation error");
+			return 0;
+		}
 		memcpy(key, str, s2.len);
 		key[s2.len]=0;
 		*target=key;
@@ -662,30 +672,30 @@ ArrayHandle lex(const char *text, int len)
 	Token token;
 	for(int k=0, lineno=0;k<len;)
 	{
-		if(text[k]=='*')
-			printf("");
-
 		if(isspace(text[k]))
 		{
 			for(;k<len&&isspace(text[k]);lineno+=text[k]=='\n', ++k);
 		}
 		else if(isalpha(text[k])||text[k]=='_')
 		{
-			int matched=0;
-			for(int k2=0;k2<KT_COUNT;++k2)
+			int matched=0, k2;
+			for(k2=0;k2<KT_COUNT;++k2)
 			{
 				if(match(text, k, len, keyword_str[k2])&&k+keyword_len[k2]<len&&!isalnum(text[k+keyword_len[k2]]))
 				{
 					matched=1;
-					token.type=TT_KEYWORD;
-					token.val_int=k2;
-					token.lineno=lineno;
-					dlist_push_back1(&list, &token);
-					k+=keyword_len[k2];
 					break;
 				}
 			}
-			if(!matched)//identifier
+			if(matched)
+			{
+				token.type=TT_KEYWORD;
+				token.val_int=k2;
+				token.lineno=lineno;
+				dlist_push_back1(&list, &token);
+				k+=keyword_len[k2];
+			}
+			else//identifier
 			{
 				int start=k;
 				for(;k<len&&(isalnum(text[k])||text[k]=='_');++k);
@@ -755,6 +765,26 @@ ArrayHandle lex(const char *text, int len)
 		}
 		else//symbols
 		{
+			int matched=0, k2;
+			for(k2=0;k2<ST_COUNT;++k2)
+			{
+				if(match(text, k, len, symbol_str[k2]))
+				{
+					matched=1;
+					break;
+				}
+			}
+			if(matched)
+			{
+				token.type=TT_SYMBOL;
+				token.val_int=k2;
+				token.lineno=lineno;
+				dlist_push_back1(&list, &token);
+				k+=symbol_len[k2];
+			}
+			else//error
+				++k;
+#if 0
 			int symbol=-1;
 			switch(text[k])
 			{
@@ -762,6 +792,8 @@ ArrayHandle lex(const char *text, int len)
 			case '}':symbol=ST_RBRACE;break;
 			case '(':symbol=ST_LPR;break;
 			case ')':symbol=ST_RPR;break;
+			case '[':symbol=ST_LBRACKET;break;
+			case ']':symbol=ST_RBRACKET;break;
 			case '=':symbol=ST_ASSIGN;break;
 			case '*':symbol=ST_ASTERISK;break;
 			case '.':
@@ -783,6 +815,7 @@ ArrayHandle lex(const char *text, int len)
 				dlist_push_back1(&list, &token);
 				k+=symbol_len[symbol];
 			}
+#endif
 		}
 	}
 	ArrayHandle arr=0;
@@ -804,11 +837,18 @@ void print_token(Token *t)
 		printf("%s", t->val_str);
 		break;
 	case TT_STRING_LITERAL:
+		{
+			ArrayHandle t2=str2esc(t->val_str, 0);
+			printf("\"%s\"", t2->data);
+			array_free(&t2);
+		}
+		break;
 	case TT_CHAR_LITERAL:
 		{
-			ArrayHandle t2=str2esc(t->val_str, (int)strlen(t->val_str));
-			char quote=t->type==TT_STRING_LITERAL?'\"':'\'';
-			printf("%c%s%c", quote, t2->data, quote);
+			memcpy(g_buf, &t->val_int, 8);
+			g_buf[8]=0;
+			ArrayHandle t2=str2esc(g_buf, 0);
+			printf("\'%s\'", t2->data);
 			array_free(&t2);
 		}
 		break;
@@ -822,11 +862,12 @@ void print_token(Token *t)
 }
 void print_tokens(Token *tokens, int count)
 {
+	printf("%4d\t", 1);
 	for(int k=0;k<count;++k)
 	{
 		Token *t=tokens+k;
 		if(k&&t->lineno>tokens[k-1].lineno)
-			printf("\n");
+			printf("\n%4d\t", t->lineno+1);
 		print_token(t);
 		if(k+1<count)
 			printf(" ");
@@ -866,7 +907,8 @@ int main(int argc, char **argv)
 	}
 	const char *fn=argv[1];
 #else
-	const char *fn="C:/Projects/acc/input.c";
+	const char *fn="E:/C/ACC/hello-original.c";
+	//const char *fn="C:/Projects/acc/input.c";
 	//const char *fn="C:/Projects/a/write_a_c_compiler/stage_1/invalid/no_space.c";
 #endif
 	ArrayHandle text=load_file(fn, 0, 0, 1);
